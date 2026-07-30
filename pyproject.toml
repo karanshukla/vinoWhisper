@@ -1,0 +1,22 @@
+[project]
+name = "vinowhisper"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openvino",
+    "openvino-genai",
+    "optimum[openvino]",
+    "flask",
+    "werkzeug",
+    "requests",
+    "soundfile",
+    "numpy",
+]
+
+[project.scripts]
+vinowhisper-toggle = "vinowhisper.toggle:main"
+vinowhisper-server = "vinowhisper.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

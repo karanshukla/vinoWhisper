@@ -1,0 +1,9 @@
+[Unit]
+Description=vinoWhisper NPU transcription server socket
+
+[Socket]
+ListenStream=127.0.0.1:8099
+Accept=no
+
+[Install]
+WantedBy=sockets.target

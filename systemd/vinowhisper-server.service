@@ -1,0 +1,14 @@
+[Unit]
+Description=vinoWhisper NPU transcription server
+Requires=vinowhisper-server.socket
+
+[Service]
+ExecStart=%h/Development/vinoWhisper/.venv/bin/python -m vinowhisper.server
+WorkingDirectory=%h/Development/vinoWhisper
+Restart=on-failure
+
+# No [Install]/WantedBy: this unit is socket-activated (see
+# vinowhisper-server.socket), not enabled/started directly. Systemd starts it
+# on the first connection and it self-exits after config.IDLE_TIMEOUT_S idle;
+# that plain (exit code 0) exit is not a "failure", Restart=on-failure only
+# covers real crashes.
