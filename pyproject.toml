@@ -1,10 +1,23 @@
 [project]
 name = "vinowhisper"
 version = "0.1.0"
-requires-python = ">=3.11"
+# Python 3.14 is unusable here: it made functools.partial a descriptor, which
+# breaks optimum's `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)` class-
+# attribute idiom (self gets auto-bound as an extra positional arg). Confirmed
+# 2026-08-03 across every optimum/optimum-intel/transformers version tried —
+# root cause, not a version-pairing issue. Use 3.13 until upstream fixes it.
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "openvino",
-    "openvino-genai",
+    # Stable openvino-genai (2026.2.1 as of 2026-08-03) can't build the NPU
+    # static Whisper pipeline: its pipeline_static.cpp pattern-matcher doesn't
+    # recognize the current optimum-intel export's SDPA attention-mask node
+    # shape (OPENVINO_ASSERT(!self_attn_nodes.empty()) fails). Needs the
+    # nightly wheel index until a stable release catches up — same versions
+    # upstream's own openvino.genai samples/deployment-requirements.txt pins.
+    # Install with:
+    #   pip install --pre --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly -e .
+    "openvino>=2026.4.0.dev",
+    "openvino-genai>=2026.4.0.0.dev",
     "optimum[openvino]",
     "flask",
     "werkzeug",
@@ -14,9 +27,15 @@ dependencies = [
 ]
 
 [project.scripts]
-vinowhisper-toggle = "vinowhisper.toggle:main"
+vinowhisper-caption = "vinowhisper.caption:main"
 vinowhisper-server = "vinowhisper.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Without this, setuptools' flat-layout auto-discovery sees the top-level
+# systemd/ directory (unit files, not a package) and refuses to build,
+# thinking it found two packages. Confirmed failing 2026-08-03.
+packages = ["vinowhisper"]

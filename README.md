@@ -1,17 +1,27 @@
 # vinoWhisper
 
-NPU-accelerated local voice typing for Fedora/KDE, using OpenVINO GenAI's
+NPU-accelerated local live captioning for Fedora/KDE, using OpenVINO GenAI's
 `WhisperPipeline` on the Intel NPU. Named after
 [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace) — same idea,
 OpenVINO doing the NPU work, different feature.
 
+Originally scoped as toggle-mode voice typing (record, transcribe, inject
+text via `ydotool`); pivoted 2026-08-03 to continuous live captioning
+displayed on-screen instead — same NPU/Whisper backend, different consumer
+of the output.
+
 Design doc and rationale (why this is being built from scratch instead of
-reusing `whisper-npu-server`, which turned out to be partly dead):
+reusing `whisper-npu-server`, which turned out to be partly dead), plus the
+full feasibility-spike writeup (bugs hit, benchmarks, streaming findings):
 [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md).
 
-**Status: scaffolding only, not functional yet.** Nothing has been run —
-`openvino`/`openvino-genai`/`ydotool` aren't installed, no model has been
-converted, and none of this has been tested end to end.
+**Status: transcription backend confirmed working on NPU (2026-08-03);
+live-captioning implementation itself not built yet.** whisper-small.en
+converted, benchmarked (~1.19s/30s window, ~0.204s to first streamed token),
+and verified as genuinely running on NPU, not falling back to CPU. What's
+below (`recorder.py`/`injector.py`/`server.py`) is still the old toggle-mode
+design and needs a rewrite for continuous capture + overlay display — see
+the design doc's "Planned architecture" section.
 
 ## Layout
 
@@ -58,18 +68,32 @@ any serverless architecture. Worth deciding later if 30 minutes is even the
 right window, or if this is solving a problem too small to matter (~3% of
 16GB) — noted here as a conscious choice, not a default that snuck in.
 
-## Setup (once you're ready to actually run this)
+## Setup (transcription backend — confirmed working 2026-08-03)
 
-1. `python -m venv .venv && .venv/bin/pip install -e .`
-2. `./scripts/convert_model.sh` to produce the OpenVINO IR model.
-3. Install `ydotool`, enable `ydotoold` as a user service.
-4. Copy both `systemd/vinowhisper-server.socket` and
-   `systemd/vinowhisper-server.service` into `~/.config/systemd/user/`, then
-   `systemctl --user enable --now vinowhisper-server.socket` — enable the
-   **socket** unit, not the service; the service has no `[Install]` section
-   on purpose, since it's only ever meant to be started by the socket.
-5. Repoint the existing `Meta+H` KDE global shortcut (currently Ghostty's
-   `new-window`) to `vinowhisper-toggle`.
+1. Use Python 3.13, not 3.14 — 3.14 made `functools.partial` a descriptor,
+   which breaks `optimum`'s export code outright (see CLAUDE.md/design doc
+   for the root cause). `python3.13 -m venv .venv`.
+2. Install with the nightly OpenVINO wheel index — stable `openvino-genai`
+   (2026.2.1 as of writing) can't build the NPU static Whisper pipeline:
+   ```
+   .venv/bin/pip install --pre --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly -e .
+   ```
+3. `./scripts/convert_model.sh` to produce the whisper-small.en OpenVINO IR
+   (already includes `--disable-stateful`, required for NPU).
+4. From here down is **not yet built/verified** — the live-captioning
+   consumer of the transcription backend above (continuous capture, overlay
+   display, streaming server API) doesn't exist yet. What follows is the old
+   toggle-mode setup, kept for reference until it's rewritten:
+   - Install `ydotool`, enable `ydotoold` as a user service (moot once
+     `injector.py` is replaced by an overlay).
+   - Copy both `systemd/vinowhisper-server.socket` and
+     `systemd/vinowhisper-server.service` into `~/.config/systemd/user/`,
+     then `systemctl --user enable --now vinowhisper-server.socket` — enable
+     the **socket** unit, not the service; the service has no `[Install]`
+     section on purpose, since it's only ever meant to be started by the
+     socket.
+   - Repoint the existing `Meta+H` KDE global shortcut (currently Ghostty's
+     `new-window`) to the eventual entry point.
 
-See the design doc linked above for the full verification plan and known
-open items before doing any of this for real.
+See the design doc linked above for the full feasibility-spike writeup,
+benchmark numbers, and known open items before doing any of this for real.

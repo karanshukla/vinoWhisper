@@ -10,12 +10,11 @@ not an accident — see README.md.
 """
 
 import os
-import tempfile
 import threading
 import time
-from pathlib import Path
 
-from flask import Flask, request, jsonify
+import numpy as np
+from flask import Flask, Response, request, jsonify
 from werkzeug.serving import run_simple
 
 from . import config
@@ -37,11 +36,10 @@ def _touch_activity() -> None:
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-        tmp.write(request.get_data())
-        tmp.flush()
-        text = transcriber.transcribe(Path(tmp.name))
-    return jsonify({"text": text})
+    # Raw float32 PCM, no WAV container — the client is a continuous
+    # rolling-buffer capture, it never has a WAV file to send.
+    samples = np.frombuffer(request.get_data(), dtype="<f4")
+    return Response(transcriber.transcribe_stream(samples), mimetype="text/plain")
 
 
 @app.route("/health", methods=["GET"])
