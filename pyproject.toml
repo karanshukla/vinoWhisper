@@ -22,7 +22,6 @@ dependencies = [
     "flask",
     "werkzeug",
     "requests",
-    "soundfile",
     "numpy",
 ]
 
