@@ -223,11 +223,16 @@ hardware because each needs a specific input to show up.
   in `wildcat-lake-linux` (`face-unlock-authface/npu-openvino-backend.md`) for
   what that looked like there: hand-patched driver, missing compiler libs in
   Fedora's package.
-- **Socket-activation fd handoff, still untested.** `server.py`'s
-  `_systemd_socket_fd()` plus `run_simple(..., fd=fd)` assumes werkzeug's
-  `fd=` kwarg wraps a systemd-passed socket as documented. If it does not, the
-  fallback is binding normally and losing idle-unload, not a hard failure.
-  Confirm rather than assume.
+- **Socket-activation fd handoff: tested 2026-08-06, was broken, now fixed.**
+  `server.py` called `run_simple(..., fd=fd)`, but `werkzeug.serving.run_simple`
+  never had an `fd` kwarg at all (checked against werkzeug 3.1.8's actual
+  signature) — every socket-activated start hit `TypeError:
+  run_simple() got an unexpected keyword argument 'fd'` and systemd's
+  restart limit killed the unit (`service-start-limit-hit`). `run_simple` is
+  a thin CLI wrapper; `make_server()` is what it calls internally and does
+  accept `fd=`. Server now calls `make_server(...).serve_forever()` directly.
+  Confirmed end to end: `vinowhisper-server.socket` → cold NPU spawn on first
+  connection → `/health` → live captions.
 
 ## Remaining questions
 

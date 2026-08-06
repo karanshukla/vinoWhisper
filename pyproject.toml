@@ -14,10 +14,14 @@ dependencies = [
     # shape (OPENVINO_ASSERT(!self_attn_nodes.empty()) fails). Needs the
     # nightly wheel index until a stable release catches up — same versions
     # upstream's own openvino.genai samples/deployment-requirements.txt pins.
-    # Install with:
-    #   pip install --pre --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly -e .
+    # The nightly index and prerelease policy live in [tool.uv] below, so
+    # `uv sync` alone resolves these without extra flags.
     "openvino>=2026.4.0.dev",
     "openvino-genai>=2026.4.0.0.dev",
+    # Pulled in transitively by openvino-genai, but must be listed directly:
+    # [tool.uv.sources] index routing below only applies to the project's own
+    # direct dependencies, not to transitive ones (confirmed 2026-08-06).
+    "openvino-tokenizers>=2026.4.0.0.dev",
     "optimum[openvino]",
     "flask",
     "werkzeug",
@@ -44,3 +48,23 @@ build-backend = "setuptools.build_meta"
 # systemd/ directory (unit files, not a package) and refuses to build,
 # thinking it found two packages. Confirmed failing 2026-08-03.
 packages = ["vinowhisper"]
+
+[tool.uv]
+# openvino/openvino-genai only exist above 2026.2.1 as nightly dev builds
+# (see the dependency comment above), so prereleases must be allowed globally
+# or optimum[openvino]'s own (non-prerelease) openvino version range makes
+# the resolve unsatisfiable.
+prerelease = "allow"
+
+[[tool.uv.index]]
+name = "openvino-nightly"
+url = "https://storage.openvinotoolkit.org/simple/wheels/nightly"
+# explicit: only packages routed to it below use this index. Without this,
+# it fully replaces PyPI as the default index instead of adding to it
+# (confirmed 2026-08-06 — flask etc. became unresolvable).
+explicit = true
+
+[tool.uv.sources]
+openvino = { index = "openvino-nightly" }
+openvino-genai = { index = "openvino-nightly" }
+openvino-tokenizers = { index = "openvino-nightly" }

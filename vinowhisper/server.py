@@ -16,7 +16,7 @@ from collections.abc import Iterator
 
 import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
-from werkzeug.serving import run_simple
+from werkzeug.serving import make_server
 
 from . import audio, config
 from .transcriber import WhisperTranscriber
@@ -120,8 +120,15 @@ def main() -> None:
 
     # threaded=True so /health answers while a decode is in flight; the
     # transcriber's own lock serializes actual pipeline use.
+    #
+    # make_server(), not run_simple(): run_simple() never exposed an fd=
+    # kwarg (it's a thin CLI-style wrapper), so passing one raised
+    # TypeError before the server could even bind. make_server() is what
+    # run_simple() calls internally and does accept fd=, which is what
+    # lets systemd's socket-activation handoff actually work.
     fd = _systemd_socket_fd()
-    run_simple(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
+    server = make_server(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
+    server.serve_forever()
 
 
 if __name__ == "__main__":

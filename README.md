@@ -204,6 +204,21 @@ choice, not a default that snuck in.
 cold start shows up as an explicit "waiting for the transcription server"
 line rather than as the captions appearing to be broken for 30 seconds.
 
+**Stopping it.** There's no daemon to manage day to day — the socket unit
+holds the port with no process behind it until something connects, and the
+service self-exits after `IDLE_TIMEOUT_S` regardless. Two commands cover the
+rest:
+
+```
+systemctl --user stop vinowhisper-server.service      # drop the resident NPU process now, instead of waiting out the idle timeout
+systemctl --user disable --now vinowhisper-server.socket  # full teardown: also stops systemd owning the port at all
+```
+
+The socket unit is what respawns the service, so disabling it (not just the
+service) is the one to use before a reboot or when you're done with the tool
+for a while — otherwise the next `vinowhisper-caption` run just spawns it
+again on first connection.
+
 ## Setup
 
 1. **Python 3.13, not 3.14.** 3.14 made `functools.partial` a descriptor,
