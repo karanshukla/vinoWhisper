@@ -24,6 +24,7 @@ enumerates them; `--target <serial>` taps one.
 import json
 import subprocess
 import threading
+from collections.abc import Callable
 
 import numpy as np
 
@@ -46,6 +47,48 @@ def _pw(argv: list[str]) -> str:
 
 def default_sink() -> str:
     return _pw(["pactl", "get-default-sink"]).strip()
+
+
+def sink_muted(sink: str = "@DEFAULT_SINK@") -> bool | None:
+    """Whether the sink is muted, or None if it couldn't be determined.
+
+    Worth asking before blaming the code: a muted sink monitors as digital
+    silence, so "no captions" and "muted" look identical from in here.
+    """
+    try:
+        answer = _pw(["pactl", "get-sink-mute", sink]).strip()
+    except CaptureError:
+        return None
+    if answer.endswith("yes"):
+        return True
+    if answer.endswith("no"):
+        return False
+    return None
+
+
+def monitor_channel_volumes(sink: str | None = None) -> bool | None:
+    """The `monitor.channel-volumes` node property on a sink, if readable.
+
+    This is the property that decides whether a sink's monitor is pre- or
+    post-volume, i.e. whether muting the system kills captions. PipeWire
+    defaults it to false; if it reads true here, that's the answer.
+    """
+    try:
+        target = sink or default_sink()
+        dump = json.loads(_pw(["pw-dump"]))
+    except (CaptureError, json.JSONDecodeError):
+        return None
+
+    for obj in dump:
+        props = (obj.get("info") or {}).get("props") or {}
+        if props.get("node.name") != target:
+            continue
+        value = props.get("monitor.channel-volumes")
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() == "true"
+    return None
 
 
 def playback_streams() -> list[dict[str, str]]:
@@ -83,11 +126,19 @@ class Recorder:
     # large enough that the read loop isn't syscall-bound.
     _READ_CHUNK_SAMPLES = 1600
 
-    def __init__(self, source: str = config.DEFAULT_SOURCE, target: str | None = None) -> None:
+    def __init__(
+        self,
+        source: str = config.DEFAULT_SOURCE,
+        target: str | None = None,
+        tap: Callable[[np.ndarray], None] | None = None,
+    ) -> None:
         if source not in ("output", "mic"):
             raise ValueError(f"source must be 'output' or 'mic', got {source!r}")
         self.source = source
         self.target = target
+        # Called with every chunk as it arrives, for --record. Runs on the
+        # reader thread, so it has to stay cheap.
+        self._tap = tap
         self._argv: list[str] = []
         self._proc: subprocess.Popen[bytes] | None = None
         self._thread: threading.Thread | None = None
@@ -153,8 +204,12 @@ class Recorder:
                 break
             # A short final read at EOF need not land on a sample boundary.
             usable = len(data) - (len(data) % audio.BYTES_PER_SAMPLE)
-            if usable:
-                self._buffer.write(np.frombuffer(data, dtype="<f4", count=usable // 4))
+            if not usable:
+                continue
+            samples = np.frombuffer(data, dtype="<f4", count=usable // 4)
+            self._buffer.write(samples)
+            if self._tap is not None:
+                self._tap(samples)
 
     def check_alive(self) -> None:
         """Raise if pw-record has exited.

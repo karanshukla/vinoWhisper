@@ -9,9 +9,14 @@ Point it at whatever is playing and it prints captions in your terminal.
 Nothing leaves the machine.
 
 ```
-vinowhisper-caption                  # caption system audio
-vinowhisper-caption --source mic     # caption yourself
-vinowhisper-caption --debug          # per-cycle timings, levels, raw transcript
+vinowhisper-caption                       # caption system audio
+vinowhisper-caption --source mic          # caption yourself
+vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
+vinowhisper-caption --record ~/sess       # save the session for replay
+
+vinowhisper-doctor                        # check NPU, model, sink, mute, live levels
+vinowhisper-replay ~/sess --restitch       # re-run the merge logic offline
+vinowhisper-replay ~/sess --sweep 8,12,20  # measure what --window actually costs
 ```
 
 Design doc and rationale (why this is built from scratch instead of reusing
@@ -105,6 +110,40 @@ vinowhisper-caption --window 20     # steadier wording, noticeably laggier
 `--debug` prints the numbers to tune against: window length, hop, RMS, gain
 applied, time to first streamed piece, total cycle time, and how many words
 each cycle confirmed versus held pending.
+
+`vinowhisper-replay --sweep` measures the tradeoff on your own audio instead of
+guessing at it. The est. lag column is `2 x mean`, which is the floor the
+two-cycle commit policy imposes:
+
+```
+| window | decodes | mean | p90 | first piece | words/decode | est. lag |
+```
+
+## Debugging without the hardware in front of you
+
+`--record DIR` writes `audio.wav` (16kHz mono, opens in Audacity) plus
+`events.jsonl`, one JSON object per cycle with every number `--debug` prints
+and the raw pre-stitch transcript. Roughly 2MB per minute.
+
+That turns "it was laggy while I watched a video" into a fixture:
+
+- `vinowhisper-replay DIR --restitch` feeds the recorded transcripts back
+  through the stitcher with no NPU, no server and no audio. The model output
+  is frozen, so any difference in what gets printed is your change and nothing
+  else. It diffs against what the original run printed and points at the first
+  divergence.
+- `vinowhisper-replay DIR --sweep 8,12,16,20` needs the NPU and slices the
+  recorded audio at a fixed hop, so every window size sees the same decodes
+  over the same audio.
+
+`vinowhisper-doctor` checks the environmental things that are currently
+guesses: NPU enumeration, whether the model export has the
+`decoder_with_past` submodel that `--disable-stateful` produces, server
+reachability, default sink, current mute state, `monitor.channel-volumes`, and
+a two-second live level probe on the sink monitor and on each playing app.
+Run it once with audio playing normally and once with the system muted. If the
+sink monitor drops to silence while an app stream stays audible, that is the
+mute problem confirmed by measurement, and it says so.
 
 ## Why the captions reword themselves
 

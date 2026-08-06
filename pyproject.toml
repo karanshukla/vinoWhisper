@@ -28,6 +28,8 @@ dependencies = [
 [project.scripts]
 vinowhisper-caption = "vinowhisper.caption:main"
 vinowhisper-server = "vinowhisper.server:main"
+vinowhisper-replay = "vinowhisper.replay:main"
+vinowhisper-doctor = "vinowhisper.doctor:main"
 
 [build-system]
 requires = ["setuptools>=68"]

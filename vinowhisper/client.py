@@ -10,8 +10,11 @@ from . import config
 
 
 class TranscriptionClient:
-    def __init__(self, base_url: str = config.SERVER_URL) -> None:
-        self._base_url = base_url
+    def __init__(self, base_url: str | None = None) -> None:
+        # Resolved at call time, not captured as a default argument: a default
+        # of config.SERVER_URL would bind at import and quietly ignore anything
+        # that changes the config afterwards.
+        self._base_url = base_url or config.SERVER_URL
         self._session = requests.Session()
 
     def wait_ready(self) -> dict:
