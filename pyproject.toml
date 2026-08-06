@@ -22,13 +22,18 @@ dependencies = [
     "flask",
     "werkzeug",
     "requests",
-    "soundfile",
     "numpy",
+    # Status bar only. Rich rather than Textual because the transcript is
+    # append-only (see stitch.py), so it belongs in the terminal's own
+    # scrollback and only the status line needs to redraw.
+    "rich",
 ]
 
 [project.scripts]
 vinowhisper-caption = "vinowhisper.caption:main"
 vinowhisper-server = "vinowhisper.server:main"
+vinowhisper-replay = "vinowhisper.replay:main"
+vinowhisper-doctor = "vinowhisper.doctor:main"
 
 [build-system]
 requires = ["setuptools>=68"]

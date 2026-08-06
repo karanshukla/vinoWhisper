@@ -2,98 +2,239 @@
 
 NPU-accelerated local live captioning for Fedora/KDE, using OpenVINO GenAI's
 `WhisperPipeline` on the Intel NPU. Named after
-[vinoAuthFace](https://github.com/karanshukla/vinoAuthFace) — same idea,
+[vinoAuthFace](https://github.com/karanshukla/vinoAuthFace), same idea of
 OpenVINO doing the NPU work, different feature.
 
-Originally scoped as toggle-mode voice typing (record, transcribe, inject
-text via `ydotool`); pivoted 2026-08-03 to continuous live captioning
-displayed on-screen instead — same NPU/Whisper backend, different consumer
-of the output.
+Point it at whatever is playing and it captions in your terminal. Nothing
+leaves the machine. Start it and it goes; there is nothing to interact with.
 
-Design doc and rationale (why this is being built from scratch instead of
-reusing `whisper-npu-server`, which turned out to be partly dead), plus the
-full feasibility-spike writeup (bugs hit, benchmarks, streaming findings):
+```
+╭─ vinoWhisper NPU ────────────────────────────────────────────────────────────╮
+│ ● live    ███───────────  -48dB  ×12   ⟳ 1.8s █▆▆▆▅▅  lag ~3.9s  ⏳7  341 words │
+│ hearing… and the dugout emptied out behind him                                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
+
+The transcript scrolls above that bar in your terminal's own scrollback, so it
+is still there after you quit and your terminal's selection and search still
+work on it. `hearing…` is the words heard once but still waiting on a second
+cycle to agree, which is the two-cycle commit delay made visible rather than
+felt as a freeze.
+
+```
+vinowhisper-caption                       # caption system audio
+vinowhisper-caption --source mic          # caption yourself
+vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
+vinowhisper-caption --record ~/sess       # save the session for replay
+vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
+
+vinowhisper-doctor                        # check NPU, model, sink, mute, live levels
+vinowhisper-replay ~/sess --restitch       # re-run the merge logic offline
+vinowhisper-replay ~/sess --sweep 8,12,20  # measure what --window actually costs
+```
+
+Design doc and rationale (why this is built from scratch instead of reusing
+`whisper-npu-server`, which turned out to be partly dead), plus the full
+feasibility-spike writeup with benchmarks:
 [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md).
 
-**Status: transcription backend confirmed working on NPU (2026-08-03);
-live-captioning implementation itself not built yet.** whisper-small.en
-converted, benchmarked (~1.19s/30s window, ~0.204s to first streamed token),
-and verified as genuinely running on NPU, not falling back to CPU. What's
-below (`recorder.py`/`injector.py`/`server.py`) is still the old toggle-mode
-design and needs a rewrite for continuous capture + overlay display — see
-the design doc's "Planned architecture" section.
+**Status: the whole loop is built and has run against real content. Accuracy
+and latency are the open problems, not whether it works at all.** The
+transcription backend is confirmed genuinely on NPU (not a silent CPU
+fallback), whisper-small.en benchmarks at ~1.19s per 30s window with first
+streamed token at ~0.204s, and captions have been compared side by side
+against YouTube's own generated captions as ground truth. The cleanup pass
+documented below fixed the bugs that review turned up, but it has not been
+re-run on the actual laptop yet.
 
 ## Layout
 
 ```
 vinowhisper/
-  config.py       paths, ports, sample rate, idle timeout
-  transcriber.py  WhisperTranscriber — wraps openvino_genai.WhisperPipeline (device="NPU")
-  server.py       local-only Flask server, socket-activated + self-idle-exit (see below)
-  recorder.py     Recorder — toggle start/stop of pw-record via a pidfile
-  injector.py     TextInjector — ydotool-based text injection (KDE Wayland has no wtype support)
-  toggle.py       entry point bound to the Meta+H KDE shortcut
+  config.py       paths, ports, window sizing, levels, timeouts
+  audio.py        RingBuffer, RMS, gain normalization
+  recorder.py     Recorder, continuous pw-record capture into the ring buffer
+  client.py       TranscriptionClient, HTTP client for the server below
+  server.py       local-only Flask server, socket-activated + self-idle-exit
+  transcriber.py  WhisperTranscriber, wraps openvino_genai.WhisperPipeline (device="NPU")
+  stitch.py       Stitcher, merges overlapping window transcripts into one
+  caption.py      the caption loop and CLI (vinowhisper-caption)
 scripts/
   convert_model.sh   optimum-cli export wrapper (whisper-small.en -> OpenVINO IR)
 systemd/
   vinowhisper-server.socket    systemd owns the listening port, starts the service lazily
-  vinowhisper-server.service   the actual transcription server, socket-activated (no [Install])
+  vinowhisper-server.service   the transcription server, socket-activated (no [Install])
 ```
+
+## Captions stop when you mute the system
+
+This is the most-reported problem and it is not a bug in this code. A sink's
+monitor carries what the sink is playing _after_ its own volume and mute are
+applied, so muting the system means the capture reads genuine digital silence.
+There is nothing to transcribe. The same mechanism is why captions got worse
+as the volume slider went down, which is what the earlier threshold-lowering
+attempts were chasing.
+
+Two things help:
+
+1. **Capture the application instead of the sink.** An app's own playback
+   stream node also exposes monitor ports, and those sit upstream of the
+   sink's mute:
+
+   ```
+   vinowhisper-caption --list-targets
+   vinowhisper-caption --target 1043
+   ```
+
+   The app's own per-stream volume in the KDE mixer still applies, but the
+   master mute no longer silences the capture.
+
+2. **Check `monitor.channel-volumes` on the sink.** If it is `true`, the
+   monitor is post-volume, which is consistent with what has been observed
+   here. It defaults to `false` in PipeWire, so something in the local setup
+   (plausibly the `effect_input.bass_eq` filter chain) is likely turning it
+   on. Worth confirming on hardware:
+
+   ```
+   pw-cli enum-params $(pactl get-default-sink) Props
+   ```
+
+Quiet-but-not-silent audio is handled separately: every window is now boosted
+toward a speech-like level (`config.TARGET_RMS`, up to 20x) before it reaches
+the model, since Whisper's accuracy degrades on quiet input.
+
+## Latency, and the one knob that matters
+
+The caption loop is synchronous, so the hop between windows is just however
+long the previous cycle took, and the commit policy needs two cycles to agree
+before printing anything. Captions therefore trail the audio by roughly twice
+the cycle time. Cycle time is the only real lever.
+
+Whisper's encoder cost is fixed (it pads to 30s no matter what), but decoding
+is autoregressive, one forward pass per token. A window packed with 29.5s of
+dense speech emits roughly 2.5x the tokens of a 12s one and takes
+correspondingly longer. That is why the default window is now 12s rather than
+the full 29.5s short-form limit:
+
+```
+vinowhisper-caption --window 8      # snappier, less context, more wording drift
+vinowhisper-caption --window 20     # steadier wording, noticeably laggier
+```
+
+`--debug` prints the numbers to tune against: window length, hop, RMS, gain
+applied, time to first streamed piece, total cycle time, and how many words
+each cycle confirmed versus held pending.
+
+`vinowhisper-replay --sweep` measures the tradeoff on your own audio instead of
+guessing at it. The est. lag column is `2 x mean`, which is the floor the
+two-cycle commit policy imposes:
+
+```
+| window | decodes | mean | p90 | first piece | words/decode | est. lag |
+```
+
+## Debugging without the hardware in front of you
+
+`--record DIR` writes `audio.wav` (16kHz mono, opens in Audacity) plus
+`events.jsonl`, one JSON object per cycle with every number `--debug` prints
+and the raw pre-stitch transcript. Roughly 2MB per minute.
+
+That turns "it was laggy while I watched a video" into a fixture:
+
+- `vinowhisper-replay DIR --restitch` feeds the recorded transcripts back
+  through the stitcher with no NPU, no server and no audio. The model output
+  is frozen, so any difference in what gets printed is your change and nothing
+  else. It diffs against what the original run printed and points at the first
+  divergence.
+- `vinowhisper-replay DIR --sweep 8,12,16,20` needs the NPU and slices the
+  recorded audio at a fixed hop, so every window size sees the same decodes
+  over the same audio.
+
+`vinowhisper-doctor` checks the environmental things that are currently
+guesses: NPU enumeration, whether the model export has the
+`decoder_with_past` submodel that `--disable-stateful` produces, server
+reachability, default sink, current mute state, `monitor.channel-volumes`, and
+a two-second live level probe on the sink monitor and on each playing app.
+Run it once with audio playing normally and once with the system muted. If the
+sink monitor drops to silence while an app stream stays audible, that is the
+mute problem confirmed by measurement, and it says so.
+
+## Why the captions reword themselves
+
+Each cycle re-transcribes a window that mostly overlaps the last one, and
+Whisper does not decode the same audio the same way twice. Real testing on
+2026-08-03 caught it producing "Ex-sherzer", "you're told", and "you know
+Dalton" for the same underlying audio across three consecutive cycles. That is
+not paraphrasing near a boundary, the words genuinely are not the same until
+the model has enough context to settle.
+
+`stitch.py` handles this with a LocalAgreement-2 commit policy: a word only
+prints once two consecutive cycles agree on it. That also means a hallucinated
+guess on near-silence never reaches the screen, because the next cycle guesses
+something else. The cost is the two-cycle latency described above.
+
+The obvious remaining fix, priming each decode with the prior transcript via
+`initial_prompt`, is hard-blocked on this device: `RuntimeError:
+'initial_prompt' parameter is not supported on NPU device`. Some cross-window
+wording drift is an accepted limitation until that changes.
 
 ## Design decision: scale-to-zero, not an always-on daemon
 
-This is deliberately built as a **socket-activated** service, not a plain
-resident systemd service — the same lazy-load/idle-unload shape as
-serverless/Lambda cold starts, just via systemd's native primitives instead
-of a cloud provider's:
+Deliberately **socket-activated**, not a resident systemd service. Same
+lazy-load/idle-unload shape as serverless cold starts, via systemd's own
+primitives:
 
-- `vinowhisper-server.socket` owns the listening port at boot. This costs
-  nothing — no model loaded, no Python process running.
-- Systemd only starts `vinowhisper-server.service` on the *first* connection
-  to that socket. That's when the NPU model load (~10-30s) actually happens
-  — equivalent to a Lambda cold start.
-- The service tracks its own last-request time (`server.py`'s
-  `_idle_watchdog`) and self-exits after `config.IDLE_TIMEOUT_S` (30 min
-  default) of no dictation activity. The socket unit is untouched by this —
-  the next press respawns the service and pays the cold-start cost again.
+- `vinowhisper-server.socket` owns the listening port at boot. No model
+  loaded, no Python process running.
+- Systemd starts `vinowhisper-server.service` on the _first_ connection. That
+  is when the NPU model load (~10-30s) happens.
+- The service tracks its own last-request time and self-exits after
+  `config.IDLE_TIMEOUT_S` (30 min). The socket unit is untouched, so the next
+  caption session respawns it.
 
-Why bother, on a 16GB machine, for a ~500MB model: the always-on version
-holds that RAM resident indefinitely regardless of whether it's actually
-used that hour. A relying on the kernel to swap it to zram under memory
-pressure doesn't reliably help here either — 500MB rarely triggers enough
-pressure on 16GB to get reclaimed, so it would just sit resident forever.
-Scale-to-zero is the deterministic version of the same idea: it trades a
-cold-start hit after idle periods for guaranteed reclaim, same trade-off as
-any serverless architecture. Worth deciding later if 30 minutes is even the
-right window, or if this is solving a problem too small to matter (~3% of
-16GB) — noted here as a conscious choice, not a default that snuck in.
+Why bother on a 16GB machine for a ~500MB model: the always-on version holds
+that RAM resident regardless of use, and relying on the kernel to swap it to
+zram does not reliably help, since 500MB rarely generates enough pressure on
+16GB to get reclaimed. Scale-to-zero is the deterministic version of the same
+idea. Whether 30 minutes is the right window, or whether this is solving a
+problem too small to matter at ~3% of 16GB, is still open. It is a conscious
+choice, not a default that snuck in.
 
-## Setup (transcription backend — confirmed working 2026-08-03)
+`vinowhisper-caption` health-checks the server before starting the loop, so a
+cold start shows up as an explicit "waiting for the transcription server"
+line rather than as the captions appearing to be broken for 30 seconds.
 
-1. Use Python 3.13, not 3.14 — 3.14 made `functools.partial` a descriptor,
-   which breaks `optimum`'s export code outright (see CLAUDE.md/design doc
-   for the root cause). `python3.13 -m venv .venv`.
-2. Install with the nightly OpenVINO wheel index — stable `openvino-genai`
-   (2026.2.1 as of writing) can't build the NPU static Whisper pipeline:
+## Setup
+
+1. **Python 3.13, not 3.14.** 3.14 made `functools.partial` a descriptor,
+   which breaks `optimum`'s export code outright. `python3.13 -m venv .venv`.
+2. **Install from the nightly OpenVINO wheel index.** Stable `openvino-genai`
+   (2026.2.1 as of writing) cannot build the NPU static Whisper pipeline:
    ```
    .venv/bin/pip install --pre --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly -e .
    ```
-3. `./scripts/convert_model.sh` to produce the whisper-small.en OpenVINO IR
-   (already includes `--disable-stateful`, required for NPU).
-4. From here down is **not yet built/verified** — the live-captioning
-   consumer of the transcription backend above (continuous capture, overlay
-   display, streaming server API) doesn't exist yet. What follows is the old
-   toggle-mode setup, kept for reference until it's rewritten:
-   - Install `ydotool`, enable `ydotoold` as a user service (moot once
-     `injector.py` is replaced by an overlay).
-   - Copy both `systemd/vinowhisper-server.socket` and
-     `systemd/vinowhisper-server.service` into `~/.config/systemd/user/`,
-     then `systemctl --user enable --now vinowhisper-server.socket` — enable
-     the **socket** unit, not the service; the service has no `[Install]`
-     section on purpose, since it's only ever meant to be started by the
-     socket.
-   - Repoint the existing `Meta+H` KDE global shortcut (currently Ghostty's
-     `new-window`) to the eventual entry point.
+3. **Convert the model.** `./scripts/convert_model.sh` produces the
+   whisper-small.en OpenVINO IR, including the `--disable-stateful` flag NPU
+   requires.
+4. **Install the systemd units.** Copy both files from `systemd/` into
+   `~/.config/systemd/user/`, then
+   `systemctl --user enable --now vinowhisper-server.socket`. Enable the
+   **socket** unit, not the service. The service has no `[Install]` section on
+   purpose, it is only ever meant to be started by the socket.
+5. **Run it.** `vinowhisper-caption`, Ctrl+C to stop.
 
-See the design doc linked above for the full feasibility-spike writeup,
-benchmark numbers, and known open items before doing any of this for real.
+## Pinning it on top
+
+The status bar is Rich in an ordinary terminal, so keeping it above other
+windows is a KWin job, not the app's. Add a window rule (System Settings >
+Window Management > Window Rules) matching the terminal window, and set Keep
+Above Other Windows to Force/Yes, plus Skip Taskbar and Skip Pager if you want
+it out of the way. No titlebar and a small fixed size make it read like an
+overlay rather than a terminal.
+
+Binding the whole thing to the laptop's dictation key (which emits `Meta+H`,
+currently pointed at Ghostty's `new-window`) is still unwired. Get the loop
+behaving on hardware first.
+
+See the design doc linked at the top for the benchmark tables, the three
+export bugs hit getting to a working NPU pipeline, and the open items.
