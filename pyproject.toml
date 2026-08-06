@@ -23,6 +23,10 @@ dependencies = [
     "werkzeug",
     "requests",
     "numpy",
+    # Status bar only. Rich rather than Textual because the transcript is
+    # append-only (see stitch.py), so it belongs in the terminal's own
+    # scrollback and only the status line needs to redraw.
+    "rich",
 ]
 
 [project.scripts]

@@ -45,39 +45,57 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 | Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
 | Nothing works while muted | Not a bug in this code. A sink monitor is post-mute, so the samples really are zero. Mitigation is `--target` onto an app's own playback stream. Unverified on hardware. |
 
-Not built: the TUI (captions go to stdout today), and the KDE `Meta+H`
-shortcut still points at Ghostty's `new-window`.
+Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
 
-## Where this is heading
+## The UI, and why it is Rich and not Textual
 
-A small TUI you pin on top of other windows, showing captions plus live
-monitoring indicators. Two things follow from that, and both are already
-accounted for:
+Scope, set explicitly by the user 2026-08-06: turn on and go. No complex
+interactions, no app. Setup can be a wizard or scripts later if it needs any.
+Do not grow this into a full TUI application without being asked.
+
+Rich, not Textual, and the reason is structural rather than taste:
+
+- **The transcript is append-only.** LocalAgreement-2 means a word is never
+  revised once printed, so it belongs in the terminal's own scrollback, where
+  it survives quitting and where native selection and search still work. Only
+  the status line needs to redraw, which is exactly `rich.live.Live`.
+- **Textual owns the event loop and (by default) the alternate screen.** That
+  would put the transcript in an in-app widget: gone on quit, not pipeable,
+  and scrolling/selection reimplemented rather than inherited.
+- **There is nothing to interact with**, so Textual's widgets, focus and input
+  handling would all go unused.
+
+Reconsider only if it grows real interaction (picking a `--target` from the UI,
+a settings pane, searchable history). Because renderers are just event
+consumers, that switch is a swap, not a rewrite.
+
+### How the UI is wired
 
 - **The loop emits events, it does not print.** `caption.caption_events` is a
-  generator of `events.Ready` / `Cycle` / `Silence` / `Stopped`.
-  `TerminalRenderer` is one consumer, `session.SessionWriter` is another, and
-  the TUI is a third. Do not add prints to the loop; add fields to the events.
-- **Every stat worth showing is already on the events.** `Cycle` carries
-  index, captured_s, window_s, hop_s, rms, gain, first_piece_s, total_s, the
-  raw transcript, and confirmed/pending word lists. `Silence` carries elapsed
-  time, rms, and the sink's mute state. That covers a level meter, a
-  cycle-time readout, a pending-words indicator (the visible cost of
-  LocalAgreement-2), and a "no signal, and here is why" state.
-
-Practical notes for whoever builds it:
-
-- **Pinning is a KWin job, not an app job.** A terminal running the TUI gets
-  pinned with a KWin window rule (Keep Above, Skip Taskbar, no titlebar), same
-  as any other window. Do not go looking for a layer-shell surface unless the
-  TUI turns into a real GUI overlay.
-- **The loop is synchronous and blocks for seconds at a time.** A TUI needs
-  its own thread or an async wrapper, or the UI freezes for a whole decode.
-  Run `caption_events` on a worker thread and hand events to the UI through a
-  queue.
-- **`Silence` fires roughly twice a second** so an indicator can count up
-  live. `TerminalRenderer` throttles it to one message per silent stretch; a
-  TUI should not.
+  generator of `events.Ready` / `Cycle` / `Silence` / `Stopped`. `ui.RichRenderer`
+  is one consumer, `caption.TerminalRenderer` another, `session.SessionWriter`
+  a third. Do not add prints to the loop; add fields to the events.
+- **Every stat on the bar comes off an event.** `Cycle` carries index,
+  captured_s, window_s, hop_s, rms, gain, first_piece_s, total_s, the raw
+  transcript, and confirmed/pending word lists. `Silence` carries elapsed
+  time, rms, and the sink's mute state.
+- **Pending words are shown dimmed, on purpose.** They are the visible cost of
+  the two-cycle commit policy. Surfacing them turns "the captions are frozen"
+  into "it is still deciding" without printing anything that might be wrong.
+  This is the cheapest available fix for *perceived* lag.
+- **Partial lines cannot go to scrollback.** Live redraws its region directly
+  below whatever was last printed and expects to start at column 0, so the
+  line being built lives inside the Live region and only moves up once full.
+  `ui.RichRenderer._add_words` does its own word wrapping so no word is ever
+  split by the terminal.
+- **`Live.update()` needs `refresh=True`.** Without it the new renderable is
+  only picked up on the auto-refresh thread's next tick, so any redraw in
+  between (notably the one Live does when the transcript scrolls) paints stale
+  numbers. This was a real bug, caught in rendering tests, not theory.
+- **Pinning is a KWin window rule**, not an app concern. Do not go looking for
+  a layer-shell surface unless this becomes a real GUI overlay.
+- **`--debug` and `--plain` fall back to `TerminalRenderer`**, and so does a
+  non-TTY stdout, so piping to a file still works.
 
 ## Architecture
 
@@ -92,6 +110,7 @@ vinowhisper/
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
+  ui.py           RichRenderer, the pinned status bar
   session.py      --record writer, and reading a session back
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
   doctor.py       vinowhisper-doctor, environment and live level checks
@@ -227,10 +246,9 @@ Ordered by what would most change the design.
 3. **Does the pipeline stay healthy under sustained continuous use?** Every
    number so far comes from one-shot benchmarks. A long `--record` session is
    the cheapest way to find out, since it leaves evidence either way.
-4. **Which TUI library?** Textual is the obvious pick and would be the first
-   runtime dependency that is not already needed for the model. A plain ANSI
-   status bar over the existing renderer would cost nothing and might be
-   enough. Worth deciding before writing UI code.
+4. **Does the status bar read well on a real pinned window?** It has been
+   verified by rendering to a fixed-width buffer, never on a physical
+   terminal. Column budgets at narrow widths are the likely rough edge.
 
 ## Conventions
 

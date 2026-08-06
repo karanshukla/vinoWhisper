@@ -5,14 +5,28 @@ NPU-accelerated local live captioning for Fedora/KDE, using OpenVINO GenAI's
 [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace), same idea of
 OpenVINO doing the NPU work, different feature.
 
-Point it at whatever is playing and it prints captions in your terminal.
-Nothing leaves the machine.
+Point it at whatever is playing and it captions in your terminal. Nothing
+leaves the machine. Start it and it goes; there is nothing to interact with.
+
+```
+╭─ vinoWhisper NPU ────────────────────────────────────────────────────────────╮
+│ ● live    ███───────────  -48dB  ×12   ⟳ 1.8s █▆▆▆▅▅  lag ~3.9s  ⏳7  341 words │
+│ hearing… and the dugout emptied out behind him                                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
+
+The transcript scrolls above that bar in your terminal's own scrollback, so it
+is still there after you quit and your terminal's selection and search still
+work on it. `hearing…` is the words heard once but still waiting on a second
+cycle to agree, which is the two-cycle commit delay made visible rather than
+felt as a freeze.
 
 ```
 vinowhisper-caption                       # caption system audio
 vinowhisper-caption --source mic          # caption yourself
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save the session for replay
+vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
 
 vinowhisper-doctor                        # check NPU, model, sink, mute, live levels
 vinowhisper-replay ~/sess --restitch       # re-run the merge logic offline
@@ -208,6 +222,15 @@ line rather than as the captions appearing to be broken for 30 seconds.
    **socket** unit, not the service. The service has no `[Install]` section on
    purpose, it is only ever meant to be started by the socket.
 5. **Run it.** `vinowhisper-caption`, Ctrl+C to stop.
+
+## Pinning it on top
+
+The status bar is Rich in an ordinary terminal, so keeping it above other
+windows is a KWin job, not the app's. Add a window rule (System Settings >
+Window Management > Window Rules) matching the terminal window, and set Keep
+Above Other Windows to Force/Yes, plus Skip Taskbar and Skip Pager if you want
+it out of the way. No titlebar and a small fixed size make it read like an
+overlay rather than a terminal.
 
 Binding the whole thing to the laptop's dictation key (which emits `Meta+H`,
 currently pointed at Ghostty's `new-window`) is still unwired. Get the loop

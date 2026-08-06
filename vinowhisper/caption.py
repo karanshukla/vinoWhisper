@@ -143,6 +143,12 @@ class TerminalRenderer:
         self._started = False
         self._silence_reported = False
 
+    def __enter__(self) -> "TerminalRenderer":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
             print(f"[vinowhisper] ready on {event.device}. Ctrl+C to stop.\n", file=sys.stderr)
@@ -181,6 +187,17 @@ class TerminalRenderer:
         )
 
 
+def _renderer(plain: bool, debug: bool):
+    """The status bar when there's a terminal to draw it on, plain text
+    otherwise. Both consume the same events; neither knows about the loop.
+    """
+    if plain:
+        return TerminalRenderer(debug=debug)
+    from .ui import RichRenderer
+
+    return RichRenderer()
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live captioning via NPU Whisper.")
     parser.add_argument(
@@ -216,11 +233,17 @@ def _parse_args() -> argparse.Namespace:
         "vinowhisper-replay. Costs ~2MB per minute.",
     )
     parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Plain stdout instead of the status bar. Implied when stdout is "
+        "not a terminal, so piping to a file still works.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Per-cycle timing, levels and raw transcript to stderr, to tell "
         "apart Whisper re-decoding the same audio differently, a slow cycle, "
-        "and a bug in the stitching.",
+        "and a bug in the stitching. Implies --plain.",
     )
     return parser.parse_args()
 
@@ -255,7 +278,9 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    renderer = TerminalRenderer(debug=args.debug)
+    # The status bar redraws, so it and the raw per-cycle dump would fight over
+    # the same screen. --debug is for reading numbers, not watching captions.
+    plain = args.plain or args.debug or not sys.stdout.isatty()
     writer = session.SessionWriter(args.record) if args.record else None
     try:
         stream = caption_events(
@@ -264,10 +289,11 @@ def main() -> int:
             window_s=args.window,
             tap=writer.audio_chunk if writer else None,
         )
-        for event in stream:
-            if writer is not None:
-                writer.event(event)
-            renderer.handle(event)
+        with _renderer(plain, debug=args.debug) as renderer:
+            for event in stream:
+                if writer is not None:
+                    writer.event(event)
+                renderer.handle(event)
     except CaptureError as exc:
         print(f"\n[vinowhisper] capture failed: {exc}", file=sys.stderr)
         return 1
