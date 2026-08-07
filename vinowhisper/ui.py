@@ -16,6 +16,22 @@ Pending words are shown dimmed on their own line. They are the words that have
 been heard once but are waiting on a second cycle to agree, so surfacing them
 turns the two-cycle commit delay from "the captions are frozen" into "it is
 still deciding", without printing anything that might turn out to be wrong.
+
+The transcript above is broken into timestamped paragraphs. Punctuation is not
+inferred here and never was — whisper-small.en emits it, so the words arrive
+already punctuated and capitalized. Paragraphs it does not emit, but both
+signals needed to place them are already on the event stream: a Silence event
+is a real pause in speech, and sentence-final punctuation says where a break
+would land cleanly. Everything about the break decision is forward-only,
+because a line in scrollback cannot be taken back: a break is *scheduled* by a
+pause or a sentence end and only applied when the next word actually arrives,
+so a session never ends on a stray blank line, and a paragraph never opens that
+nothing goes into.
+
+The same append-only rule is why already-printed lines keep the wrap they were
+born with if the terminal is later resized. That is the standing cost of
+putting the transcript in scrollback rather than in a widget, and it is the
+trade this file takes on purpose.
 """
 
 import math
@@ -42,6 +58,47 @@ _METER_CEIL_DB = -5.0
 
 _SILENCE_DB = 20 * math.log10(config.SILENCE_RMS_THRESHOLD)
 _QUIET_DB = -35.0
+
+# --- Paragraphing --------------------------------------------------------
+#
+# A pause this long reads as a paragraph boundary rather than as breath. Well
+# above a normal inter-sentence gap so ordinary speech rhythm doesn't shred the
+# transcript into two-line stanzas, and comfortably above MIN_HOP_S so it takes
+# several consecutive silent cycles to trip.
+_PARAGRAPH_SILENCE_S = 2.5
+
+# Continuous speech never pauses, so silence alone would let one paragraph run
+# for the whole session. Past this many words, break at the next sentence end.
+# Chosen as a screenful-ish of prose rather than measured.
+_PARAGRAPH_MIN_WORDS = 70
+
+# "[MM:SS] ", elapsed rather than wall clock so it agrees with the clock on the
+# status bar. Suppressed entirely below _GUTTER_MIN_WIDTH: on a narrow pinned
+# window those 8 columns are worth more as text than as a timestamp.
+_GUTTER_W = 8
+_GUTTER_MIN_WIDTH = 60
+
+_SENTENCE_ENDS = ".?!"
+_CLOSERS = "\"'”’)]"
+
+# Sentence-final punctuation that isn't. The word-count floor above means an
+# occasional miss just delays a break to the next sentence, so this only needs
+# to cover what's common in speech, not every abbreviation in English.
+_ABBREVIATIONS = frozenset(
+    "mr. mrs. ms. dr. prof. st. jr. sr. vs. etc. e.g. i.e. approx. inc. ltd.".split()
+)
+
+
+def _ends_sentence(word: str) -> bool:
+    stripped = word.rstrip(_CLOSERS)
+    if not stripped or stripped[-1] not in _SENTENCE_ENDS:
+        return False
+    if stripped.lower() in _ABBREVIATIONS:
+        return False
+    # An initialism, not a sentence end: every period-separated piece is a
+    # single letter ("U.S.", "F.B.I.", "A."). Catches the whole family without
+    # needing them enumerated, unlike the abbreviation set above.
+    return not all(len(piece) <= 1 for piece in stripped.split("."))
 
 
 def _dbfs(rms: float) -> float:
@@ -97,6 +154,10 @@ class RichRenderer:
         self._line: list[str] = []  # the transcript line being built
         self._columns = 0
         self._word_count = 0
+        self._gutter = ""  # prefix for the line being built; "" until it starts
+        self._new_paragraph = True  # next line started gets a timestamp
+        self._break_pending = False  # a pause/sentence end is waiting on a word
+        self._words_in_paragraph = 0
 
         self._pending: list[str] = []
         self._rms = 0.0
@@ -117,7 +178,7 @@ class RichRenderer:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        self._flush_line(force=True)
+        self._flush_line()
         if self._live is not None:
             # Drop the status bar on the way out so the final transcript is the
             # last thing left on screen.
@@ -144,6 +205,11 @@ class RichRenderer:
             self._silent_for = event.elapsed_s
             self._muted = bool(event.sink_muted)
             self._state = ("MUTED", "red") if self._muted else ("no signal", "red")
+            if event.elapsed_s >= _PARAGRAPH_SILENCE_S:
+                # Scheduled, not applied: Silence repeats every cycle it stays
+                # quiet, and applying here would end the session on a blank
+                # line every time. _add_words spends it on the next real word.
+                self._break_pending = True
         elif isinstance(event, events.Stopped):
             self._add_words(event.flushed)
             self._pending = []
@@ -155,32 +221,71 @@ class RichRenderer:
 
     def _add_words(self, words: list[str]) -> None:
         for word in words:
+            # Spend a scheduled break here rather than where it was decided, so
+            # the blank line only ever appears with something following it.
+            if self._break_pending and self._words_in_paragraph:
+                self._end_paragraph()
+            self._break_pending = False
+
             width = self._width()
             # +1 for the space that would precede it.
             if self._columns and self._columns + 1 + len(word) > width:
                 self._flush_line()
+            if not self._line:
+                self._begin_line()
             if self._columns:
                 self._line.append(" ")
                 self._columns += 1
             self._line.append(word)
             self._columns += len(word)
             self._word_count += 1
+            self._words_in_paragraph += 1
 
-    def _flush_line(self, force: bool = False) -> None:
+            if self._words_in_paragraph >= _PARAGRAPH_MIN_WORDS and _ends_sentence(word):
+                self._break_pending = True
+
+    def _begin_line(self) -> None:
+        """Fix this line's gutter: a timestamp to open a paragraph, blank to
+        continue one, so wrapped text stays in a single hanging-indent column.
+        """
+        if not self._gutter_width():
+            self._gutter = ""
+        elif self._new_paragraph:
+            self._gutter = f"[{self._elapsed()}]".ljust(_GUTTER_W)
+        else:
+            self._gutter = " " * _GUTTER_W
+        self._new_paragraph = False
+
+    def _end_paragraph(self) -> None:
+        self._flush_line()
+        target = self._live.console if self._live is not None else self.console
+        target.print()
+        self._new_paragraph = True
+        self._words_in_paragraph = 0
+
+    def _flush_line(self) -> None:
         """Move the completed line up into the terminal's scrollback."""
         if not self._line:
             return
-        text = "".join(self._line)
         target = self._live.console if self._live is not None else self.console
-        target.print(Text(text), markup=False, highlight=False)
+        target.print(self._line_text(), markup=False, highlight=False)
         self._line = []
         self._columns = 0
-        if force:
-            pass  # nothing else to do; kept explicit so callers read clearly
+
+    def _line_text(self) -> Text:
+        text = Text()
+        if self._gutter:
+            text.append(self._gutter, style="dim")
+        text.append("".join(self._line))
+        return text
+
+    def _gutter_width(self) -> int:
+        return _GUTTER_W if self.console.width >= _GUTTER_MIN_WIDTH else 0
 
     def _width(self) -> int:
-        # Leave room for the panel border the status bar draws below.
-        return max(20, self.console.width - 4)
+        # Leave room for the panel border the status bar draws below, and for
+        # the gutter, so a wrapped line still fits once indented.
+        return max(20, self.console.width - 4 - self._gutter_width())
 
     # --- status bar ------------------------------------------------------
 
@@ -196,7 +301,7 @@ class RichRenderer:
     def _render(self) -> Group:
         rows = []
         if self._line:
-            rows.append(Text("".join(self._line)))
+            rows.append(self._line_text())
         rows.append(self._panel())
         return Group(*rows)
 

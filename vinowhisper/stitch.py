@@ -66,6 +66,23 @@ _MAX_REPEAT_UNIT_CHARS = 50
 # session's transcript just leaks memory across a long run.
 _MAX_CONFIRMED_WORDS = 200
 
+# Stripped before comparing two decodes of the same word, never before printing
+# it. Same failure mode as the capitalization flip documented in
+# _candidate_tail, and from the same cause: Whisper re-decodes the identical
+# audio with different punctuation depending on how much right-context the
+# window happened to include ("baseball." / "baseball," / "baseball" as the
+# window boundary moves through the sentence). Each flip breaks the anchor
+# mid-overlap exactly the way a case flip did, which is enough on its own to
+# drop below _MIN_MATCH_WORDS and reprint an already-shown sentence.
+_COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
+
+
+def _norm(word: str) -> str:
+    """Word as it should be *compared*, not as it should be shown."""
+    # Fall back to the raw word when stripping empties it, so a token that is
+    # nothing but punctuation ("—") doesn't normalize to "" and match anything.
+    return word.strip(_COMPARE_STRIP).lower() or word.lower()
+
 
 def collapse_repeats(text: str) -> str:
     """Collapse any unit repeated more than _MAX_CONSECUTIVE_REPEATS times."""
@@ -101,20 +118,20 @@ def _candidate_tail(confirmed: list[str], curr: list[str]) -> list[str]:
 
     anchor = confirmed[-_ANCHOR_WORDS:]
 
-    # Case-insensitive comparison, not a raw string match. Whisper flips
-    # capitalization on the same word across cycles (confirmed 2026-08-03:
-    # "world series last year." vs "World Series last year." for the same
-    # audio two cycles apart). An exact match reads that as a different word
-    # and breaks the anchor mid-overlap, which was on its own enough to drop
-    # below _MIN_MATCH_WORDS and fall through to "treat as brand new" —
-    # and two consecutive fallthrough cycles agree with each other, so the
-    # whole transcript gets reconfirmed and reprinted from scratch.
+    # Compared through _norm, not as raw strings. Whisper flips capitalization
+    # on the same word across cycles (confirmed 2026-08-03: "world series last
+    # year." vs "World Series last year." for the same audio two cycles apart)
+    # and flips punctuation the same way. An exact match reads either as a
+    # different word and breaks the anchor mid-overlap, which was on its own
+    # enough to drop below _MIN_MATCH_WORDS and fall through to "treat as brand
+    # new" — and two consecutive fallthrough cycles agree with each other, so
+    # the whole transcript gets reconfirmed and reprinted from scratch.
     #
     # autojunk=False because the heuristic it disables ("ignore items
     # appearing in >1% of a long sequence") would classify exactly the common
     # words — "the", "a", "and" — that hold an overlap match together.
     matcher = SequenceMatcher(
-        None, [w.lower() for w in anchor], [w.lower() for w in curr], autojunk=False
+        None, [_norm(w) for w in anchor], [_norm(w) for w in curr], autojunk=False
     )
 
     # Two filters, in this order, and the order matters.
@@ -168,10 +185,13 @@ class Stitcher:
 
         agree_len = 0
         for old_word, new_word in zip(self._pending, candidate):
-            if old_word.lower() != new_word.lower():  # same casing flip as above
+            if _norm(old_word) != _norm(new_word):  # same flips as above
                 break
             agree_len += 1
 
+        # Committed from `candidate`, not `self._pending`: when two decodes
+        # agree modulo punctuation, the later one saw more right-context, so
+        # its punctuation is the better guess.
         newly_confirmed = candidate[:agree_len]
         self._pending = candidate[agree_len:]
         self._commit(newly_confirmed)

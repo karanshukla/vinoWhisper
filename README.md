@@ -221,22 +221,42 @@ again on first connection.
 
 ## Setup
 
-1. **Python 3.13, not 3.14.** 3.14 made `functools.partial` a descriptor,
-   which breaks `optimum`'s export code outright. `python3.13 -m venv .venv`.
-2. **Install from the nightly OpenVINO wheel index.** Stable `openvino-genai`
-   (2026.2.1 as of writing) cannot build the NPU static Whisper pipeline:
-   ```
-   .venv/bin/pip install --pre --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly -e .
-   ```
-3. **Convert the model.** `./scripts/convert_model.sh` produces the
+1. **`uv sync`.** That's the whole install. Two things it handles that a bare
+   `pip install -e .` does not, both encoded in `pyproject.toml` rather than
+   passed as flags: it holds Python to `<3.14` (3.14 made `functools.partial`
+   a descriptor, which breaks `optimum`'s export code outright), and it routes
+   the three `openvino*` packages to the nightly wheel index with prereleases
+   allowed, because stable `openvino-genai` (2026.2.1 as of writing) cannot
+   build the NPU static Whisper pipeline.
+2. **Convert the model.** `./scripts/convert_model.sh` produces the
    whisper-small.en OpenVINO IR, including the `--disable-stateful` flag NPU
    requires.
-4. **Install the systemd units.** Copy both files from `systemd/` into
+3. **Install the systemd units.** Copy both files from `systemd/` into
    `~/.config/systemd/user/`, then
    `systemctl --user enable --now vinowhisper-server.socket`. Enable the
    **socket** unit, not the service. The service has no `[Install]` section on
    purpose, it is only ever meant to be started by the socket.
-5. **Run it.** `vinowhisper-caption`, Ctrl+C to stop.
+4. **Put the commands on PATH.** Optional but worth it, and the completion in
+   step 5 depends on it:
+   ```
+   for c in caption server replay doctor; do
+       ln -sf "$PWD/.venv/bin/vinowhisper-$c" ~/.local/bin/
+   done
+   ```
+   Symlinks rather than `uv tool install .`, deliberately: `uv sync` installs
+   the project editable with an absolute shebang, so these track your edits
+   live. `uv tool install` would build an isolated snapshot and re-resolve the
+   whole nightly OpenVINO stack into a second copy, which is several GB to get
+   a stale build.
+5. **Optional: bash completion.** Install snippet at the top of
+   `scripts/vinowhisper-completion.bash`. `--target` completes against the
+   applications actually playing audio right now, which is the one flag whose
+   values you cannot guess. It completes `vinowhisper-caption`, not `uv run
+   vinowhisper-caption` — in the latter the command word is `uv`, so uv's own
+   completion owns the line. Hence step 4.
+6. **Run it.** `vinowhisper-caption`, Ctrl+C to stop (or `uv run
+   vinowhisper-caption` if you skipped step 4). Add `--source mic` to caption
+   yourself instead of system audio.
 
 ## Pinning it on top
 

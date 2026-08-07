@@ -83,6 +83,18 @@ consumers, that switch is a swap, not a rewrite.
   the two-cycle commit policy. Surfacing them turns "the captions are frozen"
   into "it is still deciding" without printing anything that might be wrong.
   This is the cheapest available fix for *perceived* lag.
+- **Punctuation is not inferred, it is Whisper's.** whisper-small.en emits
+  punctuation and capitalization already, so confirmed words arrive with it
+  attached. Paragraphs *are* inferred, from signals already on the event
+  stream: a `Silence` past `_PARAGRAPH_SILENCE_S` is a real pause, and past
+  `_PARAGRAPH_MIN_WORDS` a sentence end breaks so continuous speech doesn't run
+  one paragraph forever. Every break is scheduled and only applied when the
+  next word actually arrives — scrollback is append-only, so a session must
+  never end on a stray blank line.
+- **The gutter is a hanging indent, and it is width-gated.** `[MM:SS]` on the
+  first line of each paragraph, blank on continuations, elapsed rather than
+  wall clock so it agrees with the status bar's clock. Suppressed entirely
+  below 60 columns, where those 8 columns are worth more as text.
 - **Partial lines cannot go to scrollback.** Live redraws its region directly
   below whatever was last printed and expects to start at column 0, so the
   line being built lives inside the Live region and only moves up once full.
@@ -170,6 +182,20 @@ hardware because each needs a specific input to show up.
    array handed to the pipeline from `np.frombuffer`, no request timeouts, no
    validation of body length or window duration, and `soundfile` still listed
    as a dependency with nothing importing it.
+
+## Bug found 2026-08-07
+
+**Punctuation flips broke the stitch anchor, same as capitalization once did.**
+`_candidate_tail` normalized case but not punctuation, and Whisper re-decodes
+the identical audio with drifting punctuation as the window boundary moves
+through a sentence ("baseball." / "baseball," / "baseball"). Each flip breaks
+the anchor mid-overlap, which is enough to fall below `_MIN_MATCH_WORDS` and
+reprint an already-shown word. Demonstrated directly: for one drifted overlap
+the old comparison returned `['baseball.', 'For', 'the', 'first', 'month,']`
+against a correct `['For', 'the', 'first', 'month,']`. Fixed with `_norm`,
+which strips punctuation for *comparison only*, never before printing. Note
+`push` commits `candidate`'s words rather than `_pending`'s: when two decodes
+agree modulo punctuation, the later saw more right-context.
 
 ## Known gotchas
 
