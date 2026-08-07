@@ -119,7 +119,10 @@ def _sink() -> list[Result]:
             Result(
                 WARN if muted else OK,
                 "muted",
-                "YES, captions off the sink monitor cannot work" if muted else "no",
+                # Not "so captions cannot work": measured 2026-08-07, this
+                # machine's monitor carries full signal while muted. Whether
+                # mute matters is what the level probe below decides.
+                "YES (the level probe below decides whether that matters)" if muted else "no",
             )
         )
 
@@ -213,8 +216,10 @@ def _verdict(results: list[Result]) -> str | None:
     if not sink_silent and muted is not None and muted.detail.startswith("YES"):
         return (
             "The sink is muted and its monitor still carries signal, so the monitor is\n"
-            "pre-volume on this setup after all. Mute is not the cause of missing captions\n"
-            "here; look at the silence gate and the level numbers instead."
+            "pre-mute on this setup. Sink mute is not the cause of missing captions here.\n"
+            "If captions stopped when you 'muted', check whether you muted the app rather\n"
+            "than the system: an app writing silence into its own stream cannot be\n"
+            "captured from anywhere, including --target."
         )
     return None
 

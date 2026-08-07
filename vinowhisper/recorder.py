@@ -11,14 +11,17 @@ silently overridden back to the mic by WirePlumber's default policy for
 desktop capture), `pw-link` shows `pw-record:input_FL <-
 effect_input.bass_eq:monitor_FL` instead of the mic.
 
-**Mute caveat, and why --target takes arbitrary nodes.** A muted sink monitors
-as digital silence, and there is no client-side fix for that: the samples
-really are zero. The sink's *volume* is a different matter and does not reach
-the monitor — measured 2026-08-07, the monitor holds ~0.7-0.9x of the playing
-app's level at both 100% and 20% sink volume (see the README table). The way
-out of mute is to capture further upstream — an individual application's
-playback stream node also exposes monitor ports, and those sit before the
-sink's mute. `--list-targets`
+**Why --target takes arbitrary nodes.** Originally to route around the sink's
+mute. That turned out to be a misdiagnosis: measured 2026-08-07, this sink's
+monitor is both pre-volume and pre-mute, holding 0.98x of the playing app's
+level while the system is muted (see the README table). The sink monitor is
+the right default and needs no rescuing.
+
+`--target` still earns its place, because an individual application's playback
+stream node also exposes monitor ports, so it can isolate one app out of
+several. What it cannot do is recover audio an app has muted at its own
+volume control: the app writes silence into its own stream, and there is no
+tap upstream of that. `--list-targets`
 enumerates them; `--target <serial>` taps one.
 """
 
@@ -94,11 +97,16 @@ def monitor_channel_volumes(sink: str | None = None) -> bool | None:
 
 
 def playback_streams() -> list[dict[str, str]]:
-    """Every application currently playing audio, as capture targets.
+    """Every application with an open playback stream, as capture targets.
 
-    These are the nodes to aim at when the system is muted: an app's own
-    playback stream is upstream of the sink's mute, so its monitor still
-    carries signal when the sink's doesn't.
+    Note "with an open stream", not "currently playing audio": this is a
+    pw-dump node walk with no level probe, so an app that is paused or muted
+    at its own volume control still appears here, carrying silence. That is a
+    real source of confusion (hit 2026-08-07) and vinowhisper-doctor's level
+    probe is what distinguishes them.
+
+    Aim at one of these to isolate a single app out of several. Not to escape
+    the sink's mute, which measured pre-mute here and needs no escaping.
     """
     dump = json.loads(_pw(["pw-dump"]))
     streams = []

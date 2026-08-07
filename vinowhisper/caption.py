@@ -36,18 +36,25 @@ _SILENCE_NOTICE_AFTER_S = 45.0
 _SILENCE_NOTICE = """
 [vinowhisper] {seconds:.0f}s with no signal on the capture target.{muted}
 
-  A muted sink monitors as digital silence, so there is nothing to transcribe.
-  (The sink's *volume* is not the problem: the monitor is pre-volume, measured
-  2026-08-07.) Capturing an application's own playback stream taps upstream of
-  the sink's mute:
+  Measured 2026-08-07: on this machine the sink monitor is both pre-volume and
+  pre-mute, carrying full signal at 20% volume and while muted. So neither the
+  volume slider nor the system mute button explains this.
 
-      vinowhisper-caption --list-targets
-      vinowhisper-caption --target <target>
+  What does, in rough order of likelihood:
 
-  Run vinowhisper-doctor to check this directly.
+    - Nothing is actually playing.
+    - You muted the *application* rather than the system. An app writing
+      silence into its own stream cannot be captured from anywhere, --target
+      included, because there is no tap upstream of an app's own volume.
+    - You are on --target and picked effect_output.bass_eq. That node is
+      downstream of the volume control and really does go silent.
+
+  Run vinowhisper-doctor to see the level on every target at once.
 """
 
-_MUTED_LINE = "\n  The default sink is currently MUTED. That is the cause."
+# Reported as context, deliberately not as a diagnosis: sink mute does not
+# silence the monitor here, so saying "that is the cause" was wrong.
+_MUTED_LINE = "\n  (The default sink is muted. On this machine that does not silence the monitor.)"
 
 
 def caption_events(

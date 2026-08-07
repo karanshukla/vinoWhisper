@@ -66,39 +66,45 @@ systemd/
   vinowhisper-server.service   the transcription server, socket-activated (no [Install])
 ```
 
-## Captions stop when you mute the system
+## "Captions stop when you mute the system"
 
-Not a bug in this code. Muting the sink means its monitor reads genuine
-digital silence, so there is nothing to transcribe.
+They don't, and this section used to say the opposite at length. Measured with
+`vinowhisper-doctor` on 2026-08-07, always against a Chrome stream playing the
+same audio as a control:
 
-**Volume, however, does not reach the monitor**, which this file used to claim
-it did. Measured with `vinowhisper-doctor` on 2026-08-07, comparing the sink
-monitor against a playing Chrome stream at two sink volumes:
-
-| Sink volume | Default sink monitor | Chrome stream | Ratio |
+| Sink state | Default sink monitor | Chrome stream | Monitor / app |
 |---|---|---|---|
-| 100% | 0.01419 | 0.02040 | 0.70 |
-| 20% | 0.05739 | 0.06610 | 0.87 |
+| 100% volume | 0.01419 | 0.02040 | 0.70 |
+| 20% volume | 0.05739 | 0.06610 | 0.87 |
+| **Muted** | **0.08578** | **0.08781** | **0.98** |
 
-The ratio is what matters, since the content differed between runs. It does
-not track the volume slider, so the monitor is pre-volume. `pw-dump` agrees:
-`monitor.channel-volumes` is unset on the node, and PipeWire defaults it to
-`false`. So lowering the volume costs you nothing, and the earlier
-threshold-lowering attempts were chasing the wrong mechanism.
+The ratio is the measurement, not the absolute levels, since the content
+differed between runs. It doesn't move with the volume slider and it doesn't
+move on mute. **The sink monitor is both pre-volume and pre-mute here.**
+`pw-dump` agrees on the volume half: `monitor.channel-volumes` is unset, and
+PipeWire defaults it to `false`.
 
-If muting is the problem, capture the application instead of the sink. An
-app's own playback stream sits upstream of the sink's mute:
+So the original diagnosis was wrong, and so was every mitigation built on it.
+Lowering the volume costs nothing. Muting the system costs nothing. The
+earlier threshold-lowering work was chasing a mechanism that isn't there.
 
-```
-vinowhisper-caption --list-targets
-vinowhisper-caption --target 527
-```
+### What actually silences the capture
 
-**Pick a real application, not `effect_output.bass_eq`.** It shows up in
-`--list-targets` as the most obvious-looking choice and is the worst one: it
-sits on the *output* side of the EQ chain, downstream of the volume control,
-and measured 0.00034 at 20% volume against the sink monitor's 0.05739. It is
-the one node here that genuinely is post-volume.
+1. **Muting the application rather than the system.** YouTube's own mute
+   button, or Chrome's slider in the KDE mixer. The app then writes silence
+   into its own PipeWire stream, and there is no tap upstream of that.
+   `--target` does not help, because the stream it would capture is the
+   silence. Note the node stays listed in `--list-targets` the whole time,
+   because that lists nodes that exist, not nodes carrying signal. This is the
+   likeliest explanation for the original report.
+2. **`--target effect_output.bass_eq`.** It shows up in `--list-targets` as
+   the most obvious-looking choice and is the worst one: it sits on the
+   *output* side of the EQ chain, downstream of both volume and mute. It
+   measured 0.00034 at 20% volume and 0.00000 while muted, in the same runs
+   where the sink monitor read 0.05739 and 0.08578. It is the one node here
+   that genuinely is post-everything. Aim at a real application instead.
+3. **Nothing playing.** `vinowhisper-doctor` says so explicitly when every
+   target reads zero.
 
 Quiet-but-not-silent audio is handled separately: every window is boosted
 toward a speech-like level (`config.TARGET_RMS`, up to 20x) before it reaches

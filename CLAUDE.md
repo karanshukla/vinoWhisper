@@ -43,7 +43,7 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 |---|---|
 | Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
 | Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
-| Nothing works while muted | Not a bug in this code: muted, the sink monitor reads 0.00000. Whether mute is the *cause* is still open, see question 1 — the 2026-08-07 muted run had nothing playing, so it had no control. Mitigation is `--target` onto an app's own playback stream. |
+| Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
 Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
 
@@ -232,17 +232,25 @@ agree modulo punctuation, the later saw more right-context.
   `pw-record` auto-connects to the default source (the mic), and
   `--target <sink>.monitor` alone is silently overridden back to the mic by
   WirePlumber's default policy for Capture-role streams.
-- **The sink monitor is pre-volume. Measured 2026-08-07, and this file
-  previously claimed the opposite.** Two `vinowhisper-doctor` runs comparing
-  the default sink's monitor against a playing Chrome stream: at 100% sink
-  volume, 0.01419 vs 0.02040 (ratio 0.70); at 20%, 0.05739 vs 0.06610 (ratio
-  0.87). The ratio is the measurement, since the content differed between
-  runs, and it does not track the slider. `monitor.channel-volumes` is unset
-  on the node and PipeWire defaults it to `false`, so the prop and the levels
-  agree. Consequences: lowering the volume costs nothing, "quiet audio" is a
-  property of the source material rather than of the volume slider, and the
-  old guess that `effect_input.bass_eq` was turning `channel-volumes` on is
-  dead.
+- **The sink monitor is pre-volume AND pre-mute. Measured 2026-08-07, and this
+  repo previously claimed the opposite in seven places, including two messages
+  printed to the user.** Three `vinowhisper-doctor` runs, each comparing the
+  default sink's monitor against a playing Chrome stream as a control: 100%
+  volume, 0.01419 vs 0.02040 (0.70); 20% volume, 0.05739 vs 0.06610 (0.87);
+  **muted, 0.08578 vs 0.08781 (0.98)**. The ratio is the measurement, since
+  the content differed between runs, and it moves with neither the slider nor
+  the mute button. `monitor.channel-volumes` is unset and PipeWire defaults it
+  to `false`, so the prop and the levels agree on the volume half.
+
+  This invalidates the "most-reported problem" and every mitigation built on
+  it. What is actually capable of silencing the capture: muting the *app*
+  (the app then writes silence into its own stream and no tap exists upstream
+  of that, so `--target` cannot help either), targeting
+  `effect_output.bass_eq`, or nothing playing.
+
+  Method note worth keeping: the first muted run looked like proof that mute
+  kills the monitor, reading 0.00000 everywhere. Nothing was playing. Without
+  an audible app stream as a control, a muted run measures nothing at all.
 - **`effect_output.bass_eq` is the trap in `--list-targets`.** It is the
   obvious-looking pick and the worst one: it sits on the output side of the EQ
   chain, downstream of the volume control, and measured 0.00034 at 20% volume
@@ -274,24 +282,16 @@ agree modulo punctuation, the later saw more right-context.
 
 Ordered by what would most change the design.
 
-1. **Is the sink monitor post-*mute*?** The volume half of this is now
-   answered (see the gotcha above: it is pre-volume). Mute is separate in
-   PipeWire, so it does not follow, and the 2026-08-07 muted run did not
-   settle it: everything read 0.00000, but `--list-targets` showed no
-   application stream at all, so nothing was playing and there was no control
-   to compare against. Re-run needs audio *confirmed playing* while muted, and
-   the thing to read is whether the app's own stream holds level while the
-   sink monitor collapses. Everything in the mute mitigation rests on this.
-2. **What is the real per-cycle time at a 12s window on dense speech?** Record
+1. **What is the real per-cycle time at a 12s window on dense speech?** Record
    a session, then `vinowhisper-replay --sweep 8,12,16,20`. If 12s is still
    multiple seconds, the next lever is trimming confirmed audio out of the
    buffer rather than shrinking the window further. That needs
    `return_timestamps`, and nobody has checked whether the NPU static pipeline
    supports it.
-3. **Does the pipeline stay healthy under sustained continuous use?** Every
+2. **Does the pipeline stay healthy under sustained continuous use?** Every
    number so far comes from one-shot benchmarks. A long `--record` session is
    the cheapest way to find out, since it leaves evidence either way.
-4. **Does the status bar read well on a real pinned window?** It has been
+3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical
    terminal. Column budgets at narrow widths are the likely rough edge.
 
