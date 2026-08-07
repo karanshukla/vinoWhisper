@@ -4,7 +4,9 @@ Most of what can go wrong here is environmental, not code: the NPU not
 enumerating, the model exported the wrong way, the sink muted, the monitor
 being post-volume. `vinowhisper-doctor` checks each one directly and says what
 it found, including a live level probe that settles the mute question by
-measurement rather than by reasoning.
+measurement rather than by reasoning. That probe is the point: the
+`monitor.channel-volumes` property answers only the *volume* half, and on
+2026-08-07 it read pre-volume on a machine whose monitor still died on mute.
 
 Run it once with audio playing normally, then again with the system muted. If
 the sink monitor drops to silence while an application stream stays audible,
@@ -122,20 +124,24 @@ def _sink() -> list[Result]:
         )
 
     monitor_volumes = recorder.monitor_channel_volumes(sink)
-    if monitor_volumes is None:
-        results.append(
-            Result(UNKNOWN, "monitor.channel-volumes", "not set on the node (PipeWire default: false)")
+    # Unset is not unknown: PipeWire defaults this to false, so an absent
+    # property is a definitive "pre-volume". Reporting it as UNKNOWN sent a
+    # real investigation chasing a non-problem on 2026-08-07.
+    #
+    # Deliberately says nothing about mute either way. Mute is a separate
+    # mechanism in PipeWire, and this machine reads false here (monitor
+    # confirmed pre-volume by level probe) while still monitoring 0.00000 when
+    # muted. The level probe below is what answers the mute question.
+    results.append(
+        Result(
+            WARN if monitor_volumes else OK,
+            "monitor.channel-volumes",
+            "true, so the monitor is post-volume: lowering the volume degrades captions"
+            if monitor_volumes
+            else "false, so the monitor is pre-volume"
+            + (" (unset, PipeWire's default)" if monitor_volumes is None else ""),
         )
-    else:
-        results.append(
-            Result(
-                WARN if monitor_volumes else OK,
-                "monitor.channel-volumes",
-                "true, so the monitor is post-volume and mute kills it"
-                if monitor_volumes
-                else "false, so the monitor should survive mute",
-            )
-        )
+    )
     return results
 
 

@@ -53,10 +53,14 @@ MIN_HOP_S = 0.5
 # quiet speech, and real quiet speech genuinely sits at the noise floor.
 SILENCE_RMS_THRESHOLD = 0.002
 
-# Whisper accuracy degrades on quiet input, and a sink monitor is (at least on
-# this machine) post-volume — so captions got worse as the volume slider went
-# down. Boost quiet windows to a speech-like level before sending. Boost only,
-# never attenuate.
+# Whisper accuracy degrades on quiet input, so boost quiet windows to a
+# speech-like level before sending. Boost only, never attenuate.
+#
+# This used to be justified by the sink monitor being post-volume. It isn't:
+# measured 2026-08-07, the monitor holds ~0.7-0.9x of the playing app's level
+# at both 100% and 20% sink volume, so the volume slider does not reach it.
+# What remains is genuinely quiet *source* material, which is real and common
+# enough (0.014 rms on ordinary web video) to keep this.
 TARGET_RMS = 0.05
 MAX_GAIN = 20.0
 

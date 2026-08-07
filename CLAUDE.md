@@ -43,7 +43,7 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 |---|---|
 | Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
 | Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
-| Nothing works while muted | Not a bug in this code. A sink monitor is post-mute, so the samples really are zero. Mitigation is `--target` onto an app's own playback stream. Unverified on hardware. |
+| Nothing works while muted | Not a bug in this code: muted, the sink monitor reads 0.00000. Whether mute is the *cause* is still open, see question 1 — the 2026-08-07 muted run had nothing playing, so it had no control. Mitigation is `--target` onto an app's own playback stream. |
 
 Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
 
@@ -232,12 +232,22 @@ agree modulo punctuation, the later saw more right-context.
   `pw-record` auto-connects to the default source (the mic), and
   `--target <sink>.monitor` alone is silently overridden back to the mic by
   WirePlumber's default policy for Capture-role streams.
-- **Sink monitors appear to be post-volume on this machine.** That is what
-  makes mute fatal and quiet audio bad. PipeWire's default for
-  `monitor.channel-volumes` is `false`, so something local is likely turning
-  it on, plausibly the `effect_input.bass_eq` filter chain. Verify with
-  `pw-cli enum-params $(pactl get-default-sink) Props` before doing anything
-  more elaborate.
+- **The sink monitor is pre-volume. Measured 2026-08-07, and this file
+  previously claimed the opposite.** Two `vinowhisper-doctor` runs comparing
+  the default sink's monitor against a playing Chrome stream: at 100% sink
+  volume, 0.01419 vs 0.02040 (ratio 0.70); at 20%, 0.05739 vs 0.06610 (ratio
+  0.87). The ratio is the measurement, since the content differed between
+  runs, and it does not track the slider. `monitor.channel-volumes` is unset
+  on the node and PipeWire defaults it to `false`, so the prop and the levels
+  agree. Consequences: lowering the volume costs nothing, "quiet audio" is a
+  property of the source material rather than of the volume slider, and the
+  old guess that `effect_input.bass_eq` was turning `channel-volumes` on is
+  dead.
+- **`effect_output.bass_eq` is the trap in `--list-targets`.** It is the
+  obvious-looking pick and the worst one: it sits on the output side of the EQ
+  chain, downstream of the volume control, and measured 0.00034 at 20% volume
+  against the sink monitor's 0.05739. It is the one node here that really is
+  post-volume. Aim `--target` at an actual application.
 - **Known upstream NPU rough edges** (as of 2026-07-30, not re-verified
   against the current nightly): open `openvino.genai` issues report a
   Whisper-turbo model hanging on NPU and unclean pipeline shutdown on NPU.
@@ -264,10 +274,14 @@ agree modulo punctuation, the later saw more right-context.
 
 Ordered by what would most change the design.
 
-1. **Is the sink monitor actually post-mute, or is something else silencing
-   it?** Everything in the mute mitigation rests on this. `vinowhisper-doctor`
-   answers it: run it once with audio playing and once muted, and compare the
-   sink monitor's level against a playing app's.
+1. **Is the sink monitor post-*mute*?** The volume half of this is now
+   answered (see the gotcha above: it is pre-volume). Mute is separate in
+   PipeWire, so it does not follow, and the 2026-08-07 muted run did not
+   settle it: everything read 0.00000, but `--list-targets` showed no
+   application stream at all, so nothing was playing and there was no control
+   to compare against. Re-run needs audio *confirmed playing* while muted, and
+   the thing to read is whether the app's own stream holds level while the
+   sink monitor collapses. Everything in the mute mitigation rests on this.
 2. **What is the real per-cycle time at a 12s window on dense speech?** Record
    a session, then `vinowhisper-replay --sweep 8,12,16,20`. If 12s is still
    multiple seconds, the next lever is trimming confirmed audio out of the

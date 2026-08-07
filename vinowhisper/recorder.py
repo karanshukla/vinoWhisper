@@ -11,13 +11,14 @@ silently overridden back to the mic by WirePlumber's default policy for
 desktop capture), `pw-link` shows `pw-record:input_FL <-
 effect_input.bass_eq:monitor_FL` instead of the mic.
 
-**Mute caveat, and why --target takes arbitrary nodes.** A sink's monitor
-carries what the sink is playing *after* its own volume and mute are applied
-(on this machine, at least — see `monitor.channel-volumes` in the README).
-Muting the system therefore silences the monitor, and there is no client-side
-fix for that: the samples really are zero. The way out is to capture further
-upstream — an individual application's playback stream node also exposes
-monitor ports, and those sit before the sink's mute. `--list-targets`
+**Mute caveat, and why --target takes arbitrary nodes.** A muted sink monitors
+as digital silence, and there is no client-side fix for that: the samples
+really are zero. The sink's *volume* is a different matter and does not reach
+the monitor — measured 2026-08-07, the monitor holds ~0.7-0.9x of the playing
+app's level at both 100% and 20% sink volume (see the README table). The way
+out of mute is to capture further upstream — an individual application's
+playback stream node also exposes monitor ports, and those sit before the
+sink's mute. `--list-targets`
 enumerates them; `--target <serial>` taps one.
 """
 
@@ -69,9 +70,10 @@ def sink_muted(sink: str = "@DEFAULT_SINK@") -> bool | None:
 def monitor_channel_volumes(sink: str | None = None) -> bool | None:
     """The `monitor.channel-volumes` node property on a sink, if readable.
 
-    This is the property that decides whether a sink's monitor is pre- or
-    post-volume, i.e. whether muting the system kills captions. PipeWire
-    defaults it to false; if it reads true here, that's the answer.
+    This decides whether a sink's monitor is pre- or post-*volume*. It is not
+    the same question as mute, which PipeWire handles separately: this machine
+    reads unset (so, false, and the levels confirm pre-volume) yet still
+    monitors as 0.00000 when muted. PipeWire defaults it to false.
     """
     try:
         target = sink or default_sink()

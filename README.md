@@ -68,40 +68,43 @@ systemd/
 
 ## Captions stop when you mute the system
 
-This is the most-reported problem and it is not a bug in this code. A sink's
-monitor carries what the sink is playing _after_ its own volume and mute are
-applied, so muting the system means the capture reads genuine digital silence.
-There is nothing to transcribe. The same mechanism is why captions got worse
-as the volume slider went down, which is what the earlier threshold-lowering
-attempts were chasing.
+Not a bug in this code. Muting the sink means its monitor reads genuine
+digital silence, so there is nothing to transcribe.
 
-Two things help:
+**Volume, however, does not reach the monitor**, which this file used to claim
+it did. Measured with `vinowhisper-doctor` on 2026-08-07, comparing the sink
+monitor against a playing Chrome stream at two sink volumes:
 
-1. **Capture the application instead of the sink.** An app's own playback
-   stream node also exposes monitor ports, and those sit upstream of the
-   sink's mute:
+| Sink volume | Default sink monitor | Chrome stream | Ratio |
+|---|---|---|---|
+| 100% | 0.01419 | 0.02040 | 0.70 |
+| 20% | 0.05739 | 0.06610 | 0.87 |
 
-   ```
-   vinowhisper-caption --list-targets
-   vinowhisper-caption --target 1043
-   ```
+The ratio is what matters, since the content differed between runs. It does
+not track the volume slider, so the monitor is pre-volume. `pw-dump` agrees:
+`monitor.channel-volumes` is unset on the node, and PipeWire defaults it to
+`false`. So lowering the volume costs you nothing, and the earlier
+threshold-lowering attempts were chasing the wrong mechanism.
 
-   The app's own per-stream volume in the KDE mixer still applies, but the
-   master mute no longer silences the capture.
+If muting is the problem, capture the application instead of the sink. An
+app's own playback stream sits upstream of the sink's mute:
 
-2. **Check `monitor.channel-volumes` on the sink.** If it is `true`, the
-   monitor is post-volume, which is consistent with what has been observed
-   here. It defaults to `false` in PipeWire, so something in the local setup
-   (plausibly the `effect_input.bass_eq` filter chain) is likely turning it
-   on. Worth confirming on hardware:
+```
+vinowhisper-caption --list-targets
+vinowhisper-caption --target 527
+```
 
-   ```
-   pw-cli enum-params $(pactl get-default-sink) Props
-   ```
+**Pick a real application, not `effect_output.bass_eq`.** It shows up in
+`--list-targets` as the most obvious-looking choice and is the worst one: it
+sits on the *output* side of the EQ chain, downstream of the volume control,
+and measured 0.00034 at 20% volume against the sink monitor's 0.05739. It is
+the one node here that genuinely is post-volume.
 
-Quiet-but-not-silent audio is handled separately: every window is now boosted
+Quiet-but-not-silent audio is handled separately: every window is boosted
 toward a speech-like level (`config.TARGET_RMS`, up to 20x) before it reaches
-the model, since Whisper's accuracy degrades on quiet input.
+the model, since Whisper's accuracy degrades on quiet input. Ordinary web
+video lands around 0.014 rms, so this earns its place on source material
+alone, independent of the volume question above.
 
 ## Latency, and the one knob that matters
 

@@ -36,9 +36,9 @@ _SILENCE_NOTICE_AFTER_S = 45.0
 _SILENCE_NOTICE = """
 [vinowhisper] {seconds:.0f}s with no signal on the capture target.{muted}
 
-  A sink's monitor carries what the sink is playing *after* its own volume and
-  mute, so a muted sink monitors as digital silence and there is nothing to
-  transcribe. Capturing an application's own playback stream taps upstream of
+  A muted sink monitors as digital silence, so there is nothing to transcribe.
+  (The sink's *volume* is not the problem: the monitor is pre-volume, measured
+  2026-08-07.) Capturing an application's own playback stream taps upstream of
   the sink's mute:
 
       vinowhisper-caption --list-targets
