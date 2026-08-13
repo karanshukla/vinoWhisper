@@ -2,3 +2,17 @@
 __pycache__/
 *.pyc
 *.egg-info/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.lcov
+htmlcov/
+dist/
+build/
+
+# recorded sessions (vinowhisper-caption --record), ~2MB per minute
+*.wav
+events.jsonl

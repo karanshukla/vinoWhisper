@@ -37,8 +37,9 @@ trade this file takes on purpose.
 import math
 import time
 from collections import deque
+from types import TracebackType
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
@@ -85,7 +86,9 @@ _CLOSERS = "\"'”’)]"
 # occasional miss just delays a break to the next sentence, so this only needs
 # to cover what's common in speech, not every abbreviation in English.
 _ABBREVIATIONS = frozenset(
-    "mr. mrs. ms. dr. prof. st. jr. sr. vs. etc. e.g. i.e. approx. inc. ltd.".split()
+    # One string rather than a list literal: this is a word list, and it reads
+    # like one.
+    "mr. mrs. ms. dr. prof. st. jr. sr. vs. etc. e.g. i.e. approx. inc. ltd.".split()  # noqa: SIM905
 )
 
 
@@ -148,6 +151,8 @@ class RichRenderer:
         self._live: Live | None = None
 
         self._device = "?"
+        self._degraded = False
+        self._device_warning = ""
         self._state = ("starting", "yellow")
         self._started_at = time.monotonic()
 
@@ -177,18 +182,28 @@ class RichRenderer:
         self._live.__enter__()
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
         self._flush_line()
         if self._live is not None:
             # Drop the status bar on the way out so the final transcript is the
             # last thing left on screen.
             self._live.update(Group(), refresh=True)
-            self._live.__exit__(*exc_info)
+            self._live.__exit__(exc_type, exc, traceback)
             self._live = None
 
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
             self._device = event.device
+            self._degraded = event.degraded
+            # First warning only: the panel title is one line and the rest is
+            # in the server's journal and in vinowhisper-doctor. What matters
+            # on screen is that this is not the NPU, not the full essay.
+            self._device_warning = event.warnings[0] if event.warnings else ""
             self._state = ("live", "green")
         elif isinstance(event, events.Cycle):
             self._state = ("live", "green")
@@ -299,7 +314,7 @@ class RichRenderer:
             self._live.update(self._render(), refresh=True)
 
     def _render(self) -> Group:
-        rows = []
+        rows: list[RenderableType] = []
         if self._line:
             rows.append(self._line_text())
         rows.append(self._panel())
@@ -311,14 +326,37 @@ class RichRenderer:
         grid.add_column(justify="right")
         grid.add_row(self._stats_left(), self._stats_right())
 
+        rows: list[Text | Table] = [grid]
+        warning = self._warning_line()
+        if warning is not None:
+            rows.append(warning)
         pending = self._pending_line()
-        body: Group | Table = Group(grid, pending) if pending else Group(grid)
+        if pending is not None:
+            rows.append(pending)
+
+        # A degraded device is a property of the whole session, not a passing
+        # state, so it colours the frame rather than blinking in a corner.
+        badge = (
+            f"[bold red]{self._device}[/bold red]"
+            if self._degraded
+            else f"[bold]{self._device}[/bold]"
+        )
         return Panel(
-            body,
-            title=f"[dim]vinoWhisper[/dim] [bold]{self._device}[/bold]",
+            Group(*rows),
+            title=f"[dim]vinoWhisper[/dim] {badge}",
             title_align="left",
-            border_style="dim",
+            border_style="red" if self._degraded else "dim",
             padding=(0, 1),
+        )
+
+    def _warning_line(self) -> Text | None:
+        if not self._degraded or not self._device_warning:
+            return None
+        return Text(
+            f"⚠ {self._device_warning}",
+            style="red",
+            overflow="ellipsis",
+            no_wrap=True,
         )
 
     def _stats_left(self) -> Text:

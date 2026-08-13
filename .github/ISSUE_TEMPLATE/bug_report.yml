@@ -1,0 +1,58 @@
+name: Bug report
+description: Something is wrong with the captions, the setup, or the hardware detection.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Almost everything that goes wrong here is environmental — the NPU not
+        enumerating, the wrong model export, no audio on the capture target.
+        `vinowhisper-doctor --json` answers all of that in one paste, so it is
+        the first thing asked for below.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: vinowhisper-doctor --json
+      description: Run it with audio playing. It reports no personal data beyond your distro, device names and audio node names.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Setup / install
+        - Hardware detection (NPU, GPU, CPU fallback)
+        - Audio capture (no signal, wrong source)
+        - Caption accuracy or wording
+        - Caption latency
+        - The status bar / TUI
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log, if the server is involved
+      description: "`journalctl --user -u vinowhisper-server.service -n 100 --no-pager`"
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I ran `vinowhisper-doctor` and it did not already tell me the answer.
+          required: true

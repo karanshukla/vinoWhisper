@@ -1,5 +1,11 @@
+; Reference copy — see vinowhisper-server.service. The socket unit is the one
+; to enable (`systemctl --user enable --now vinowhisper-server.socket`): it
+; owns the port with no process behind it, and systemd spawns the service on
+; the first connection.
+
 [Unit]
-Description=vinoWhisper NPU transcription server socket
+Description=vinoWhisper transcription server socket
+Documentation=https://github.com/karanshukla/vinoWhisper
 
 [Socket]
 ListenStream=127.0.0.1:8099

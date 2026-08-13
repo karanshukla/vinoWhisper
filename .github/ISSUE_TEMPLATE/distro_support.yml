@@ -1,0 +1,44 @@
+name: Distro support
+description: A package name, driver path or capture setup is wrong for your distro.
+labels: ["distro"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fedora is the only family where the package names in
+        `vinowhisper/distro.py` are confirmed by use. Everything else was
+        derived from the distro's package index rather than from a working
+        install, so wrong names are expected rather than surprising — and this
+        is the fastest thing in the project to fix.
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distro
+      description: The PRETTY_NAME from /etc/os-release.
+      placeholder: openSUSE Tumbleweed
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What vinoWhisper suggested, and what actually worked
+      description: The command it printed, and the one that installed the thing.
+      placeholder: |
+        suggested: sudo zypper install -y pipewire-tools
+        worked:    sudo zypper install -y pipewire-utils
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Which capability
+      options:
+        - PipeWire tools (pw-record, pw-dump)
+        - PulseAudio tools (pactl, parec)
+        - NPU driver / level-zero
+        - GPU compute runtime
+    validations:
+      required: true

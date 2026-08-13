@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "The OpenVINO stack is pinned to a nightly index and moves on upstream's schedule, not Renovate's — bumping it is a manual, hardware-verified decision. See pyproject.toml and the deps-canary workflow.",
+      "matchManagers": ["pep621"],
+      "enabled": false
+    },
+    {
+      "description": "Dev tooling is safe to keep current: none of it ships to users.",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"],
+      "enabled": true,
+      "schedule": ["before 9am on Monday"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "enabled": true,
+      "schedule": ["before 9am on Monday"]
+    }
+  ]
+}

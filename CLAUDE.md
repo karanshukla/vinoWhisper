@@ -47,6 +47,16 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 
 Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
 
+**2026-08-13: distribution and the "other" aspects.** The tool now assumes
+less about the machine it runs on: automatic NPU>GPU>CPU selection with loud
+warnings anywhere below NPU, a PulseAudio capture fallback, a distro table
+covering eight package families, `vinowhisper-setup` (guided install,
+generated systemd units — the checked-in unit used to hardcode
+`~/Development/vinoWhisper`), `scripts/install.sh`, a test suite, and CI.
+**None of the new hardware paths have run on hardware**: the GPU and CPU
+fallbacks, the stateful export, and every non-Fedora package name are
+unverified. Treat them as best-effort until someone reports otherwise.
+
 ## The UI, and why it is Rich and not Textual
 
 Scope, set explicitly by the user 2026-08-06: turn on and go. No complex
@@ -113,9 +123,12 @@ consumers, that switch is a swap, not a rewrite.
 
 ```
 vinowhisper/
-  config.py       paths, ports, window sizing, levels, timeouts
+  config.py       paths, ports, window sizing, levels, timeouts, per-device model dirs
   audio.py        RingBuffer (fixed capacity, thread-safe), rms(), normalize()
-  recorder.py     Recorder, pw-record subprocess feeding the ring buffer
+  capture.py      which audio backend exists (pw-record/parec), argv, node enumeration
+  recorder.py     Recorder, the capture subprocess feeding the ring buffer
+  devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight
+  distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP client
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
   transcriber.py  WhisperTranscriber, wraps WhisperPipeline, serialized by a lock
@@ -125,8 +138,31 @@ vinowhisper/
   ui.py           RichRenderer, the pinned status bar
   session.py      --record writer, and reading a session back
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
-  doctor.py       vinowhisper-doctor, environment and live level checks
+  doctor.py       vinowhisper-doctor, environment checks + --json
+  wizard.py       vinowhisper-setup, the guided install
+tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
+scripts/          install.sh (bootstrap), convert_model.sh (both exports), completion
+.github/          CI, release, dependency canary, Bandit, templates
 ```
+
+**Two device paths, two model exports, and this is the trap.** NPU needs the
+`--disable-stateful` export; that same export cannot run on CPU at all
+(`beam_idx` port error). So the CPU/GPU fallback needs a *second* export in a
+second directory — `config.model_dir(kind)` decides which, and
+`transcriber._check_export()` fails with the command to run rather than dying
+inside the pipeline constructor. Device selection is `devices.select()`:
+NPU > GPU > CPU for "auto", an explicit `--device` is refused rather than
+downgraded, and anything below NPU carries warnings that surface in the server
+journal, `/health`, the `Ready` event, the status bar (red border + `⚠`) and
+the doctor.
+
+**Capture has two backends.** `capture.py` prefers `pw-record` and falls back
+to `parec`; `record_argv()` is a pure function of (source, target, backend) so
+the flags are testable with no audio server present. Per-application `--target`
+is PipeWire-only and says so on PulseAudio rather than capturing the wrong
+thing. `pactl` is used where present regardless of backend (pipewire-pulse
+provides it), and PipeWire's `default.audio.sink` metadata is the fallback when
+it isn't.
 
 **Two processes, not one script.** NPU model load takes 10-30s, so something
 has to hold the loaded model across sessions. Loopback HTTP for simplicity,
@@ -294,13 +330,40 @@ Ordered by what would most change the design.
 3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical
    terminal. Column budgets at narrow widths are the likely rough edge.
+4. **Does the CPU/GPU fallback actually run?** The stateful export has never
+   been produced, let alone loaded. The plumbing is there and the failure
+   modes are handled; whether `WhisperPipeline` on CPU with that export is
+   usable at 12s windows is unknown. Cheapest check:
+   `./scripts/convert_model.sh --variant stateful` then
+   `vinowhisper-server --device CPU`.
+5. **Are the non-Fedora package names right?** Eight families in `distro.py`,
+   one of them confirmed by use. Each wrong name is a one-line fix and there is
+   an issue template pointed at exactly this.
+6. **Does the PulseAudio backend capture anything?** `parec` argv is unit-
+   tested; it has never run against a PulseAudio server.
 
 ## Conventions
 
-- No test suite. This is a personal single-machine tool, not a distributed
-  package. Keep it that way unless it grows a reason not to. Throwaway
-  verification scripts against a stubbed pipeline are fine and were used for
-  the 2026-08-06 review, they just do not live in the repo.
+- **There is a test suite now** (2026-08-13), reversing the earlier "keep this
+  test-free" convention. The reason for the reversal: the tool stopped being
+  single-machine, and CI has no NPU, no audio server and no OpenVINO. So the
+  hard rule is that constraint, not the tests — **nothing under `tests/` may
+  import `openvino`, `vinowhisper.transcriber` or `vinowhisper.server`**, and
+  anything that would shell out is monkeypatched at the `capture` boundary.
+  The old throwaway verification scripts from the 2026-08-06/08-07 reviews are
+  in there as fixtures now, which is where they should have been.
+- `uv run poe check` is the whole gate (ruff, ruff format, mypy, pytest). CI
+  installs `--group dev` only, never `uv sync`: a full resolve pulls the
+  OpenVINO nightly wheels, which get pruned upstream on their own schedule, so
+  gating pull requests on them means red CI for unrelated reasons. The full
+  resolve is checked weekly by `deps-canary.yml` instead.
+- A failure should name its fix. Nearly every error path here prints the
+  command that resolves it, and on anything environmental it prints the
+  command *for the local distro* (`distro.remediation`). An exception that only
+  says what went wrong is half-finished.
+- Measured claims carry a date. This file and the README both previously
+  asserted the opposite of the truth about the sink monitor in seven places;
+  the dates are what made that recoverable.
 - Keep `wildcat-lake-linux/input/f5-voice-typing.md` in sync with real
   decisions made here. That repo is the durable investigation record, this
   repo is just the code.

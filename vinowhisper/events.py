@@ -12,9 +12,19 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass(frozen=True)
 class Ready:
-    """Server answered its health check; the loop is about to start."""
+    """Server answered its health check; the loop is about to start.
+
+    Carries the device the model actually loaded on, not the one anyone asked
+    for. `degraded` is the whole point: the fallback to GPU or CPU happens
+    inside the server, and without this the UI would cheerfully caption at
+    triple the lag with no indication of why.
+    """
 
     device: str
+    device_full: str = ""
+    degraded: bool = False
+    warnings: list[str] = field(default_factory=list)
+    server_version: str = ""
 
 
 @dataclass(frozen=True)

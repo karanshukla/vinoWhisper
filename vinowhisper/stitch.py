@@ -184,7 +184,9 @@ class Stitcher:
         candidate = _candidate_tail(self._confirmed, curr)
 
         agree_len = 0
-        for old_word, new_word in zip(self._pending, candidate):
+        # strict=False: the two are different lengths by construction —
+        # `candidate` is what this cycle saw, `_pending` what the last one did.
+        for old_word, new_word in zip(self._pending, candidate, strict=False):
             if _norm(old_word) != _norm(new_word):  # same flips as above
                 break
             agree_len += 1

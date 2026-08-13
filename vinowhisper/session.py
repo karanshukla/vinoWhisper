@@ -12,8 +12,8 @@ merge-logic changes checkable rather than vibes.
 """
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 
@@ -34,7 +34,9 @@ class SessionWriter:
 
         self.directory = directory
         directory.mkdir(parents=True, exist_ok=True)
-        self._wav = wave.open(str(directory / AUDIO_NAME), "wb")
+        # Held open for the whole session and closed in close(), so a
+        # context manager here would close it immediately.
+        self._wav = wave.open(str(directory / AUDIO_NAME), "wb")  # noqa: SIM115
         self._wav.setnchannels(1)
         self._wav.setsampwidth(2)
         self._wav.setframerate(config.SAMPLE_RATE_HZ)
@@ -73,8 +75,6 @@ def read_audio(directory: Path) -> np.ndarray:
 
     with wave.open(str(directory / AUDIO_NAME), "rb") as handle:
         if handle.getframerate() != config.SAMPLE_RATE_HZ:
-            raise ValueError(
-                f"expected {config.SAMPLE_RATE_HZ}Hz, got {handle.getframerate()}Hz"
-            )
+            raise ValueError(f"expected {config.SAMPLE_RATE_HZ}Hz, got {handle.getframerate()}Hz")
         raw = handle.readframes(handle.getnframes())
     return np.frombuffer(raw, dtype="<i2").astype(np.float32) / _PCM_SCALE

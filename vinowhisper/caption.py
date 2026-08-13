@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from . import audio, config, events, session
+from . import __version__, audio, capture, config, events, session
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher
@@ -66,7 +66,13 @@ def caption_events(
     """Run the capture/transcribe/stitch loop, yielding events until Ctrl+C."""
     client = TranscriptionClient()
     health = client.wait_ready()
-    yield events.Ready(device=str(health.get("device", "?")))
+    yield events.Ready(
+        device=str(health.get("device", "?")),
+        device_full=str(health.get("device_full_name", "")),
+        degraded=bool(health.get("degraded", False)),
+        warnings=[str(warning) for warning in health.get("warnings", [])],
+        server_version=str(health.get("version", "")),
+    )
 
     stitcher = Stitcher()
     index = 0
@@ -158,7 +164,11 @@ class TerminalRenderer:
 
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
-            print(f"[vinowhisper] ready on {event.device}. Ctrl+C to stop.\n", file=sys.stderr)
+            device = f"{event.device} ({event.device_full})" if event.device_full else event.device
+            print(f"[vinowhisper] ready on {device}. Ctrl+C to stop.", file=sys.stderr)
+            for warning in event.warnings:
+                print(f"[vinowhisper] WARNING: {warning}", file=sys.stderr)
+            print(file=sys.stderr)
         elif isinstance(event, events.Cycle):
             self._silence_reported = False
             if self.debug:
@@ -252,14 +262,27 @@ def _parse_args() -> argparse.Namespace:
         "apart Whisper re-decoding the same audio differently, a slow cycle, "
         "and a bug in the stitching. Implies --plain.",
     )
+    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     return parser.parse_args()
 
 
 def _list_targets() -> int:
+    active = capture.backend()
     streams = playback_streams()
     if not streams:
-        print("No applications are currently playing audio.", file=sys.stderr)
+        print(f"Nothing to target on the {active.name} backend.", file=sys.stderr)
+        if active.supports_app_capture:
+            print("No applications are currently playing audio.", file=sys.stderr)
         return 1
+
+    if not active.supports_app_capture:
+        # Saying this once here is cheaper than the alternative, which is
+        # someone concluding the tool cannot see their browser.
+        print(
+            f"[{active.name}] monitor sources only — PulseAudio cannot tap a single\n"
+            "application's stream. Install PipeWire for per-application capture.",
+            file=sys.stderr,
+        )
     width = max(len(stream["app"]) for stream in streams)
     for stream in streams:
         print(f"  --target {stream['target']:<8} {stream['app']:<{width}}  {stream['media']}")
@@ -268,8 +291,12 @@ def _list_targets() -> int:
 
 def main() -> int:
     args = _parse_args()
-    if args.list_targets:
-        return _list_targets()
+    try:
+        if args.list_targets:
+            return _list_targets()
+    except CaptureError as exc:
+        print(f"[vinowhisper] {exc}", file=sys.stderr)
+        return 1
 
     if not 0 < args.window <= config.MAX_WINDOW_S:
         print(
@@ -305,7 +332,13 @@ def main() -> int:
         print(f"\n[vinowhisper] capture failed: {exc}", file=sys.stderr)
         return 1
     except requests.RequestException as exc:
-        print(f"\n[vinowhisper] server not reachable at {config.SERVER_URL}: {exc}", file=sys.stderr)
+        print(
+            f"\n[vinowhisper] server not reachable at {config.SERVER_URL}: {exc}\n"
+            "  systemctl --user status vinowhisper-server.socket\n"
+            "  vinowhisper-doctor        # what is actually missing\n"
+            "  vinowhisper-setup         # install the units if they were never installed",
+            file=sys.stderr,
+        )
         return 1
     except KeyboardInterrupt:
         print(flush=True)

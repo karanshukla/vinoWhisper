@@ -1,11 +1,11 @@
 # Bash completion for the vinowhisper entry points.
 #
-# Install (user-level, no root):
+# `vinowhisper-setup` installs this for you. By hand (user-level, no root):
 #
 #     mkdir -p ~/.local/share/bash-completion/completions
 #     ln -sf "$PWD/scripts/vinowhisper-completion.bash" \
 #            ~/.local/share/bash-completion/completions/vinowhisper-caption
-#     for c in server replay doctor; do
+#     for c in server replay doctor setup; do
 #         ln -sf vinowhisper-caption \
 #                ~/.local/share/bash-completion/completions/vinowhisper-$c
 #     done
@@ -16,8 +16,8 @@
 #
 # Note this completes `vinowhisper-caption ...`, not `uv run vinowhisper-caption
 # ...` — in the latter the command word is `uv`, so uv's own completion owns the
-# line and never reaches this. `uv tool install .` puts the entry points on PATH
-# and makes the bare form work.
+# line and never reaches this. vinowhisper-setup symlinks the entry points into
+# ~/.local/bin, which is what makes the bare form work.
 
 # Live capture targets, via the same --list-targets the user would run, so the
 # pw-dump parse stays in one place (recorder.playback_streams).
@@ -76,7 +76,7 @@ _vinowhisper() {
             esac
             mapfile -t COMPREPLY < <(compgen -W "
                 --source --target --list-targets --window --record
-                --plain --debug --help" -- "$cur")
+                --plain --debug --version --help" -- "$cur")
             ;;
         vinowhisper-replay)
             case "$prev" in
@@ -93,8 +93,22 @@ _vinowhisper() {
                 _vinowhisper_dirs "$cur"
             fi
             ;;
+        vinowhisper-doctor)
+            mapfile -t COMPREPLY < <(compgen -W "--json --no-probe --version --help" -- "$cur")
+            ;;
+        vinowhisper-setup|vinowhisper-server)
+            if [[ $prev == --device ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "auto NPU GPU CPU" -- "$cur")
+                return
+            fi
+            if [[ $cmd == vinowhisper-setup ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "
+                    --yes --dry-run --device --print-units --version --help" -- "$cur")
+            else
+                mapfile -t COMPREPLY < <(compgen -W "--device --version --help" -- "$cur")
+            fi
+            ;;
         *)
-            # doctor and server take no arguments of their own.
             mapfile -t COMPREPLY < <(compgen -W "--help" -- "$cur")
             ;;
     esac
@@ -104,3 +118,4 @@ complete -F _vinowhisper vinowhisper-caption
 complete -F _vinowhisper vinowhisper-server
 complete -F _vinowhisper vinowhisper-replay
 complete -F _vinowhisper vinowhisper-doctor
+complete -F _vinowhisper vinowhisper-setup
