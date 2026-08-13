@@ -9,7 +9,9 @@ model-load cost again. That cold-start/idle-unload trade is deliberate — see
 README.md.
 """
 
+import argparse
 import os
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -18,7 +20,7 @@ import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import audio, config
+from . import __version__, audio, config, devices
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
@@ -65,7 +67,9 @@ def transcribe() -> Response:
 
 @app.route("/health", methods=["GET"])
 def health() -> Response:
-    return jsonify({"status": "ok", "device": transcriber.device})
+    # The client blocks on this through a cold start, so it is also the one
+    # chance to tell the UI that it is about to caption on the wrong device.
+    return jsonify({"status": "ok", "version": __version__, **transcriber.describe()})
 
 
 def _error(message: str) -> Response:
@@ -109,8 +113,43 @@ def _systemd_socket_fd() -> int | None:
     return 3 if listen_fds >= 1 else None  # SD_LISTEN_FDS_START
 
 
-def main() -> None:
-    transcriber.load()
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="vinoWhisper transcription server.")
+    parser.add_argument(
+        "--device",
+        default=config.DEFAULT_DEVICE,
+        metavar="NPU|GPU|CPU|auto",
+        help="OpenVINO device to load the model on. 'auto' (the default) walks "
+        f"{'>'.join(devices.PREFERENCE)} and warns when it lands below NPU; an "
+        "explicit device is refused rather than downgraded if it is unavailable.",
+    )
+    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    global transcriber
+    transcriber = WhisperTranscriber(device=args.device)
+
+    # Selected before loading, so the "wrong device" warning reaches the
+    # journal even if the load itself then fails on a missing export.
+    try:
+        selection = transcriber.select_device()
+    except devices.DeviceError as exc:
+        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+        return 1
+
+    print(f"[vinowhisper-server] loading on {selection.device}", file=sys.stderr, flush=True)
+    for warning in selection.warnings:
+        print(f"[vinowhisper-server] WARNING: {warning}", file=sys.stderr, flush=True)
+
+    try:
+        transcriber.load()
+    except (FileNotFoundError, RuntimeError) as exc:
+        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+        return 1
+
     threading.Thread(
         target=_idle_watchdog,
         args=(config.IDLE_TIMEOUT_S,),
@@ -129,7 +168,8 @@ def main() -> None:
     fd = _systemd_socket_fd()
     server = make_server(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
     server.serve_forever()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

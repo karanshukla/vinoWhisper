@@ -1,8 +1,40 @@
 """Shared paths and tunables — single source of truth for server and client."""
 
+import os
 from pathlib import Path
 
-MODEL_DIR = Path.home() / ".local/share/vinowhisper/models/whisper-small.en-ov"
+
+def _data_home() -> Path:
+    # XDG rather than a hardcoded ~/.local/share: it costs one function and it
+    # is the difference between working and not on a machine that relocates it.
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+
+
+MODEL_ID = "openai/whisper-small.en"
+MODEL_ROOT = _data_home() / "vinowhisper/models"
+
+# Two exports of the same model, and which one you need depends on the device.
+#
+# NPU requires --disable-stateful, which produces the separate decoder_with_past
+# KV-cache submodel its static pipeline needs. That same export cannot run on
+# CPU at all: it fails on a beam_idx port error, which is how the NPU was
+# confirmed to be doing real work rather than silently falling back.
+#
+# So a CPU/GPU fallback is not just a different `device=` string, it needs a
+# second, ordinary (stateful) export sitting in a second directory. The NPU
+# path keeps its original name so nobody has to re-export to upgrade.
+MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
+STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"
+
+
+def model_dir(device_kind: str) -> Path:
+    """Where the export for this class of device lives."""
+    return MODEL_DIR if device_kind.upper() == "NPU" else STATEFUL_MODEL_DIR
+
+
+# "auto" walks devices.PREFERENCE (NPU, then GPU, then CPU). Override with
+# `vinowhisper-server --device`, which refuses rather than downgrades.
+DEFAULT_DEVICE = "auto"
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8099
