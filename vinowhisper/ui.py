@@ -291,7 +291,11 @@ class RichRenderer:
         text = Text()
         if self._gutter:
             text.append(self._gutter, style="dim")
-        text.append("".join(self._line))
+        # Bold and full-brightness: the confirmed transcript is the thing
+        # actually being read, so it gets the strongest legibility Rich text
+        # styling can give it. The pending "hearing…" line stays dim/italic on
+        # purpose (see module docstring), this only touches committed words.
+        text.append("".join(self._line), style="bold bright_white")
         return text
 
     def _gutter_width(self) -> int:

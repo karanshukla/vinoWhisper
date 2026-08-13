@@ -44,7 +44,12 @@ def test_the_generated_service_points_into_this_environment():
     service, _ = wizard.unit_files()
     exec_start = next(line for line in service.splitlines() if line.startswith("ExecStart="))
     assert str(sys.executable) in exec_start or "vinowhisper-server" in exec_start
-    assert "Development/vinoWhisper" not in service
+    # The old checked-in unit hardcoded this literal, unexpanded specifier
+    # path regardless of where the repo actually lived. A dynamically
+    # generated ExecStart legitimately contains "Development/vinoWhisper" as
+    # a substring on any machine whose checkout happens to live there, so
+    # this must check for the literal old string, not that substring.
+    assert "%h/Development/vinoWhisper" not in service
 
 
 def test_the_service_is_socket_activated_only():
