@@ -1,23 +1,31 @@
-"""Answers the questions that currently need five hand-run commands.
+"""Answers the questions that would otherwise need a dozen hand-run commands.
 
-Most of what can go wrong here is environmental, not code: the NPU not
-enumerating, the model exported the wrong way, the sink muted, the monitor
-being post-volume. `vinowhisper-doctor` checks each one directly and says what
-it found, including a live level probe that settles the mute question by
-measurement rather than by reasoning. That probe is the point: the
-`monitor.channel-volumes` property answers only the *volume* half, and on
-2026-08-07 it read pre-volume on a machine whose monitor still died on mute.
+Most of what goes wrong here is environmental, not code: the NPU not
+enumerating, the model exported the wrong way for the device it ended up on,
+no capture tool installed, nothing actually playing. Each check below asks the
+system directly and reports what it found, and where an answer is actionable it
+prints the command for *this* distro rather than for Fedora.
 
-Run it once with audio playing normally, then again with the system muted. If
-the sink monitor drops to silence while an application stream stays audible,
-that is the whole mute problem, confirmed, and --target is the fix.
+Two design rules worth keeping:
+
+- **Measure, don't reason.** The level probe exists because the
+  `monitor.channel-volumes` property answers only the volume half of the
+  question, and on 2026-08-07 a whole investigation went the wrong way on
+  reasoning alone. Run it once with audio playing normally and once with the
+  system muted; if the sink monitor drops to silence while an application
+  stream stays audible, that is the mute problem confirmed by measurement.
+- **--json is for bug reports.** Same checks, machine-readable, no probing
+  prompts. Paste it into an issue and the environment stops being a guess.
 """
 
+import argparse
+import json
+import shutil
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
-from . import audio, config, recorder
+from . import __version__, audio, capture, config, devices, distro, recorder
 
 _PROBE_S = 2.0
 
@@ -39,26 +47,24 @@ def _python() -> Result:
     return Result(OK, "python", text)
 
 
+def _distro() -> Result:
+    info = distro.detect()
+    if not info.known:
+        return Result(
+            WARN,
+            "distro",
+            f"{info.name} — unrecognised, so package names below are generic advice",
+        )
+    return Result(OK, "distro", str(info))
+
+
 def _openvino() -> list[Result]:
     try:
         import openvino
     except ImportError as exc:
-        return [Result(FAIL, "openvino", str(exc))]
+        return [Result(FAIL, "openvino", f"{exc} — run `uv sync`")]
 
     results = [Result(OK, "openvino", openvino.__version__)]
-    try:
-        devices = openvino.Core().available_devices
-    except Exception as exc:  # noqa: BLE001 - any driver problem shows up here
-        return results + [Result(FAIL, "devices", str(exc))]
-
-    npu = [device for device in devices if device.startswith("NPU")]
-    results.append(
-        Result(
-            OK if npu else FAIL,
-            "npu",
-            ", ".join(devices) if npu else f"no NPU among {devices}",
-        )
-    )
     try:
         import openvino_genai
 
@@ -68,23 +74,99 @@ def _openvino() -> list[Result]:
     return results
 
 
-def _model() -> Result:
-    directory = config.MODEL_DIR
-    if not directory.is_dir():
-        return Result(FAIL, "model", f"{directory} missing; run scripts/convert_model.sh")
-    # The separate decoder_with_past submodel is the tell that the export used
-    # --disable-stateful, which the NPU static pipeline requires.
-    with_past = list(directory.glob("*decoder_with_past*.xml"))
-    if not with_past:
-        return Result(
-            FAIL,
-            "model",
-            "no decoder_with_past submodel; re-export with --disable-stateful",
+def _devices() -> list[Result]:
+    """What OpenVINO can run on, which one gets picked, and why not the NPU."""
+    try:
+        inventory = devices.available()
+    except devices.DeviceError as exc:
+        return [Result(FAIL, "devices", str(exc))]
+
+    results = [
+        Result(OK, "devices", ", ".join(str(device) for device in inventory) or "none"),
+    ]
+
+    npu = [device for device in inventory if device.kind == "NPU"]
+    if npu:
+        results.append(Result(OK, "npu", str(npu[0])))
+    else:
+        results.append(Result(FAIL, "npu", "not enumerated by OpenVINO"))
+        # The interesting part: kernel node, permissions, then the userspace
+        # package for this distro. "No NPU" on its own fixes nothing.
+        for note in devices.npu_preflight():
+            status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
+            results.append(Result(status, f"npu: {note.label}", note.detail))
+        remedy = distro.remediation(distro.NPU_DRIVER)
+        results.append(
+            Result(WARN, "npu: userspace driver", "\n" + "\n".join(remedy.lines()).lstrip())
         )
-    return Result(OK, "model", str(directory))
+
+    try:
+        selection = devices.select(config.DEFAULT_DEVICE, inventory)
+    except devices.DeviceError as exc:
+        results.append(Result(FAIL, "selected device", str(exc)))
+        return results
+
+    results.append(
+        Result(
+            OK if not selection.degraded else WARN,
+            "selected device",
+            f"{selection.device.name}"
+            + ("" if not selection.degraded else " — NOT the NPU, captions will lag further"),
+        )
+    )
+    return results
 
 
-def _server() -> Result:
+def _models() -> list[Result]:
+    """Both exports, checked against the device that would actually be used."""
+    try:
+        inventory = devices.available()
+        needed_kind = devices.select(config.DEFAULT_DEVICE, inventory).kind
+    except devices.DeviceError:
+        needed_kind = "NPU"
+
+    results = []
+    for kind, variant, directory in (
+        ("NPU", "npu", config.MODEL_DIR),
+        ("CPU/GPU", "stateful", config.STATEFUL_MODEL_DIR),
+    ):
+        required = (needed_kind == "NPU") if kind == "NPU" else (needed_kind != "NPU")
+        label = f"model ({variant})"
+        if not directory.is_dir():
+            results.append(
+                Result(
+                    FAIL if required else UNKNOWN,
+                    label,
+                    f"not exported at {directory}"
+                    + (
+                        f" — run ./scripts/convert_model.sh --variant {variant}"
+                        if required
+                        else " (only needed if you run on this device class)"
+                    ),
+                )
+            )
+            continue
+
+        # The separate decoder_with_past submodel is the tell that the export
+        # used --disable-stateful, which the NPU static pipeline requires and
+        # which CPU/GPU cannot load at all.
+        has_with_past = any(directory.glob("*decoder_with_past*.xml"))
+        wrong = has_with_past if kind != "NPU" else not has_with_past
+        if wrong:
+            results.append(
+                Result(
+                    FAIL if required else WARN,
+                    label,
+                    f"{directory} is the wrong export for {kind} — "
+                    f"re-run ./scripts/convert_model.sh --variant {variant}",
+                )
+            )
+        else:
+            results.append(Result(OK, label, str(directory)))
+    return results
+
+
+def _server() -> list[Result]:
     import requests
 
     try:
@@ -93,25 +175,79 @@ def _server() -> Result:
             timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
         )
         response.raise_for_status()
-        return Result(OK, "server", f"{config.SERVER_URL} on {response.json().get('device')}")
+        payload = response.json()
     except requests.RequestException as exc:
-        return Result(
-            WARN,
-            "server",
-            f"not reachable ({exc.__class__.__name__}); "
-            "systemctl --user status vinowhisper-server.socket",
+        return [
+            Result(
+                WARN,
+                "server",
+                f"not reachable ({exc.__class__.__name__}); "
+                "systemctl --user status vinowhisper-server.socket",
+            )
+        ]
+    except ValueError:
+        return [Result(FAIL, "server", f"{config.SERVER_URL}/health returned non-JSON")]
+
+    results = [Result(OK, "server", f"{config.SERVER_URL} on {payload.get('device', '?')}")]
+    if payload.get("version") and payload["version"] != __version__:
+        # A stale resident server is easy to miss: it self-exits only after
+        # IDLE_TIMEOUT_S, so an upgrade does not take effect until it does.
+        results.append(
+            Result(
+                WARN,
+                "server version",
+                f"server is {payload['version']}, client is {__version__} — "
+                "systemctl --user restart vinowhisper-server.service",
+            )
         )
+    for warning in payload.get("warnings", []):
+        results.append(Result(WARN, "server device", str(warning)))
+    return results
+
+
+def _audio_tools() -> list[Result]:
+    backends = capture.available_backends()
+    if not backends:
+        info = distro.detect()
+        return [
+            Result(
+                FAIL,
+                "capture backend",
+                "neither pw-record (PipeWire) nor parec (PulseAudio) is installed\n"
+                + "\n".join(distro.remediation(distro.AUDIO_PIPEWIRE, info).lines()),
+            )
+        ]
+
+    active = backends[0]
+    results = [
+        Result(
+            OK,
+            "capture backend",
+            f"{active.name} via {active.record}"
+            + ("" if active.supports_app_capture else " (no per-application capture)"),
+        )
+    ]
+    for tool in ("pactl", "pw-dump"):
+        if shutil.which(tool) is None:
+            results.append(
+                Result(
+                    UNKNOWN if tool == "pw-dump" else WARN,
+                    f"tool: {tool}",
+                    "not installed — some checks below degrade to 'unknown'",
+                )
+            )
+    return results
 
 
 def _sink() -> list[Result]:
     try:
-        sink = recorder.default_sink()
-    except recorder.CaptureError as exc:
-        return [Result(FAIL, "sink", str(exc))]
+        sink = capture.default_sink()
+    except capture.CaptureError as exc:
+        return [Result(FAIL, "sink", str(exc).splitlines()[0])]
 
     results = [Result(OK, "sink", sink)]
 
-    muted = recorder.sink_muted()
+    muted = capture.sink_muted()
     if muted is None:
         results.append(Result(UNKNOWN, "muted", "could not read mute state"))
     else:
@@ -126,15 +262,10 @@ def _sink() -> list[Result]:
             )
         )
 
-    monitor_volumes = recorder.monitor_channel_volumes(sink)
-    # Unset is not unknown: PipeWire defaults this to false, so an absent
+    monitor_volumes = capture.monitor_channel_volumes(sink)
+    # Unset is not unknown on PipeWire: it defaults this to false, so an absent
     # property is a definitive "pre-volume". Reporting it as UNKNOWN sent a
     # real investigation chasing a non-problem on 2026-08-07.
-    #
-    # Deliberately says nothing about mute either way. Mute is a separate
-    # mechanism in PipeWire, and this machine reads false here (monitor
-    # confirmed pre-volume by level probe) while still monitoring 0.00000 when
-    # muted. The level probe below is what answers the mute question.
     results.append(
         Result(
             WARN if monitor_volumes else OK,
@@ -155,7 +286,7 @@ def _probe(source: str, target: str | None, label: str) -> Result:
             time.sleep(_PROBE_S)
             rec.check_alive()
             samples = rec.window(_PROBE_S)
-    except recorder.CaptureError as exc:
+    except capture.CaptureError as exc:
         return Result(FAIL, label, str(exc).splitlines()[0])
 
     if samples.size == 0:
@@ -172,9 +303,9 @@ def _levels() -> list[Result]:
     results = [_probe("output", None, "level: default sink")]
 
     try:
-        streams = recorder.playback_streams()
-    except recorder.CaptureError as exc:
-        return results + [Result(UNKNOWN, "playback streams", str(exc))]
+        streams = capture.playback_streams()
+    except capture.CaptureError as exc:
+        return results + [Result(UNKNOWN, "playback streams", str(exc).splitlines()[0])]
 
     if not streams:
         results.append(
@@ -193,7 +324,9 @@ def _verdict(results: list[Result]) -> str | None:
     by_label = {result.label: result for result in results}
     sink_level = by_label.get("level: default sink")
     app_levels = [
-        result for label, result in by_label.items() if label.startswith("level: ") and result is not sink_level
+        result
+        for label, result in by_label.items()
+        if label.startswith("level: ") and result is not sink_level
     ]
     muted = by_label.get("muted")
 
@@ -224,30 +357,77 @@ def _verdict(results: list[Result]) -> str | None:
     return None
 
 
-def main() -> int:
-    results: list[Result] = [_python()]
+def collect(probe: bool = True) -> list[Result]:
+    """Every check, in the order that makes a failure readable top to bottom."""
+    results: list[Result] = [
+        Result(OK, "vinowhisper", __version__),
+        _python(),
+        _distro(),
+    ]
     results += _openvino()
-    results.append(_model())
-    results.append(_server())
+    results += _devices()
+    results += _models()
+    results += _server()
+    results += _audio_tools()
     results += _sink()
+    if probe:
+        results += _levels()
+    return results
 
-    print("vinowhisper-doctor\n")
-    width = 0
+
+def _print_human(results: list[Result]) -> None:
+    width = max(len(result.label) for result in results)
     for result in results:
-        width = max(width, len(result.label))
+        detail = result.detail.replace("\n", "\n" + " " * (width + 11))
+        print(f"  [{result.status:>4}] {result.label:<{width}}  {detail}")
 
-    print(f"probing input levels for {_PROBE_S:.0f}s per target...\n", file=sys.stderr)
-    results += _levels()
-    width = max(width, *(len(result.label) for result in results))
 
-    for result in results:
-        print(f"  [{result.status:>4}] {result.label:<{width}}  {result.detail}")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check everything vinoWhisper needs from the system.",
+        epilog="Exit codes: 0 all good, 1 at least one check failed.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output, for pasting into a bug report.",
+    )
+    parser.add_argument(
+        "--no-probe",
+        action="store_true",
+        help=f"Skip the {_PROBE_S:.0f}s-per-target live level capture.",
+    )
+    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    args = parser.parse_args(argv)
 
+    if not args.json:
+        print(f"vinowhisper-doctor {__version__}\n")
+        if not args.no_probe:
+            print(f"probing input levels for {_PROBE_S:.0f}s per target...\n", file=sys.stderr)
+
+    results = collect(probe=not args.no_probe)
     verdict = _verdict(results)
+    failures = [result for result in results if result.status == FAIL]
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "version": __version__,
+                    "python": sys.version,
+                    "distro": asdict(distro.detect()),
+                    "checks": [asdict(result) for result in results],
+                    "verdict": verdict,
+                    "failed": [result.label for result in failures],
+                },
+                indent=2,
+            )
+        )
+        return 1 if failures else 0
+
+    _print_human(results)
     if verdict:
         print(f"\n{verdict}")
-
-    failures = [result for result in results if result.status == FAIL]
     if failures:
         print(f"\n{len(failures)} check(s) failed.")
         return 1

@@ -71,7 +71,7 @@ def _restitch(directory: Path, verbose: bool) -> int:
 
 
 def _print_first_divergence(before: list[str], after: list[str]) -> None:
-    for i, (old, new) in enumerate(zip(before, after)):
+    for i, (old, new) in enumerate(zip(before, after, strict=False)):
         if old != new:
             print(
                 f"[replay] first difference at word {i}:\n"
