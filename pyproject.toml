@@ -148,7 +148,12 @@ known-first-party = ["vinowhisper"]
 # ── Mypy ──────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
-python_version = "3.11"
+# Deliberately not pinned to python_version = "3.11". Numpy's own stubs use
+# 3.12-only syntax (`type X = ...`), and mypy parses them against the target
+# version, so pinning 3.11 while running on 3.12 fails inside numpy with a
+# syntax error before it checks any of this project's code. The floor is
+# enforced where it belongs anyway: requires-python and ruff's target-version.
+#
 # openvino_genai ships no stubs, and CI type-checks without it installed at all
 # (see the dev group note above).
 ignore_missing_imports = true
@@ -181,11 +186,25 @@ show_missing = true
 # workflow passes the same flag, so CI and `poe security` agree.
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", ".git", "build", "dist"]
+# Three blanket skips, each because the finding is this tool's entire job
+# rather than a defect in it. B602 (shell=True) stays ON, and is the one that
+# would actually matter: there is no shell anywhere in this codebase, and if
+# one ever appears it should fail this scan.
 skips = [
-    # blacklist — flags the `import subprocess` line itself. This tool is a
-    # wrapper around pw-record/parec/pactl/optimum-cli; every call site is a
-    # fixed argv list with no shell, and is reviewed individually by B602-B607.
+    # blacklist — flags the `import subprocess` line itself, in a program whose
+    # purpose is to drive pw-record, parec, pactl, optimum-cli and systemctl.
     "B404",
+    # subprocess_without_shell_equals_true. Every call site builds a literal
+    # argv list and passes it without a shell, so there is nothing to inject
+    # into: the variable parts are PipeWire node names read from pw-dump and a
+    # --target the user typed, both of which arrive as single argv elements.
+    "B603",
+    # start_process_with_partial_path. Deliberate: pw-record, parec and pactl
+    # live in different places on different distros, and hardcoding /usr/bin
+    # would break the fallbacks this release exists to add. PATH resolution is
+    # the portable behaviour here, and the tools are located with shutil.which
+    # before use.
+    "B607",
 ]
 
 # ── bump-my-version ───────────────────────────────────────────────────────────

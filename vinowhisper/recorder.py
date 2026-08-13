@@ -22,6 +22,7 @@ available on the current backend.
 import subprocess
 import threading
 from collections.abc import Callable
+from typing import IO
 
 import numpy as np
 
@@ -89,7 +90,9 @@ class Recorder:
         except FileNotFoundError as exc:
             raise CaptureError(f"{self._argv[0]} not found — run vinowhisper-setup") from exc
 
-        self._thread = threading.Thread(target=self._read_loop, name="capture-reader", daemon=True)
+        self._thread = threading.Thread(
+            target=self._read_loop, args=(self._proc.stdout,), name="capture-reader", daemon=True
+        )
         self._thread.start()
         return self
 
@@ -109,9 +112,10 @@ class Recorder:
         if proc is not None and proc.stdout is not None:
             proc.stdout.close()
 
-    def _read_loop(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
-        stdout = self._proc.stdout
+    def _read_loop(self, stdout: IO[bytes]) -> None:
+        # The pipe is passed in rather than read off self, so this needs no
+        # assertion about _proc being non-None to satisfy a type checker — and
+        # an assertion is not a thing to rely on, since -O strips it.
         chunk_bytes = self._READ_CHUNK_SAMPLES * audio.BYTES_PER_SAMPLE
         while not self._stop.is_set():
             try:

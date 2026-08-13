@@ -65,8 +65,9 @@ class WhisperTranscriber:
 
         selection = self.selection or self.select_device()
         kind = selection.kind
-        self.model_dir = self._model_dir_override or config.model_dir(kind)
-        self._check_export(kind)
+        model_dir = self._model_dir_override or config.model_dir(kind)
+        self.model_dir = model_dir
+        self._check_export(kind, model_dir)
 
         # STATIC_PIPELINE=True is required for NPU (confirmed 2026-08-03
         # against openvino_genai nightly 2026.4.0.0.dev — see pyproject.toml
@@ -91,7 +92,7 @@ class WhisperTranscriber:
         #   `RuntimeError: 'initial_prompt' parameter is not supported on NPU
         #   device` (pipeline_static.cpp:1147).
 
-    def _check_export(self, kind: str) -> None:
+    def _check_export(self, kind: str, model_dir: Path) -> None:
         """Fail with the command to run, rather than inside the constructor.
 
         The mismatch this catches is the single most confusing failure here:
@@ -100,26 +101,25 @@ class WhisperTranscriber:
         about attention-mask nodes or a beam_idx port that names neither the
         device nor the fix.
         """
-        assert self.model_dir is not None
         variant = "npu" if kind == "NPU" else "stateful"
-        if not self.model_dir.is_dir():
+        if not model_dir.is_dir():
             raise FileNotFoundError(
-                f"no {variant} model export at {self.model_dir}\n"
+                f"no {variant} model export at {model_dir}\n"
                 f"  run: ./scripts/convert_model.sh --variant {variant}\n"
                 f"  or:  vinowhisper-setup"
             )
 
-        has_with_past = any(self.model_dir.glob("*decoder_with_past*.xml"))
+        has_with_past = any(model_dir.glob("*decoder_with_past*.xml"))
         if kind == "NPU" and not has_with_past:
             raise RuntimeError(
-                f"the export at {self.model_dir} has no decoder_with_past submodel, so it "
+                f"the export at {model_dir} has no decoder_with_past submodel, so it "
                 "was not exported with --disable-stateful and the NPU static pipeline "
                 "cannot build it.\n"
                 "  run: ./scripts/convert_model.sh --variant npu"
             )
         if kind != "NPU" and has_with_past:
             raise RuntimeError(
-                f"the export at {self.model_dir} is the --disable-stateful (NPU) export, "
+                f"the export at {model_dir} is the --disable-stateful (NPU) export, "
                 f"which fails on {kind} with a beam_idx port error.\n"
                 "  run: ./scripts/convert_model.sh --variant stateful"
             )
