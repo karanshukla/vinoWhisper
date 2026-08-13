@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Design doc and investigation record
+    url: https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md
+    about: Why this is built the way it is — benchmarks, the three export bugs, the open questions.

@@ -1,0 +1,59 @@
+name: Dependency canary
+
+# The real dependency set — the OpenVINO nightly wheels — is checked here and
+# nowhere else, on a schedule, deliberately kept off the PR path.
+#
+# Why it is separate: `openvino>=2026.4.0.dev` resolves against
+# storage.openvinotoolkit.org's nightly index, and nightly builds are pruned
+# upstream on their own schedule. A locked build that resolved last week can
+# 404 today through nobody's fault, and gating pull requests on that means red
+# CI for reasons unrelated to the change under review.
+#
+# What a failure here means, in rough order of likelihood:
+#   - the pinned nightly aged out of the index → re-run `uv lock --upgrade`
+#   - the nightly changed something that breaks the import → read the error
+#   - a stable OpenVINO release finally caught up → the nightly pin in
+#     pyproject.toml can probably be dropped, which is the outcome to hope for
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays, 07:00 UTC
+  workflow_dispatch:
+  push:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deps-canary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      # Not --frozen: the lock is allowed to be behind pyproject.toml here,
+      # because relocking needs the nightly index and that is exactly the
+      # thing being tested. A failure at this step is the canary firing.
+      - name: uv sync (the full, real dependency set)
+        run: uv sync
+
+      - name: Import the stack that the NPU pipeline needs
+        run: |
+          uv run python - <<'PY'
+          import openvino, openvino_genai
+          print("openvino", openvino.__version__)
+          print("openvino-genai", openvino_genai.__version__)
+          # Device enumeration, not inference: the runner has no NPU, and the
+          # point is that the plugins load at all.
+          print("devices:", openvino.Core().available_devices)
+          PY
+
+      - name: Re-resolve against today's nightly index
+        # Separate from the frozen sync above so the two failure modes stay
+        # distinguishable: "the lock no longer installs" vs "nothing newer
+        # resolves either".
+        run: uv lock --upgrade --dry-run

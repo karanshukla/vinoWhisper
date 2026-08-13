@@ -1,0 +1,48 @@
+name: Bandit
+
+# Bandit is a security linter for Python, by PyCQA (Apache v2.0).
+# https://pypi.org/project/bandit/
+#
+# Findings land under the repository's Security → Code scanning tab. The scan
+# configuration — excluded paths, skipped checks and why — lives in
+# [tool.bandit] in pyproject.toml, so `uv run poe security` reproduces this
+# job's findings locally.
+#
+# Worth having on a tool like this despite it being local-only: it shells out
+# to pw-record, parec, pactl, optimum-cli and systemctl, and it binds a socket.
+# Bandit's subprocess and network checks are aimed at exactly that surface.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "32 0 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  bandit:
+    permissions:
+      contents: read
+      security-events: write # to upload the SARIF results
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Bandit scan
+        # --exit-zero: findings must not fail the job, or the upload step below
+        # is skipped and code scanning keeps showing the previous run's alerts.
+        run: >-
+          uvx --from 'bandit[toml,sarif]' bandit
+          -c pyproject.toml -r vinowhisper/ -f sarif -o bandit.sarif --exit-zero
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          sarif_file: bandit.sarif
+          category: bandit

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+# `uv pip install --group dev` rather than `uv sync`, everywhere below, and it
+# is load-bearing: a full sync resolves the OpenVINO nightly wheels this
+# project pins, and nightly builds are pruned upstream on their own schedule.
+# A CI job that depends on them goes red for reasons that have nothing to do
+# with the change under test. The dev group installs no OpenVINO at all, and
+# nothing under tests/ imports it. Whether the real dependency set still
+# resolves is a separate, scheduled question — see deps-canary.yml.
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv venv
+      - run: uv pip install --group dev
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/ruff format --check .
+      - run: .venv/bin/mypy vinowhisper/
+
+  test:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 is excluded on purpose, not by omission: it made
+        # functools.partial a descriptor, which breaks optimum's export code
+        # (see pyproject.toml). requires-python caps at <3.14 to match.
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv venv --python ${{ matrix.python-version }}
+      - run: uv pip install --group dev
+      - run: .venv/bin/python -m pytest --cov=vinowhisper --cov-report=term-missing
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The installer and the model export are shell, and they are the first
+      # thing a new user runs. A syntax error there is a worse first
+      # impression than any Python bug in here.
+      - name: shellcheck
+        run: shellcheck scripts/install.sh scripts/convert_model.sh
+      - name: bash -n the completion script
+        run: bash -n scripts/vinowhisper-completion.bash
