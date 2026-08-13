@@ -1,7 +1,12 @@
 # vinoWhisper
 
-NPU-accelerated local live captioning for Fedora/KDE, using OpenVINO GenAI's
-`WhisperPipeline` on the Intel NPU. Named after
+[![CI](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](pyproject.toml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
+NPU-accelerated local live captioning for Linux, using OpenVINO GenAI's
+`WhisperPipeline` on an Intel NPU. Named after
 [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace), same idea of
 OpenVINO doing the NPU work, different feature.
 
@@ -21,50 +26,137 @@ work on it. `hearing…` is the words heard once but still waiting on a second
 cycle to agree, which is the two-cycle commit delay made visible rather than
 felt as a freeze.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
+```
+
+That installs [uv](https://docs.astral.sh/uv/), clones the repo, builds the
+environment, and hands over to `vinowhisper-setup`, which is where every
+machine-specific decision happens: your capture tool, your NPU driver, the
+model export your device needs, and systemd units generated against the paths
+that actually exist. It prints every command before running it and asks first.
+
+From a checkout, or to see what it would do without doing it:
+
+```bash
+git clone https://github.com/karanshukla/vinoWhisper && cd vinoWhisper
+uv sync
+uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
+uv run vinowhisper-setup             # for real, one prompt per step
+```
+
+**Why not `pip install vinowhisper`.** It would resolve `openvino` from PyPI,
+where the builds that can construct the NPU static Whisper pipeline do not
+exist yet — the pin lives in `[tool.uv.sources]`, which pip does not read. An
+install that succeeds and then cannot load a model is worse than no install, so
+that path is deliberately not offered. See [the nightly note](#openvino-nightly-and-why)
+below.
+
+## Commands
+
 ```
 vinowhisper-caption                       # caption system audio
 vinowhisper-caption --source mic          # caption yourself
+vinowhisper-caption --list-targets        # capture one app instead of the whole sink
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save the session for replay
 vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
 
-vinowhisper-doctor                        # check NPU, model, sink, mute, live levels
-vinowhisper-replay ~/sess --restitch       # re-run the merge logic offline
-vinowhisper-replay ~/sess --sweep 8,12,20  # measure what --window actually costs
+vinowhisper-setup                         # guided install; re-runnable, idempotent
+vinowhisper-setup --dry-run               # print the plan, change nothing
+vinowhisper-setup --print-units           # the systemd units it would generate
+
+vinowhisper-doctor                        # devices, model, audio, live levels
+vinowhisper-doctor --json                 # the same, for a bug report
+vinowhisper-doctor --no-probe             # skip the 2s-per-target level capture
+
+vinowhisper-replay ~/sess --restitch      # re-run the merge logic offline
+vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 ```
 
-Design doc and rationale (why this is built from scratch instead of reusing
-`whisper-npu-server`, which turned out to be partly dead), plus the full
-feasibility-spike writeup with benchmarks:
-[wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md).
+## Hardware, and what happens when you don't have it
 
-**Status: the whole loop is built and has run against real content. Accuracy
-and latency are the open problems, not whether it works at all.** The
-transcription backend is confirmed genuinely on NPU (not a silent CPU
-fallback), whisper-small.en benchmarks at ~1.19s per 30s window with first
-streamed token at ~0.204s, and captions have been compared side by side
-against YouTube's own generated captions as ground truth. The cleanup pass
-documented below fixed the bugs that review turned up, but it has not been
-re-run on the actual laptop yet.
+The NPU is the point. Everything below it exists so a broken driver degrades
+the tool instead of bricking it — the latency design assumes NPU-class cycle
+times, and the two-cycle commit policy doubles any regression.
 
-## Layout
+| Device | Selected | Model export | What you get |
+|---|---|---|---|
+| **NPU** (`Intel(R) AI Boost`) | first | `--disable-stateful` | ~1.19s per 30s window, measured 2026-08-03 |
+| **GPU** (Arc / Xe) | second | stateful | Untested here. Works in principle; watch the lag figure |
+| **CPU** | last resort | stateful | Runs. Competes with everything else on the machine, and lags |
+
+Selection is automatic (`--device auto`). An *explicit* `--device NPU` that
+isn't available is refused rather than quietly downgraded, because someone who
+typed it wants to know it didn't happen.
+
+A fallback is never silent. It appears in the server's journal, in `/health`,
+in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 
 ```
-vinowhisper/
-  config.py       paths, ports, window sizing, levels, timeouts
-  audio.py        RingBuffer, RMS, gain normalization
-  recorder.py     Recorder, continuous pw-record capture into the ring buffer
-  client.py       TranscriptionClient, HTTP client for the server below
-  server.py       local-only Flask server, socket-activated + self-idle-exit
-  transcriber.py  WhisperTranscriber, wraps openvino_genai.WhisperPipeline (device="NPU")
-  stitch.py       Stitcher, merges overlapping window transcripts into one
-  caption.py      the caption loop and CLI (vinowhisper-caption)
-scripts/
-  convert_model.sh   optimum-cli export wrapper (whisper-small.en -> OpenVINO IR)
-systemd/
-  vinowhisper-server.socket    systemd owns the listening port, starts the service lazily
-  vinowhisper-server.service   the transcription server, socket-activated (no [Install])
+╭─ vinoWhisper CPU ────────────────────────────────────────────────────────────╮
+│ ● live    ███───────────  -48dB  ×12   ⟳ 6.4s ███▇█▇  lag ~12.8s  ⏳9  88 words │
+│ ⚠ Running on the CPU. Every cycle now competes with everything else on the... │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+**The two model exports are not interchangeable.** The NPU needs
+`--disable-stateful`, which produces the separate `decoder_with_past` KV-cache
+submodel its static pipeline requires. That same export cannot run on CPU at
+all — it fails on a `beam_idx` port error, which is incidentally how the NPU
+was confirmed to be doing real work rather than silently falling back. So the
+CPU/GPU path needs a second export in a second directory, and the wizard, the
+doctor and the server all check which one you have against the device you got.
+
+```bash
+./scripts/convert_model.sh --variant npu        # ~/.local/share/vinowhisper/models/whisper-small.en-ov
+./scripts/convert_model.sh --variant stateful   # ...-ov-stateful
+./scripts/convert_model.sh --variant both
+```
+
+### When the NPU doesn't show up
+
+`vinowhisper-doctor` walks it in fix-first order rather than reporting "no NPU"
+and stopping: the `/dev/accel/accel0` node (does the in-tree `intel_vpu` driver
+have the device?), its permissions (are you in the `render` group?), the
+`intel_vpu` module, and then the userspace driver package for your distro, with
+[Intel's release page](https://github.com/intel/linux-npu-driver/releases) as
+the authoritative fallback. Those have different fixes and are indistinguishable
+from OpenVINO's device list alone.
+
+## Distro support
+
+Audio capture works two ways, picked automatically:
+
+- **PipeWire** (`pw-record`) — preferred, and the only backend that can tap an
+  individual application's playback stream, which is what `--target` is for.
+- **PulseAudio** (`parec`) — the fallback. Everything works except
+  per-application capture; `--list-targets` there lists monitor sources and
+  says why.
+
+`pactl` is used for the default sink and mute state where present (on PipeWire
+too, via `pipewire-pulse`); without it, PipeWire's own `default.audio.sink`
+metadata answers the same question.
+
+Package names per family live in one table in
+[`vinowhisper/distro.py`](vinowhisper/distro.py), so `vinowhisper-doctor` and
+the wizard both speak your distro:
+
+| Family | Covered | Confidence |
+|---|---|---|
+| Fedora / RHEL / derivatives | ✓ | Built and run here |
+| Debian / Ubuntu / Pop / Mint | ✓ | From the package index, not from use |
+| Arch / CachyOS / EndeavourOS / Manjaro | ✓ | Same |
+| openSUSE / SLES | ✓ | Same |
+| Void, Gentoo, Alpine | ✓ | Same |
+| NixOS | ✓ | Configuration advice, not `nix-env` lines — imperative installs there do not persist |
+| Anything else | degrades | Generic advice, and it says so |
+
+**If a package name is wrong for your distro, that is expected, and it is the
+fastest thing here to fix** — see [CONTRIBUTING.md](CONTRIBUTING.md) or the
+distro-support issue template.
 
 ## "Captions stop when you mute the system"
 
@@ -159,14 +251,14 @@ That turns "it was laggy while I watched a video" into a fixture:
   recorded audio at a fixed hop, so every window size sees the same decodes
   over the same audio.
 
-`vinowhisper-doctor` checks the environmental things that are currently
-guesses: NPU enumeration, whether the model export has the
-`decoder_with_past` submodel that `--disable-stateful` produces, server
-reachability, default sink, current mute state, `monitor.channel-volumes`, and
-a two-second live level probe on the sink monitor and on each playing app.
-Run it once with audio playing normally and once with the system muted. If the
-sink monitor drops to silence while an app stream stays audible, that is the
-mute problem confirmed by measurement, and it says so.
+`vinowhisper-doctor` checks the environmental things: OpenVINO's device list,
+which device would be selected, whether each model export matches the device
+that needs it, server reachability, the capture backend, default sink, mute
+state, `monitor.channel-volumes`, and a two-second live level probe on the sink
+monitor and on each playing app. Run it once with audio playing normally and
+once with the system muted. If the sink monitor drops to silence while an app
+stream stays audible, that is the mute problem confirmed by measurement, and it
+says so.
 
 ## Why the captions reword themselves
 
@@ -218,9 +310,9 @@ holds the port with no process behind it until something connects, and the
 service self-exits after `IDLE_TIMEOUT_S` regardless. Two commands cover the
 rest:
 
-```
-systemctl --user stop vinowhisper-server.service      # drop the resident NPU process now, instead of waiting out the idle timeout
-systemctl --user disable --now vinowhisper-server.socket  # full teardown: also stops systemd owning the port at all
+```bash
+systemctl --user stop vinowhisper-server.service          # drop the resident NPU process now
+systemctl --user disable --now vinowhisper-server.socket  # full teardown
 ```
 
 The socket unit is what respawns the service, so disabling it (not just the
@@ -228,57 +320,46 @@ service) is the one to use before a reboot or when you're done with the tool
 for a while — otherwise the next `vinowhisper-caption` run just spawns it
 again on first connection.
 
-## Setup
+## OpenVINO nightly, and why
 
-1. **`uv sync`.** That's the whole install. Two things it handles that a bare
-   `pip install -e .` does not, both encoded in `pyproject.toml` rather than
-   passed as flags: it holds Python to `<3.14` (3.14 made `functools.partial`
-   a descriptor, which breaks `optimum`'s export code outright), and it routes
-   the three `openvino*` packages to the nightly wheel index with prereleases
-   allowed, because stable `openvino-genai` (2026.2.1 as of writing) cannot
-   build the NPU static Whisper pipeline.
-2. **Convert the model.** `./scripts/convert_model.sh` produces the
-   whisper-small.en OpenVINO IR, including the `--disable-stateful` flag NPU
-   requires.
-3. **Install the systemd units.** Copy both files from `systemd/` into
-   `~/.config/systemd/user/`, then
-   `systemctl --user enable --now vinowhisper-server.socket`. Enable the
-   **socket** unit, not the service. The service has no `[Install]` section on
-   purpose, it is only ever meant to be started by the socket.
-4. **Put the commands on PATH.** Optional but worth it, and the completion in
-   step 5 depends on it:
-   ```
-   for c in caption server replay doctor; do
-       ln -sf "$PWD/.venv/bin/vinowhisper-$c" ~/.local/bin/
-   done
-   ```
-   Symlinks rather than `uv tool install .`, deliberately: `uv sync` installs
-   the project editable with an absolute shebang, so these track your edits
-   live. `uv tool install` would build an isolated snapshot and re-resolve the
-   whole nightly OpenVINO stack into a second copy, which is several GB to get
-   a stale build.
-5. **Optional: bash completion.** Install snippet at the top of
-   `scripts/vinowhisper-completion.bash`. `--target` completes against the
-   applications actually playing audio right now, which is the one flag whose
-   values you cannot guess. It completes `vinowhisper-caption`, not `uv run
-   vinowhisper-caption` — in the latter the command word is `uv`, so uv's own
-   completion owns the line. Hence step 4.
-6. **Run it.** `vinowhisper-caption`, Ctrl+C to stop (or `uv run
-   vinowhisper-caption` if you skipped step 4). Add `--source mic` to caption
-   yourself instead of system audio.
+Three things `uv sync` handles that a bare `pip install -e .` does not, all
+encoded in `pyproject.toml` rather than passed as flags:
+
+1. **Python is held below 3.14.** 3.14 made `functools.partial` a descriptor,
+   which breaks `optimum`'s `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)`
+   class-attribute idiom outright. Version-independent root cause, confirmed
+   2026-08-03 across every optimum/transformers pairing tried.
+2. **The three `openvino*` packages route to the nightly wheel index**, with
+   prereleases allowed. Stable `openvino-genai` (2026.2.1 as of writing) cannot
+   build the NPU static Whisper pipeline: its pattern-matcher does not recognise
+   the current export's SDPA attention-mask node shape.
+3. **The nightly index is `explicit = true`**, so it adds to PyPI rather than
+   replacing it.
+
+This is the project's standing dependency risk, and it is watched rather than
+assumed: `.github/workflows/deps-canary.yml` runs the full resolve weekly, off
+the pull-request path, precisely because nightly builds get pruned upstream on
+their own schedule. The outcome to hope for is that a stable OpenVINO release
+catches up and the whole nightly pin can be deleted.
 
 ## Pinning it on top
 
 The status bar is Rich in an ordinary terminal, so keeping it above other
-windows is a KWin job, not the app's. Add a window rule (System Settings >
-Window Management > Window Rules) matching the terminal window, and set Keep
-Above Other Windows to Force/Yes, plus Skip Taskbar and Skip Pager if you want
-it out of the way. No titlebar and a small fixed size make it read like an
-overlay rather than a terminal.
+windows is a window-manager job, not the app's. On KWin: System Settings >
+Window Management > Window Rules, match the terminal window, set Keep Above
+Other Windows to Force/Yes, plus Skip Taskbar and Skip Pager if you want it out
+of the way. No titlebar and a small fixed size make it read like an overlay
+rather than a terminal.
 
-Binding the whole thing to the laptop's dictation key (which emits `Meta+H`,
-currently pointed at Ghostty's `new-window`) is still unwired. Get the loop
-behaving on hardware first.
+## More
 
-See the design doc linked at the top for the benchmark tables, the three
-export bugs hit getting to a working NPU pipeline, and the open items.
+- Design doc, benchmarks, and the three export bugs hit getting to a working
+  NPU pipeline:
+  [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md) — the useful contributions are distro
+  corrections and reports from hardware that isn't this laptop
+- [SECURITY.md](SECURITY.md) — what stays on the machine, and what the
+  loopback server's trust boundary actually is
+- [CHANGELOG.md](CHANGELOG.md)
+
+MIT licensed.
