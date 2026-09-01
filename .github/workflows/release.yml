@@ -145,6 +145,13 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job has no checkout, so `gh` cannot infer the repo from a git
+          # remote and exits with "fatal: not a git repository". GH_REPO is the
+          # supported way to tell it, and is cheaper than checking out the tree
+          # only to throw it away. Caught the hard way cutting v0.3.0: the PyPI
+          # upload had already succeeded, so the release had to be created by
+          # hand from the artifacts this job downloads.
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           gh release create "v${VERSION}" dist/* \
