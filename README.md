@@ -13,12 +13,7 @@ OpenVINO doing the NPU work, different feature.
 Point it at whatever is playing and it captions in your terminal. Nothing
 leaves the machine. Start it and it goes; there is nothing to interact with.
 
-```
-╭─ vinoWhisper NPU ────────────────────────────────────────────────────────────╮
-│ ● live    ███───────────  -48dB  ×12   ⟳ 1.8s █▆▆▆▅▅  lag ~3.9s  ⏳7  341 words │
-│ hearing… and the dugout emptied out behind him                                │
-╰──────────────────────────────────────────────────────────────────────────────╯
-```
+<img width="1237" height="530" alt="image" src="https://github.com/user-attachments/assets/f263eabf-f1f4-4ab2-9b68-bc50eaf92ea0" />
 
 The transcript scrolls above that bar in your terminal's own scrollback, so it
 is still there after you quit and your terminal's selection and search still
