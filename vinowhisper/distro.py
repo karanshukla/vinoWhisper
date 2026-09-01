@@ -28,11 +28,30 @@ OS_RELEASE = Path("/etc/os-release")
 AUDIO_PIPEWIRE = "pipewire-tools"  # pw-record, pw-dump
 AUDIO_PULSE = "pulse-tools"  # pactl, parec
 NPU_DRIVER = "npu-driver"  # level-zero + the NPU compiler/firmware userspace
+NPU_COMPILER = "npu-compiler"  # libopenvino_intel_npu_compiler.so, packaged nowhere
 GPU_RUNTIME = "gpu-runtime"  # compute runtime for OpenVINO's GPU plugin
 
 # The NPU userspace is the one dependency with no reliable distro package
 # across the board, so every family's guidance ends up pointing here.
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
+
+# The compiler libraries are a special case even among the NPU parts: no family
+# in the table below packages them at all, so there is no local dialect to
+# answer in and the steps are the same everywhere. They are plain userspace
+# .so files with no kernel-module or packaging-system dependency, which is why
+# extracting Intel's Ubuntu .debs works unchanged on an rpm distro.
+NPU_COMPILER_STEPS = (
+    "No distro packages libopenvino_intel_npu_compiler.so. Intel ships it only "
+    "inside intel-driver-compiler-npu, in the release archive below.",
+    "Download the linux-npu-driver tarball for your architecture, then:",
+    "  tar xf linux-npu-driver-*.tar.gz",
+    "  dpkg-deb -x intel-driver-compiler-npu_*.deb extracted",
+    "  sudo install -m 0755 $(find extracted -name 'libopenvino_intel_npu_compiler*.so') /usr/lib64/",
+    "  sudo ldconfig",
+    "dpkg-deb is in the `dpkg` package and is present on rpm distros too, so "
+    "no alien/rpm2cpio conversion is needed. The result is untracked by your "
+    "package manager: note it somewhere, because nothing will upgrade it.",
+)
 
 
 @dataclass(frozen=True)
@@ -276,7 +295,7 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
     """How to get `capability` on this system, as commands plus caveats."""
     distro = distro or detect()
     family = _FAMILIES.get(distro.family)
-    url = NPU_RELEASES_URL if capability == NPU_DRIVER else ""
+    url = NPU_RELEASES_URL if capability in (NPU_DRIVER, NPU_COMPILER) else ""
 
     if family is None:
         return Remediation(
@@ -290,10 +309,13 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
 
     packages = family.packages.get(capability, ())
     commands = (f"{family.install} {' '.join(packages)}",) if packages and family.install else ()
+    # NPU_COMPILER has no packaged form anywhere, so a family that says nothing
+    # about it is the normal case rather than a gap in the table.
+    default = NPU_COMPILER_STEPS if capability == NPU_COMPILER else ()
     return Remediation(
         capability=capability,
         commands=commands,
-        notes=family.notes.get(capability, ()),
+        notes=family.notes.get(capability, default),
         url=url,
     )
 

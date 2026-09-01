@@ -29,7 +29,9 @@ doesn't exist the honest answer is to say so rather than to fail deep inside
 the pipeline constructor. See config.model_dir().
 """
 
+import mmap
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -243,6 +245,185 @@ def npu_preflight() -> list[Note]:
     return notes
 
 
+# --- Userspace NPU libraries ----------------------------------------------
+
+# The kernel checks above can all pass, OpenVINO can enumerate "Intel(R) AI
+# Boost", and compile_model() can still fail, because the NPU stack has a
+# userspace half that nothing so far has looked at. Two ways that half goes
+# wrong, both silent:
+#
+# 1. **The compiler libraries are missing.** Fedora's intel-npu-driver rpm
+#    ships the level-zero backend and stops there; libopenvino_intel_npu_-
+#    compiler.so has no rpm-tracked counterpart on any distro checked, and only
+#    ships in Intel's own release archive. This is a packaging gap, not a
+#    version lag, so waiting for `dnf upgrade` never fixes it.
+# 2. **The level-zero backend is older than the silicon.** An older backend
+#    enumerates the device perfectly well and then fails at compile time with
+#    "Missing upper bound for one or more nodes", which reads as a model
+#    problem and is actually a graph-extension protocol mismatch. Since a
+#    hand-installed .so is invisible to the package manager, reinstalling the
+#    distro package rewrites the soname symlink back to the packaged version
+#    and orphans the newer one, turning a working machine into that failure.
+#
+# Both are cheap to check and expensive to diagnose, which is the whole
+# argument for checking them.
+
+LEVEL_ZERO_STEM = "libze_intel_npu.so"
+COMPILER_LIB = "libopenvino_intel_npu_compiler.so"
+COMPILER_LOADER = "libopenvino_intel_npu_compiler_loader.so"
+
+# Enough to cover the families in distro.py. LD_LIBRARY_PATH goes first because
+# a vendored toolkit sourced through setupvars.sh is exactly how these get
+# installed somewhere other than a system directory.
+LIBRARY_DIRS = (
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib",
+    "/usr/local/lib64",
+    "/usr/local/lib",
+)
+
+# Both libraries embed their provenance as a plain string. The level-zero one
+# gives the driver release, the compiler one gives the OpenVINO release it was
+# built from, which is the number that has to agree with the hardware.
+_DRIVER_MARK = re.compile(rb"npu-linux-driver-ci-([\d][\d.]*\d)")
+_OPENVINO_MARK = re.compile(rb"20\d\d\.\d+\.\d+(?:-\w+){0,2}")
+
+
+def library_dirs() -> list[Path]:
+    """Directories to look for the NPU libraries in, LD_LIBRARY_PATH first."""
+    seen: dict[Path, None] = {}
+    raw = os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+    for text in [entry for entry in raw if entry] + list(LIBRARY_DIRS):
+        try:
+            path = Path(text)
+            if path.is_dir():
+                seen.setdefault(path, None)
+        except OSError:
+            continue
+    return list(seen)
+
+
+def find_library(name: str) -> Path | None:
+    """First `name` on the search path, or None. Symlinks are not resolved."""
+    for directory in library_dirs():
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _version_tuple(text: str) -> tuple[int, ...]:
+    """Parse "1.35.0" to (1, 35, 0). Non-numeric parts stop the parse, not fail it."""
+    parts: list[int] = []
+    for part in text.split("."):
+        if not part.isdigit():
+            break
+        parts.append(int(part))
+    return tuple(parts)
+
+
+def _marker(path: Path, pattern: re.Pattern[bytes]) -> str | None:
+    """First `pattern` match inside a binary, as text. None if absent or unreadable.
+
+    mmap rather than read() because the compiler library is ~127MB and is only
+    ever the fallback source for this: the 547KB loader beside it carries the
+    same version string.
+    """
+    try:
+        with (
+            path.open("rb") as handle,
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data,
+        ):
+            match = pattern.search(data)
+            if match is None:
+                return None
+            group = match.group(1) if match.groups() else match.group()
+            return group.decode("utf-8", "replace")
+    except (OSError, ValueError):  # unreadable, or an empty file mmap rejects
+        return None
+
+
+def _level_zero_notes() -> list[Note]:
+    soname = find_library(f"{LEVEL_ZERO_STEM}.1")
+    if soname is None:
+        return [
+            Note(
+                False,
+                "level-zero NPU backend",
+                f"no {LEVEL_ZERO_STEM}.1 on the library path, so OpenVINO's NPU "
+                "plugin has nothing to load and the device will not enumerate",
+            )
+        ]
+
+    target = soname.resolve()
+    version = _marker(target, _DRIVER_MARK) or "unknown version"
+    notes = [Note(True, "level-zero NPU backend", f"{target} ({version})")]
+
+    # A newer sibling sitting unused next to the one actually selected is the
+    # fingerprint of a package reinstall having reverted the symlink.
+    installed = sorted(
+        (path for path in target.parent.glob(f"{LEVEL_ZERO_STEM}.*") if not path.is_symlink()),
+        key=lambda path: _version_tuple(path.name.split(".so.", 1)[-1]),
+    )
+    if installed and installed[-1] != target:
+        newer = installed[-1]
+        notes.append(
+            Note(
+                False,
+                "level-zero version",
+                f"{soname.name} points at {target.name} while {newer.name} is also "
+                "installed. A package reinstall rewrites this symlink to the "
+                "distro's version, which enumerates the NPU and then fails to "
+                f"compile for it. `sudo ln -sf {newer.name} {soname}` selects the "
+                "newer one again.",
+            )
+        )
+    return notes
+
+
+def _compiler_notes(distro_info: "distro.Distro | None" = None) -> list[Note]:
+    compiler = find_library(COMPILER_LIB)
+    loader = find_library(COMPILER_LOADER)
+    if compiler is None:
+        remedy = distro.remediation(distro.NPU_COMPILER, distro_info)
+        return [
+            Note(
+                False,
+                "NPU compiler",
+                f"no {COMPILER_LIB} on the library path. Nothing above catches "
+                "this: the device still enumerates and every compile fails.\n"
+                + "\n".join(remedy.lines()),
+            )
+        ]
+
+    # The loader is ~547KB and carries the same version as the ~127MB library
+    # beside it, so it is the one worth scanning when it is present.
+    version = _marker(loader, _OPENVINO_MARK) if loader else None
+    version = version or _marker(compiler, _OPENVINO_MARK) or "unknown version"
+    notes = [Note(True, "NPU compiler", f"{compiler} (OpenVINO {version})")]
+    if loader is None:
+        notes.append(
+            Note(
+                False,
+                "NPU compiler loader",
+                f"{COMPILER_LOADER} is missing; it ships beside {COMPILER_LIB} "
+                "and is what the plugin actually dlopen()s",
+            )
+        )
+    return notes
+
+
+def npu_userspace(distro_info: "distro.Distro | None" = None) -> list[Note]:
+    """The userspace NPU stack: level-zero backend, then the graph compiler.
+
+    Runs whether or not OpenVINO enumerated the NPU, on purpose. A missing
+    compiler or a too-old backend both leave the device visible and break it
+    at compile time, so "the NPU is there" is not evidence that this is right.
+    """
+    return _level_zero_notes() + _compiler_notes(distro_info)
+
+
 def npu_missing_help(distro_info: distro.Distro | None = None) -> list[str]:
     """Everything worth saying when the NPU didn't turn up, in fix-first order."""
     lines: list[str] = []
@@ -257,5 +438,8 @@ def npu_missing_help(distro_info: distro.Distro | None = None) -> list[str]:
             "The kernel driver is bound, so what is missing is the userspace NPU "
             "driver that OpenVINO's NPU plugin loads through level-zero."
         )
+        for note in npu_userspace(distro_info):
+            if note.ok is not True:
+                lines.append(f"{note.label}: {note.detail}")
     lines.extend(distro.remediation(distro.NPU_DRIVER, distro_info).lines())
     return lines

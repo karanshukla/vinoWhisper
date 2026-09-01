@@ -100,6 +100,13 @@ def _devices() -> list[Result]:
             Result(WARN, "npu: userspace driver", "\n" + "\n".join(remedy.lines()).lstrip())
         )
 
+    # Always, even when the NPU enumerated above. A missing compiler library or
+    # a reverted level-zero symlink both leave the device visible and fail at
+    # compile time, which is the failure this check exists to name.
+    for note in devices.npu_userspace():
+        status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
+        results.append(Result(status, f"npu: {note.label}", note.detail))
+
     try:
         selection = devices.select(config.DEFAULT_DEVICE, inventory)
     except devices.DeviceError as exc:

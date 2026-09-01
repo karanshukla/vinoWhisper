@@ -201,7 +201,7 @@ class Wizard:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
         # The socket, never the service: the service has no [Install] section
         # because it is only ever meant to be started by the socket, and this
-        # is the whole scale-to-zero design (see README).
+        # is the whole scale-to-zero design (see docs/architecture.md).
         enabled = subprocess.run(
             ["systemctl", "--user", "enable", "--now", "vinowhisper-server.socket"],
             check=False,

@@ -8,8 +8,8 @@ buffer it feeds.
 **Why --target takes arbitrary nodes.** Originally to route around the sink's
 mute. That turned out to be a misdiagnosis: measured 2026-08-07, this sink's
 monitor is both pre-volume and pre-mute, holding 0.98x of the playing app's
-level while the system is muted (see the README table). The sink monitor is the
-right default and needs no rescuing.
+level while the system is muted (see the table in docs/audio.md). The sink
+monitor is the right default and needs no rescuing.
 
 `--target` still earns its place on PipeWire, because an individual
 application's playback stream node also exposes monitor ports, so it can

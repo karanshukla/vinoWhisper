@@ -179,7 +179,7 @@ def sink_muted(sink: str = "@DEFAULT_SINK@") -> bool | None:
     """Whether the sink is muted, or None if it couldn't be determined.
 
     Context rather than diagnosis: measured 2026-08-07, this machine's sink
-    monitor is pre-mute and carries full signal while muted (README table). It
+    monitor is pre-mute and carries full signal while muted (docs/audio.md). It
     is reported because it is cheap and because someone will ask.
     """
     if _which("pactl") is None:
