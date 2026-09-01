@@ -110,3 +110,24 @@ REQUEST_TIMEOUT_S = 60.0
 # scale-to-zero for the NPU model instead of holding it resident forever.
 IDLE_TIMEOUT_S = 30 * 60
 IDLE_CHECK_INTERVAL_S = 30.0
+
+
+# --- How this install exports a model ------------------------------------
+#
+# `./scripts/convert_model.sh` only exists in a git checkout. Installed from a
+# wheel there is no scripts/ directory, so naming it in an error message sends
+# someone to a file they do not have, which is the exact failure the "a failure
+# should name its fix" convention exists to prevent. Both paths run the same
+# optimum-cli export (see wizard.export_argv); this only decides which one to
+# say out loud.
+
+CONVERT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "convert_model.sh"
+
+
+def export_command(variant: str) -> str:
+    """The command that produces the `variant` export on *this* install."""
+    if CONVERT_SCRIPT.is_file():
+        return f"./scripts/convert_model.sh --variant {variant}"
+    # The wizard picks the variant from the device it finds, so it is named
+    # without one rather than implying a flag it does not take.
+    return "vinowhisper-setup"

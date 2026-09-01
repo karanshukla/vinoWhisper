@@ -179,7 +179,7 @@ class Wizard:
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
         if self.run(export_argv(variant, directory), "export it now?"):
             return Outcome(True, f"exported to {directory}")
-        return Outcome(None, f"run ./scripts/convert_model.sh --variant {variant} when ready")
+        return Outcome(None, f"run {config.export_command(variant)} when ready")
 
     def install_units(self) -> Outcome:
         if not _has_systemd():

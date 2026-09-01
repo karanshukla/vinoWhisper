@@ -1,8 +1,8 @@
 # vinoWhisper
 
 [![CI](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](pyproject.toml)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/karanshukla/vinoWhisper/blob/main/LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](https://github.com/karanshukla/vinoWhisper/blob/main/pyproject.toml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 NPU-accelerated local live captioning for Linux, using OpenVINO GenAI's
@@ -42,9 +42,18 @@ uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
 uv run vinowhisper-setup             # for real, one prompt per step
 ```
 
-`uv` rather than `pip`, because the Python <3.14 pin lives in
-`pyproject.toml`. See [docs/install.md](docs/install.md) for that, and for the
-OpenVINO version floor.
+Or from PyPI, if you would rather wire up the machine yourself:
+
+```bash
+pip install vinowhisper   # needs Python 3.11-3.13
+vinowhisper-setup         # still worth running: NPU driver, model export, units
+```
+
+`pip install` gets you the five commands and the Python dependencies. It cannot
+get you an NPU driver, a model export or systemd units, which is what
+`vinowhisper-setup` is for either way. See
+[docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) for the OpenVINO version
+floor and why this could not be a pip install until 2026-08-31.
 
 ## Commands
 
@@ -83,34 +92,34 @@ Selection is automatic and a fallback is never silent: it shows up in the
 server journal, in `/health`, in `vinowhisper-doctor`, and on the status bar as
 a red border. The two model exports are not interchangeable, and the NPU needs
 a userspace driver half that no distro packages completely.
-[docs/hardware.md](docs/hardware.md) covers all of it, including what to do
+[docs/hardware.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) covers all of it, including what to do
 when the NPU does not show up.
 
 Audio capture works on PipeWire (`pw-record`) or PulseAudio (`parec`), picked
 automatically, and package names for eight distro families live in one table in
-[`vinowhisper/distro.py`](vinowhisper/distro.py). **If a name is wrong for your
+[`vinowhisper/distro.py`](https://github.com/karanshukla/vinoWhisper/blob/main/vinowhisper/distro.py). **If a name is wrong for your
 distro, that is expected, and it is the fastest thing here to fix.**
 
 ## Docs
 
 | | |
 |---|---|
-| [Installing](docs/install.md) | What the installer does, the OpenVINO version floor and why, pinning the window on top |
-| [Hardware](docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
-| [Audio capture](docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
-| [Latency](docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
-| [Debugging](docs/debugging.md) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
-| [Architecture](docs/architecture.md) | Socket activation and scale-to-zero, and how to stop it |
+| [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, pinning the window on top |
+| [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
+| [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
+| [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
+| [Debugging](https://github.com/karanshukla/vinoWhisper/blob/main/docs/debugging.md) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
+| [Architecture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/architecture.md) | Socket activation and scale-to-zero, and how to stop it |
 
 ## More
 
 - Design doc, benchmarks, and the three export bugs hit getting to a working
   NPU pipeline:
   [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md), where the useful contributions are distro
+- [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md), where the useful contributions are distro
   corrections and reports from hardware that isn't this laptop
-- [SECURITY.md](SECURITY.md), what stays on the machine and what the loopback
+- [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md), what stays on the machine and what the loopback
   server's trust boundary actually is
-- [CHANGELOG.md](CHANGELOG.md)
+- [CHANGELOG.md](https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md)
 
 MIT licensed.

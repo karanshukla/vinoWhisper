@@ -146,7 +146,7 @@ def _models() -> list[Result]:
                     label,
                     f"not exported at {directory}"
                     + (
-                        f" — run ./scripts/convert_model.sh --variant {variant}"
+                        f" — run {config.export_command(variant)}"
                         if required
                         else " (only needed if you run on this device class)"
                     ),
@@ -165,7 +165,7 @@ def _models() -> list[Result]:
                     FAIL if required else WARN,
                     label,
                     f"{directory} is the wrong export for {kind} — "
-                    f"re-run ./scripts/convert_model.sh --variant {variant}",
+                    f"re-run {config.export_command(variant)}",
                 )
             )
         else:
