@@ -24,7 +24,7 @@ NPU. Most of what would make it good for anyone else is knowledge about
 ```bash
 git clone https://github.com/karanshukla/vinoWhisper
 cd vinoWhisper
-uv sync                 # the real environment: OpenVINO nightly, Python <3.14
+uv sync                 # the real environment: OpenVINO, Python <3.14
 uv run vinowhisper-setup --dry-run   # see what a full install would do
 ```
 
@@ -37,9 +37,9 @@ uv pip install --group dev    # no OpenVINO, ~5 seconds
 .venv/bin/python -m pytest
 ```
 
-That is exactly what CI does, and for the same reason: the OpenVINO nightly
-wheels are pruned upstream on their own schedule, so nothing that has to pass
-on every pull request is allowed to depend on them.
+That is exactly what CI does, and for the same reason: OpenVINO is ~400MB of
+wheels that no test is allowed to import anyway, so nothing that has to pass on
+every pull request depends on it.
 
 ## Before pushing
 
