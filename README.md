@@ -1,8 +1,10 @@
 # vinoWhisper
 
-[![CI](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/badge/PyPI-vinowhisper-blue?logo=pypi&logoColor=white)](https://pypi.org/project/vinowhisper/)
+![PyPI - Version](https://img.shields.io/pypi/v/vinowhisper?label=latest%20version)
+[![Python](https://img.shields.io/pypi/pyversions/vinowhisper)](https://pypi.org/project/vinowhisper/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/karanshukla/vinoWhisper/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](https://github.com/karanshukla/vinoWhisper/blob/main/pyproject.toml)
+[![CI](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 NPU-accelerated local live captioning for Linux, using OpenVINO GenAI's
