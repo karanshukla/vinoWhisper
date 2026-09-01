@@ -108,9 +108,7 @@ class WhisperTranscriber:
         variant = "npu" if kind == "NPU" else "stateful"
         if not model_dir.is_dir():
             raise FileNotFoundError(
-                f"no {variant} model export at {model_dir}\n"
-                f"  run: ./scripts/convert_model.sh --variant {variant}\n"
-                f"  or:  vinowhisper-setup"
+                f"no {variant} model export at {model_dir}\n  run: {config.export_command(variant)}"
             )
 
         has_with_past = any(model_dir.glob("*decoder_with_past*.xml"))
@@ -119,13 +117,13 @@ class WhisperTranscriber:
                 f"the export at {model_dir} has no decoder_with_past submodel, so it "
                 "was not exported with --disable-stateful and the NPU static pipeline "
                 "cannot build it.\n"
-                "  run: ./scripts/convert_model.sh --variant npu"
+                f"  run: {config.export_command('npu')}"
             )
         if kind != "NPU" and has_with_past:
             raise RuntimeError(
                 f"the export at {model_dir} is the --disable-stateful (NPU) export, "
                 f"which fails on {kind} with a beam_idx port error.\n"
-                "  run: ./scripts/convert_model.sh --variant stateful"
+                f"  run: {config.export_command('stateful')}"
             )
 
     def transcribe_stream(self, samples: np.ndarray) -> Iterator[str]:

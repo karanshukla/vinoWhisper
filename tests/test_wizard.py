@@ -104,3 +104,26 @@ def test_python_314_is_reported_as_unusable(monkeypatch):
     outcome = wizard.Wizard(dry_run=True).check_python()
     assert outcome.ok is False
     assert "3.13" in outcome.summary
+
+
+# --- Which export command this install should name -----------------------
+#
+# scripts/convert_model.sh ships in the git checkout and not in the wheel, so
+# an error message that names it unconditionally sends a pip user to a file
+# they do not have.
+
+
+def test_a_checkout_names_the_script(monkeypatch, tmp_path):
+    script = tmp_path / "convert_model.sh"
+    script.write_text("#!/bin/bash\n")
+    monkeypatch.setattr(config, "CONVERT_SCRIPT", script)
+    assert config.export_command("npu") == "./scripts/convert_model.sh --variant npu"
+    assert config.export_command("stateful").endswith("--variant stateful")
+
+
+def test_a_wheel_install_names_the_wizard_instead(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "CONVERT_SCRIPT", tmp_path / "not-here.sh")
+    # No --variant: the wizard picks it from the device it finds, so naming a
+    # flag it does not take would be worse than naming none.
+    assert config.export_command("npu") == "vinowhisper-setup"
+    assert config.export_command("stateful") == "vinowhisper-setup"

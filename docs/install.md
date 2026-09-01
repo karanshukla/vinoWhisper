@@ -22,14 +22,27 @@ uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
 uv run vinowhisper-setup             # for real, one prompt per step
 ```
 
-`uv` rather than `pip`, for one reason that is still load-bearing: **Python is
-held below 3.14** in `pyproject.toml`, and 3.14 made `functools.partial` a
-descriptor, which breaks `optimum`'s
-`NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)` class-attribute idiom
-outright. Version-independent root cause, confirmed 2026-08-03 across every
-optimum/transformers pairing tried. There is no `pip install vinowhisper`
-because the project is not published to PyPI, not because a pip install could
-not work.
+## From PyPI
+
+```bash
+pip install vinowhisper
+```
+
+This works, and until 2026-08-31 it could not. The dependency set resolved
+`openvino` from PyPI, where the builds that can construct the NPU static
+Whisper pipeline did not exist, so a pip install would have succeeded and then
+failed to load a model, which is worse than not shipping at all. Stable
+2026.3.1 removed that constraint (see the version floor below).
+
+What it gets you: the five commands and the Python dependencies. What it cannot
+get you: an NPU driver, a model export, or systemd units. Run
+`vinowhisper-setup` afterwards for those, exactly as the installer script would.
+
+**Python must be 3.11-3.13.** 3.14 made `functools.partial` a descriptor, which
+breaks `optimum`'s `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)`
+class-attribute idiom outright. Version-independent root cause, confirmed
+2026-08-03 across every optimum/transformers pairing tried. `requires-python`
+enforces it, so pip will refuse rather than install something broken.
 
 ## The OpenVINO version floor
 

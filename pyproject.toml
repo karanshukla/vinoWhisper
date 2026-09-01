@@ -3,14 +3,14 @@ name = "vinowhisper"
 version = "0.2.0"
 description = "NPU-accelerated local live captioning for Linux, via OpenVINO GenAI Whisper"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Karan Shukla" }]
 keywords = ["whisper", "openvino", "npu", "captions", "speech-to-text", "pipewire", "linux"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -69,7 +69,7 @@ vinowhisper-doctor = "vinowhisper.doctor:main"
 vinowhisper-setup = "vinowhisper.wizard:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # PEP 639 license expressions
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

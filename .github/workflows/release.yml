@@ -3,24 +3,38 @@ name: Release
 # Tag-driven: `uv run bump-my-version bump minor` writes the version, commits
 # and tags v0.3.0; pushing that tag cuts the release.
 #
-# Not published to PyPI, and that is a decision rather than an omission: a
-# `pip install vinowhisper` would resolve openvino from PyPI, where the builds
-# the NPU static Whisper pipeline needs do not exist yet (see pyproject.toml).
-# Shipping something that installs and then cannot load a model is worse than
-# not shipping it. scripts/install.sh is the supported path; the artifacts here
-# are for archival and for anyone who wants to vendor a specific version.
+# Three jobs rather than one, and the split is about permissions rather than
+# tidiness. Building needs nothing, the GitHub Release needs `contents: write`,
+# and PyPI needs `id-token: write` for Trusted Publishing. Keeping them apart
+# means the upload step never holds a token that can write to the repo, and the
+# build step holds neither. `build` publishes the artifacts both consumers
+# download, so the bytes that reach PyPI are the same bytes attached to the
+# GitHub Release, not a second build of the same tag.
+#
+# PyPI publishing uses **Trusted Publishing**: no API token exists anywhere, in
+# the repo or on a laptop. GitHub mints a short-lived OIDC token that PyPI
+# trusts because the project's publisher config names this exact repo, workflow
+# file and environment. Changing the workflow filename or the environment name
+# breaks the upload by design, so change the publisher config on PyPI first.
+#
+# This project deliberately did not ship to PyPI until 2026-08-31, because
+# `pip install vinowhisper` would have resolved openvino from PyPI, where the
+# builds that can construct the NPU static Whisper pipeline did not exist.
+# Stable 2026.3.1 fixed that (see docs/install.md), so the whole dependency set
+# now resolves from PyPI and a plain pip install genuinely works.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write # to create the GitHub Release
+permissions: {}
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -42,11 +56,11 @@ jobs:
       - name: Build sdist and wheel
         run: uv build
 
-      - name: Checksums
-        run: |
-          cd dist
-          sha256sum ./* > SHA256SUMS
-          cat SHA256SUMS
+      - name: Check the metadata renders on PyPI
+        # A README that renders on GitHub can still be rejected by PyPI, and a
+        # rejected upload cannot be retried under the same version. Catch it
+        # here, before anything is uploaded anywhere.
+        run: uvx twine check --strict dist/*
 
       - name: Extract the release notes from CHANGELOG.md
         env:
@@ -70,14 +84,68 @@ jobs:
             echo '## Install'
             echo
             echo '```'
+            echo "pip install vinowhisper==${VERSION}"
+            echo '```'
+            echo
+            echo 'Or the guided install, which also handles the NPU driver, the'
+            echo 'model export and the systemd units:'
+            echo
+            echo '```'
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VERSION}/scripts/install.sh | bash"
             echo '```'
           } >> RELEASE_NOTES.md
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: |
+            dist/
+            RELEASE_NOTES.md
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    # Named on PyPI's publisher config, so it is load-bearing rather than
+    # decorative. It is also where a required reviewer would go if this ever
+    # wants a human in the loop before an upload.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/vinowhisper
+    permissions:
+      id-token: write # OIDC for Trusted Publishing. No API token anywhere.
+    steps:
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+
+      # Before the GitHub Release, deliberately. A PyPI version can never be
+      # re-uploaded, so if this fails the tag can be deleted and re-cut; if the
+      # release existed first, that would leave a published release pointing at
+      # a version PyPI does not have.
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always dist/*
+
+  github-release:
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the GitHub Release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           gh release create "v${VERSION}" dist/* \
             --title "v${VERSION}" \
