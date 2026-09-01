@@ -8,13 +8,12 @@ on:
 permissions:
   contents: read
 
-# `uv pip install --group dev` rather than `uv sync`, everywhere below, and it
-# is load-bearing: a full sync resolves the OpenVINO nightly wheels this
-# project pins, and nightly builds are pruned upstream on their own schedule.
-# A CI job that depends on them goes red for reasons that have nothing to do
-# with the change under test. The dev group installs no OpenVINO at all, and
-# nothing under tests/ imports it. Whether the real dependency set still
-# resolves is a separate, scheduled question — see deps-canary.yml.
+# `uv pip install --group dev` rather than `uv sync`, everywhere below. A full
+# sync pulls ~400MB of OpenVINO wheels that no job here can use: there is no NPU
+# on a runner, and nothing under tests/ is allowed to import openvino at all.
+# The dev group installs none of it and the suite runs in seconds. Whether the
+# real dependency set still resolves is a separate, scheduled question, see
+# deps-canary.yml.
 
 jobs:
   lint:

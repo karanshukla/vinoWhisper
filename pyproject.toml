@@ -26,22 +26,24 @@ classifiers = [
 # root cause, not a version-pairing issue. Use 3.13 until upstream fixes it.
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    # Stable openvino-genai (2026.2.1 as of 2026-08-03) can't build the NPU
-    # static Whisper pipeline: its pipeline_static.cpp pattern-matcher doesn't
-    # recognize the current optimum-intel export's SDPA attention-mask node
-    # shape (OPENVINO_ASSERT(!self_attn_nodes.empty()) fails). Needs the
-    # nightly wheel index until a stable release catches up — same versions
-    # upstream's own openvino.genai samples/deployment-requirements.txt pins.
-    # The nightly index and prerelease policy live in [tool.uv] below, so
-    # `uv sync` alone resolves these without extra flags. This is also why
-    # `pip install vinowhisper` is not the documented install path: pip does
-    # not read [tool.uv.sources] and would resolve openvino from PyPI.
-    "openvino>=2026.4.0.dev",
-    "openvino-genai>=2026.4.0.0.dev",
-    # Pulled in transitively by openvino-genai, but must be listed directly:
-    # [tool.uv.sources] index routing below only applies to the project's own
-    # direct dependencies, not to transitive ones (confirmed 2026-08-06).
-    "openvino-tokenizers>=2026.4.0.0.dev",
+    # 2026.3.1 is the floor because it is the first *stable* release that can
+    # build the NPU static Whisper pipeline. Stable 2026.2.1 could not: its
+    # pipeline_static.cpp pattern-matcher did not recognize the optimum-intel
+    # export's SDPA attention-mask node shape
+    # (OPENVINO_ASSERT(!self_attn_nodes.empty())), which is why this project
+    # pinned the nightly wheel index from 2026-08-03 until 2026-08-31.
+    # Re-measured 2026-08-31 on the Wildcat Lake NPU against the same
+    # --disable-stateful export, WhisperPipeline(..., STATIC_PIPELINE=True):
+    # 2026.3.1 stable builds in 2.0s and decodes, as do nightly 2026.4.0.dev-
+    # 20260805 and 2026.5.0.dev20260831. Stable caught up, so the nightly
+    # index, the global prerelease policy and the weekly resolve canary are
+    # all gone and these resolve from PyPI like anything else.
+    "openvino>=2026.3.1",
+    "openvino-genai>=2026.3.1.0",
+    # Pulled in transitively by openvino-genai and still listed directly: the
+    # NPU pipeline hard-depends on it, and a transitive-only dependency is one
+    # upstream packaging change away from disappearing silently.
+    "openvino-tokenizers>=2026.3.1.0",
     "optimum[openvino]",
     "flask",
     "werkzeug",
@@ -78,31 +80,11 @@ packages = ["vinowhisper"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 
-[tool.uv]
-# openvino/openvino-genai only exist above 2026.2.1 as nightly dev builds
-# (see the dependency comment above), so prereleases must be allowed globally
-# or optimum[openvino]'s own (non-prerelease) openvino version range makes
-# the resolve unsatisfiable.
-prerelease = "allow"
-
-[[tool.uv.index]]
-name = "openvino-nightly"
-url = "https://storage.openvinotoolkit.org/simple/wheels/nightly"
-# explicit: only packages routed to it below use this index. Without this,
-# it fully replaces PyPI as the default index instead of adding to it
-# (confirmed 2026-08-06 — flask etc. became unresolvable).
-explicit = true
-
-[tool.uv.sources]
-openvino = { index = "openvino-nightly" }
-openvino-genai = { index = "openvino-nightly" }
-openvino-tokenizers = { index = "openvino-nightly" }
-
 [dependency-groups]
-# Deliberately installable on its own (`uv sync --only-group dev`): CI runs the
-# tests without the OpenVINO nightly stack, which has no CI-friendly resolve —
-# nightly builds are pruned upstream, so a locked dev wheel goes 404 on its own
-# schedule. Nothing under tests/ imports openvino for the same reason.
+# Deliberately installable on its own (`uv sync --only-group dev`): CI has no
+# NPU, no audio server and no reason to download ~400MB of OpenVINO to run
+# tests that are forbidden from importing it. Nothing under tests/ imports
+# openvino, transcriber or server, which is what keeps this split honest.
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

@@ -69,10 +69,14 @@ class WhisperTranscriber:
         self.model_dir = model_dir
         self._check_export(kind, model_dir)
 
-        # STATIC_PIPELINE=True is required for NPU (confirmed 2026-08-03
-        # against openvino_genai nightly 2026.4.0.0.dev — see pyproject.toml
-        # for why the nightly is needed), and must NOT be set anywhere else:
-        # the static pipeline is the NPU-specific code path.
+        # STATIC_PIPELINE=True is required for NPU, and must NOT be set
+        # anywhere else: the static pipeline is the NPU-specific code path.
+        # Confirmed 2026-08-03 against openvino_genai 2026.4.0.0.dev and
+        # re-confirmed 2026-08-31 against stable 2026.3.1. Omitting it does not
+        # fall back gracefully, it fails in the generic stateful path with
+        # "Stateful models without `beam_idx` input are not supported in
+        # StatefulToStateless transformation", which reads like a bad export
+        # and is not one.
         kwargs = {"STATIC_PIPELINE": True} if kind == "NPU" else {}
         self._pipeline = ov_genai.WhisperPipeline(
             str(self.model_dir), device=selection.device.name, **kwargs

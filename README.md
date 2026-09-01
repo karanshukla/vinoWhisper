@@ -42,9 +42,9 @@ uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
 uv run vinowhisper-setup             # for real, one prompt per step
 ```
 
-There is no `pip install vinowhisper`, on purpose. See
-[docs/install.md](docs/install.md) for why, and for the OpenVINO nightly pin
-that decision comes from.
+`uv` rather than `pip`, because the Python <3.14 pin lives in
+`pyproject.toml`. See [docs/install.md](docs/install.md) for that, and for the
+OpenVINO version floor.
 
 ## Commands
 
@@ -95,7 +95,7 @@ distro, that is expected, and it is the fastest thing here to fix.**
 
 | | |
 |---|---|
-| [Installing](docs/install.md) | What the installer does, the OpenVINO nightly pin and why, pinning the window on top |
+| [Installing](docs/install.md) | What the installer does, the OpenVINO version floor and why, pinning the window on top |
 | [Hardware](docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |

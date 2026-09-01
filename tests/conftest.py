@@ -1,11 +1,9 @@
 """Shared fixtures.
 
 Everything under tests/ runs without an NPU, without an audio server and
-without OpenVINO installed at all — that is a hard constraint, not a
-preference. CI cannot have any of the three (the OpenVINO nightly wheels this
-project pins are pruned upstream on their own schedule, so a locked dev
-resolve goes 404 eventually), and a test suite that only runs on one laptop is
-the test suite this project spent its first months not having.
+without OpenVINO installed at all. That is a hard constraint, not a
+preference: CI has none of the three, and a test suite that only runs on one
+laptop is the test suite this project spent its first months not having.
 
 So: no test imports vinowhisper.transcriber or vinowhisper.server, and
 anything that would shell out to pw-record/pactl is monkeypatched at the

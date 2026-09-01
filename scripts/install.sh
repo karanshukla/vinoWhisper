@@ -9,8 +9,8 @@
 #
 # What it does, in order:
 #
-#   1. finds (or installs) uv, since the OpenVINO nightly index and the
-#      Python <3.14 pin both live in pyproject.toml and only uv reads them
+#   1. finds (or installs) uv, since the Python <3.14 pin and the OpenVINO
+#      floor both live in pyproject.toml and only uv reads them
 #   2. clones or updates the checkout
 #   3. `uv sync`, which builds the environment against those pins
 #   4. hands over to `vinowhisper-setup`, which does the parts that need to
@@ -120,7 +120,7 @@ fi
 # --- environment ----------------------------------------------------------
 
 say "Building the environment (uv sync)"
-say "  This pulls the OpenVINO nightly wheels; expect a few GB and a few minutes."
+say "  This pulls the OpenVINO wheels; expect a few GB and a few minutes."
 run uv sync --project "$INSTALL_DIR"
 
 # --- hardware-specific setup ---------------------------------------------

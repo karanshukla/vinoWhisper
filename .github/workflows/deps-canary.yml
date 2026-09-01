@@ -1,19 +1,22 @@
 name: Dependency canary
 
-# The real dependency set — the OpenVINO nightly wheels — is checked here and
-# nowhere else, on a schedule, deliberately kept off the PR path.
+# The full dependency set is installed here and nowhere else, on a schedule,
+# deliberately kept off the PR path.
 #
-# Why it is separate: `openvino>=2026.4.0.dev` resolves against
-# storage.openvinotoolkit.org's nightly index, and nightly builds are pruned
-# upstream on their own schedule. A locked build that resolved last week can
-# 404 today through nobody's fault, and gating pull requests on that means red
-# CI for reasons unrelated to the change under review.
+# Why it is separate: pull-request CI installs `--group dev` only, because
+# OpenVINO is ~400MB that no test may import. So nothing on the PR path would
+# ever notice the real set breaking. This job is what notices.
+#
+# It used to exist for a sharper reason. From 2026-08-03 to 2026-08-31 the
+# project pinned OpenVINO nightly wheels, which upstream prunes on its own
+# schedule, so a lock that resolved last week could 404 today through nobody's
+# fault. Stable 2026.3.1 caught up (measured on the NPU 2026-08-31), the pin is
+# gone, and that failure mode with it. What is left is ordinary upstream churn.
 #
 # What a failure here means, in rough order of likelihood:
-#   - the pinned nightly aged out of the index → re-run `uv lock --upgrade`
-#   - the nightly changed something that breaks the import → read the error
-#   - a stable OpenVINO release finally caught up → the nightly pin in
-#     pyproject.toml can probably be dropped, which is the outcome to hope for
+#   - optimum/transformers moved and the resolve no longer satisfies
+#   - a new OpenVINO stable broke the import or the plugin load
+#   - a transitive dependency yanked a release
 
 on:
   schedule:
@@ -36,8 +39,8 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       # Not --frozen: the lock is allowed to be behind pyproject.toml here,
-      # because relocking needs the nightly index and that is exactly the
-      # thing being tested. A failure at this step is the canary firing.
+      # since resolving from scratch is part of what is being tested. A failure
+      # at this step is the canary firing.
       - name: uv sync (the full, real dependency set)
         run: uv sync
 
@@ -52,8 +55,8 @@ jobs:
           print("devices:", openvino.Core().available_devices)
           PY
 
-      - name: Re-resolve against today's nightly index
-        # Separate from the frozen sync above so the two failure modes stay
+      - name: Re-resolve against today's indexes
+        # Separate from the sync above so the two failure modes stay
         # distinguishable: "the lock no longer installs" vs "nothing newer
         # resolves either".
         run: uv lock --upgrade --dry-run

@@ -21,6 +21,18 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   extraction steps; a soname symlink reverted to an older backend by a package
   reinstall prints the `ln -sf` that undoes it.
 
+### 🔧 Dependencies
+
+- **The OpenVINO nightly pin is gone.** `openvino>=2026.3.1` from PyPI, with
+  `[[tool.uv.index]]`, `[tool.uv.sources]` and `prerelease = "allow"` all
+  removed. Stable 2026.2.1 could not build the NPU static Whisper pipeline,
+  which is why 2026-08-03 pinned nightly wheels; 2026.3.1 can. Measured
+  2026-08-31 on the Wildcat Lake NPU against the same `--disable-stateful`
+  export: stable 2026.3.1 builds in 2.0s and decodes, as do nightly
+  2026.4.0.dev20260805 and 2026.5.0.dev20260831. This removes the project's
+  standing dependency risk, since nightly builds are pruned upstream on their
+  own schedule and a lock pinning one eventually 404s.
+
 ### 📚 Documentation
 
 - README cut from 365 lines to 121. Everything longer than a paragraph moved

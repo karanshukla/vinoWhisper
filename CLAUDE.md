@@ -267,11 +267,22 @@ agree modulo punctuation, the later saw more right-context.
   2. **NPU needs `--disable-stateful` on export** for the separate
      `decoder_with_past` KV-cache submodel the static pipeline requires.
      Matches [openvinotoolkit/openvino.genai#1728](https://github.com/openvinotoolkit/openvino.genai/issues/1728).
-  3. **Stable `openvino_genai` (2026.2.1) cannot parse the resulting graph.**
-     Its NPU pattern-matcher does not recognize the current export's SDPA
-     attention-mask node shape. Needs the nightly wheel index until a stable
-     release catches up. This is an ongoing dependency risk, re-check on each
-     new stable OpenVINO release.
+  3. **Stable `openvino_genai` 2026.2.1 could not parse the resulting graph,
+     and 2026.3.1 can. Resolved 2026-08-31, the nightly pin is gone.** 2026.2.1's
+     NPU pattern-matcher did not recognize the export's SDPA attention-mask node
+     shape, which is why 2026-08-03 through 2026-08-31 pinned nightly wheels.
+     Re-measured on hardware against the same export: stable 2026.3.1 builds the
+     static pipeline in 2.0s and decodes, as do nightly 2026.4.0.dev20260805
+     (the version that had been pinned) and 2026.5.0.dev20260831. The floor is
+     now `openvino>=2026.3.1` from PyPI, and `[tool.uv.index]`,
+     `[tool.uv.sources]` and `prerelease = "allow"` are all deleted.
+  4. **`STATIC_PIPELINE=True` is what selects the NPU code path, and omitting
+     it fails misleadingly.** Without it the NPU goes down the generic stateful
+     path and raises `Stateful models without 'beam_idx' input are not
+     supported in StatefulToStateless transformation`, which reads as a broken
+     export and is not one. Cost an hour on 2026-08-31 while version-testing:
+     three OpenVINO releases all "failed" identically until the control run
+     showed the probe, not the wheels, was wrong.
 - **Two generation-config levers look like they would help and do not.** Both
   confirmed dead 2026-08-03. `no_repeat_ngram_size` is a no-op for Whisper:
   `pipeline_static.cpp`, `whisper.cpp`, and `logit_processor.cpp(.hpp)` have
@@ -314,7 +325,7 @@ agree modulo punctuation, the later saw more right-context.
   against the sink monitor's 0.05739. It is the one node here that really is
   post-volume. Aim `--target` at an actual application.
 - **Known upstream NPU rough edges** (as of 2026-07-30, not re-verified
-  against the current nightly): open `openvino.genai` issues report a
+  against 2026.3.1 stable): open `openvino.genai` issues report a
   Whisper-turbo model hanging on NPU and unclean pipeline shutdown on NPU.
   Neither hit yet, but live captioning holds the pipeline resident and calls
   it continuously, which is a meaningfully different usage pattern from
@@ -374,10 +385,10 @@ Ordered by what would most change the design.
   The old throwaway verification scripts from the 2026-08-06/08-07 reviews are
   in there as fixtures now, which is where they should have been.
 - `uv run poe check` is the whole gate (ruff, ruff format, mypy, pytest). CI
-  installs `--group dev` only, never `uv sync`: a full resolve pulls the
-  OpenVINO nightly wheels, which get pruned upstream on their own schedule, so
-  gating pull requests on them means red CI for unrelated reasons. The full
-  resolve is checked weekly by `deps-canary.yml` instead.
+  installs `--group dev` only, never `uv sync`: a full resolve pulls ~400MB of
+  OpenVINO that no test may import anyway. (Until 2026-08-31 there was a
+  sharper reason, nightly wheels aging out of the index; that is gone with the
+  nightly pin.) The full resolve is still checked weekly by `deps-canary.yml`.
 - A failure should name its fix. Nearly every error path here prints the
   command that resolves it, and on anything environmental it prints the
   command *for the local distro* (`distro.remediation`). An exception that only
