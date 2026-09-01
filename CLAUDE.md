@@ -268,6 +268,24 @@ which strips punctuation for *comparison only*, never before printing. Note
 `push` commits `candidate`'s words rather than `_pending`'s: when two decodes
 agree modulo punctuation, the later saw more right-context.
 
+## Bug found 2026-09-01
+
+**A short boundary overlap below `_MIN_MATCH_WORDS` reprinted already-shown
+words, worsening cycle over cycle.** Reported from a real ~4-minute session:
+growing duplicate blocks like "do things" / "do things that make you" printed
+as separate lines. Root cause: when wording drift left only a 1-2 word
+overlap between the confirmed tail and the new decode (below the 3-word
+anchor floor), `_candidate_tail` had no internal match to fall back on and
+returned the whole cycle as "new," reprinting the words it shared with what
+was already on screen. That floor exists to avoid locking onto an unrelated
+*internal* occurrence of a common phrase (see the 2026-08-06 review), but a
+match *at the boundary* has no such ambiguity — `curr` always starts inside a
+window that overlaps what's confirmed, so a boundary match is trustworthy even
+below the floor. Fixed with `_strip_confirmed_prefix`, a word-by-word boundary
+check that runs only when the internal `SequenceMatcher` search comes back
+empty. Reproduced and verified against a stubbed stitcher, not yet re-run on
+hardware.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**

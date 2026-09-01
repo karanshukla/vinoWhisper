@@ -96,6 +96,22 @@ def test_a_single_spurious_word_match_does_not_reprint_everything():
     assert printed.count("bravo") == 0
 
 
+def test_short_boundary_overlap_below_the_anchor_floor_does_not_reprint():
+    """The 2026-09-01 bug, seen on a real 4-minute session: wording drift left
+    only a 2-word boundary match ("do things"), below _MIN_MATCH_WORDS, so the
+    whole next cycle fell through to "treat as new" and reprinted words
+    already on screen, growing worse each cycle as the sentence continued.
+    """
+    stitcher = Stitcher()
+    assert push_all(stitcher, "do things", "do things") == ["do", "things"]
+    printed = push_all(
+        stitcher,
+        "do things that make you",
+        "do things that make you",
+    )
+    assert printed == ["that", "make", "you"]
+
+
 def test_flush_releases_the_last_unconfirmed_guess():
     stitcher = Stitcher()
     stitcher.push("and the crowd went")

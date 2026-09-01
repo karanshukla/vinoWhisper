@@ -111,6 +111,30 @@ def collapse_repeats(text: str) -> str:
     return "".join(out)
 
 
+def _strip_confirmed_prefix(confirmed: list[str], curr: list[str]) -> list[str]:
+    """Trim words off the front of `curr` that restate the tail of `confirmed`,
+    one word at a time, as far as they keep agreeing.
+
+    Backstop for when the SequenceMatcher search below finds no block of at
+    least _MIN_MATCH_WORDS. That floor exists to avoid locking onto an
+    unrelated *internal* occurrence of a common phrase, but it also rejects a
+    real overlap that happens to be short — confirmed 2026-09-01 on real
+    content: wording drift left only a 2-word boundary match ("do things"
+    before "do things that make you"), so the whole cycle fell through to
+    "treat as new" and reprinted the already-shown words. A match *at the
+    boundary* doesn't have that ambiguity — curr always starts inside a window
+    that overlaps what's already confirmed, so there's nowhere else a matching
+    first word could have come from — so even a 1-word boundary match is
+    trustworthy where an internal one isn't.
+    """
+    limit = min(len(confirmed), len(curr))
+    tail = confirmed[-limit:] if limit else []
+    n = 0
+    while n < limit and _norm(tail[n]) == _norm(curr[n]):
+        n += 1
+    return curr[n:]
+
+
 def _candidate_tail(confirmed: list[str], curr: list[str]) -> list[str]:
     """The part of `curr` that goes past what's already been shown."""
     if not confirmed:
@@ -154,10 +178,11 @@ def _candidate_tail(confirmed: list[str], curr: list[str]) -> list[str]:
     min_match = min(_MIN_MATCH_WORDS, len(curr))
     blocks = [b for b in matcher.get_matching_blocks() if b.size >= min_match]
     if not blocks:
-        # No confident overlap. Treating everything as a fresh candidate is the
-        # safer failure mode than silently dropping content past a bad match —
-        # and LocalAgreement still has to confirm it before it's printed.
-        return curr
+        # No confident *internal* overlap. Still try the boundary before
+        # giving up and treating everything as fresh — see
+        # _strip_confirmed_prefix. LocalAgreement still has to confirm
+        # whatever's left before it's printed either way.
+        return _strip_confirmed_prefix(confirmed, curr)
 
     match = max(blocks, key=lambda b: b.b + b.size)
     return curr[match.b + match.size :]
