@@ -151,6 +151,20 @@ scripts/          install.sh (bootstrap), convert_model.sh (both exports), compl
 them. When something here changes, the prose to update is almost always a file
 under `docs/`, not the README.
 
+**It ships on PyPI now, so "is this file here?" has two answers.** From
+2026-08-31, `pip install vinowhisper` works: the nightly pin was the only thing
+preventing it (see the OpenVINO gotcha below), and its removal made the whole
+dependency set resolve from PyPI. The consequence to keep in mind when writing
+any error message: **a wheel install has no `scripts/`, no `docs/`, no
+`systemd/` and no repo at all.** Seven messages named
+`./scripts/convert_model.sh` and were wrong for every pip user until
+`config.export_command()` was added; `wizard.install_completion()` had already
+got this right ("completion script not found (installed from a wheel?)"), which
+is the pattern to copy. Anything reached via `_repo_root()` needs the same
+treatment. Releases upload through Trusted Publishing from `release.yml`, which
+names the `pypi` environment, so renaming that file or that environment breaks
+publishing until PyPI's publisher config is changed to match.
+
 **Two device paths, two model exports, and this is the trap.** NPU needs the
 `--disable-stateful` export; that same export cannot run on CPU at all
 (`beam_idx` port error). So the CPU/GPU fallback needs a *second* export in a
