@@ -5,8 +5,8 @@ Socket-activated, not a plain always-on service (see vinowhisper-server.socket
 spawns this process on the first connection, mirroring a serverless
 scale-to-zero pattern. This process self-exits after config.IDLE_TIMEOUT_S of
 inactivity; the next request through the socket respawns it and pays the NPU
-model-load cost again. That cold-start/idle-unload trade is deliberate — see
-README.md.
+model-load cost again. That cold-start/idle-unload trade is deliberate: see
+docs/architecture.md.
 """
 
 import argparse

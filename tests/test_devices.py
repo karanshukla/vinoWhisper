@@ -5,6 +5,8 @@ is also the honest split: selection is policy and is testable; enumeration is
 a driver question and isn't.
 """
 
+import os
+
 import pytest
 
 from vinowhisper import devices
@@ -98,3 +100,96 @@ def test_missing_npu_help_ends_with_the_distro_remediation(monkeypatch):
     lines = devices.npu_missing_help()
     assert lines
     assert any("linux-npu-driver" in line for line in lines)
+
+
+# --- Userspace NPU libraries ---------------------------------------------
+#
+# The case each of these covers is one where every kernel-side check above
+# passes and the NPU still cannot compile a model, which is exactly the failure
+# that is invisible without this.
+
+
+def fake_lib(path, marker: str = "") -> None:
+    """A stand-in .so: real enough for the marker scan, 200 bytes rather than 127MB."""
+    path.write_bytes(b"\x7fELF" + b"\x00" * 64 + marker.encode() + b"\x00" * 64)
+
+
+@pytest.fixture
+def libdir(monkeypatch, tmp_path):
+    monkeypatch.setattr(devices, "library_dirs", lambda: [tmp_path])
+    return tmp_path
+
+
+def labelled(notes, label):
+    return next(note for note in notes if note.label == label)
+
+
+def test_userspace_reports_both_libraries_and_their_versions(libdir):
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0", "npu-linux-driver-ci-1.35.0.20260722")
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER, "2026.3.0-22159-4089686065a-0722.205447")
+
+    notes = devices.npu_userspace()
+    backend = labelled(notes, "level-zero NPU backend")
+    assert backend.ok is True
+    assert "1.35.0.20260722" in backend.detail
+
+    compiler = labelled(notes, "NPU compiler")
+    assert compiler.ok is True
+    # Trailing build metadata past the git hash is noise, and is not reported.
+    assert "OpenVINO 2026.3.0-22159-4089686065a)" in compiler.detail
+
+
+def test_a_missing_compiler_is_a_failure_carrying_the_extraction_steps(libdir):
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0")
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+
+    compiler = labelled(devices.npu_userspace(), "NPU compiler")
+    assert compiler.ok is False
+    # The whole point of this check: it is not caught by anything upstream.
+    assert "still enumerates" in compiler.detail
+    assert "dpkg-deb" in compiler.detail
+    assert "linux-npu-driver/releases" in compiler.detail
+
+
+def test_a_reverted_soname_symlink_is_caught_and_named(libdir):
+    """What `dnf reinstall intel-npu-driver` does to a hand-installed backend."""
+    fake_lib(libdir / "libze_intel_npu.so.1.32.0")
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0")
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.32.0")
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER)
+
+    version = labelled(devices.npu_userspace(), "level-zero version")
+    assert version.ok is False
+    assert "libze_intel_npu.so.1.35.0" in version.detail
+    assert "ln -sf" in version.detail
+
+
+def test_the_newest_backend_being_selected_raises_nothing(libdir):
+    """The same two files, with the symlink the right way round: no warning."""
+    fake_lib(libdir / "libze_intel_npu.so.1.32.0")
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0")
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER)
+
+    assert all(note.label != "level-zero version" for note in devices.npu_userspace())
+
+
+def test_a_missing_level_zero_backend_says_the_device_will_not_enumerate(libdir):
+    backend = labelled(devices.npu_userspace(), "level-zero NPU backend")
+    assert backend.ok is False
+    assert "will not enumerate" in backend.detail
+
+
+def test_library_dirs_puts_ld_library_path_first(monkeypatch, tmp_path):
+    """A vendored toolkit sourced through setupvars.sh has to win over /usr/lib64."""
+    vendored = tmp_path / "opt" / "openvino" / "lib"
+    vendored.mkdir(parents=True)
+    monkeypatch.setenv("LD_LIBRARY_PATH", f"{vendored}{os.pathsep}/does/not/exist")
+
+    dirs = devices.library_dirs()
+    assert dirs[0] == vendored
+    assert all(directory.is_dir() for directory in dirs)

@@ -141,9 +141,15 @@ vinowhisper/
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
+docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports), completion
 .github/          CI, release, dependency canary, Bandit, templates
 ```
+
+**The README is an index, not the documentation.** Cut from 365 lines to 121 on
+2026-08-31; the long-form sections live in `docs/` and the README links to
+them. When something here changes, the prose to update is almost always a file
+under `docs/`, not the README.
 
 **Two device paths, two model exports, and this is the trap.** NPU needs the
 `--disable-stateful` export; that same export cannot run on CPU at all
@@ -155,6 +161,21 @@ NPU > GPU > CPU for "auto", an explicit `--device` is refused rather than
 downgraded, and anything below NPU carries warnings that surface in the server
 journal, `/health`, the `Ready` event, the status bar (red border + `⚠`) and
 the doctor.
+
+**The NPU has a userspace half that device enumeration does not test.**
+`devices.npu_preflight()` answers the kernel-side question; `npu_userspace()`
+answers the other one, and the doctor runs it even when the NPU enumerated
+fine. Two silent failures live there: no distro packages
+`libopenvino_intel_npu_compiler.so` at all (Fedora's `intel-npu-driver` rpm
+ships level-zero and stops), and a `dnf reinstall` of that rpm rewrites
+`libze_intel_npu.so.1` back to the packaged backend, which still enumerates
+`Intel(R) AI Boost` and then fails inside `compile_model()`. Both are read
+straight off the libraries, which embed their own provenance
+(`npu-linux-driver-ci-1.35.0.…` and the OpenVINO release the compiler was built
+from). The 547KB `_loader` carries the same version as the 127MB compiler, so
+that is the one scanned. This machine's hand-installed 1.35.0 libraries are
+untracked by rpm, which is exactly why the reinstall case is worth checking
+rather than assuming.
 
 **Capture has two backends.** `capture.py` prefers `pw-record` and falls back
 to `parec`; `record_argv()` is a pure function of (source, target, backend) so
