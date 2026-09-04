@@ -62,6 +62,13 @@ uv run poe check    # ruff check, ruff format --check, mypy, pytest
 - **Tests are for the logic, not the hardware.** Anything under `tests/` must
   run with no NPU, no audio server and no OpenVINO. If a change can only be
   verified on the laptop, say so in the PR rather than faking a test for it.
+- **`test_characterization_*` pins a known oddity on purpose.** Several
+  behaviours here are correct as written and look like bugs cold: `--target`
+  refused on PulseAudio rather than reinterpreted, the sink monitor being
+  pre-volume and pre-mute, `Live.update()` needing `refresh=True`. If one of
+  those tests goes red, the question is not which assertion to update — it is
+  whether the behaviour was supposed to change. Flipping one is a deliberate
+  act; say so in the PR.
 
 ## Commits
 

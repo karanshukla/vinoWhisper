@@ -416,6 +416,27 @@ Ordered by what would most change the design.
   anything that would shell out is monkeypatched at the `capture` boundary.
   The old throwaway verification scripts from the 2026-08-06/08-07 reviews are
   in there as fixtures now, which is where they should have been.
+- **A test named `test_characterization_*` pins a known oddity on purpose, and
+  flipping one is a deliberate act, not a green-to-red accident.** This is a
+  rule, not a style preference. Several behaviours here are correct as written
+  and look like bugs to anyone reading them cold — `Live.update()` needing
+  `refresh=True`, `stitch.push` committing `candidate`'s words rather than
+  `_pending`'s, `_norm` stripping punctuation for comparison and never before
+  printing, `--target` being refused on PulseAudio rather than reinterpreted,
+  the sink monitor being pre-volume and pre-mute. Each was defended by a
+  comment, and a comment does not fail when someone "fixes" the behaviour it
+  describes.
+
+  So: the docstring starts with `characterization:` and states the oddity, why
+  it is right, and what breaks if it is "corrected". If one of these goes red,
+  the question is not "which assertion do I update" — it is whether the
+  behaviour was supposed to change at all. Same idea as "measured claims carry
+  a date", applied to behaviour instead of prose: the sink-monitor reversal is
+  the argument for both, and the dates are what made it recoverable.
+
+  Audited 2026-09-04 while adopting this: four of those five had no test at
+  all, only a comment. Adding one is cheap; adding it after someone has
+  already deleted the behaviour is not.
 - `uv run poe check` is the whole gate (ruff, ruff format, mypy, pytest). CI
   installs `--group dev` only, never `uv sync`: a full resolve pulls ~400MB of
   OpenVINO that no test may import anyway. (Until 2026-08-31 there was a

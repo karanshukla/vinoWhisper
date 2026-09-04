@@ -5,7 +5,7 @@ as a fixture. The 2026-08-06 and 2026-08-07 reviews found all of them with
 throwaway scripts against a stubbed pipeline; this is those scripts, kept.
 """
 
-from vinowhisper.stitch import Stitcher, collapse_repeats
+from vinowhisper.stitch import Stitcher, _norm, collapse_repeats
 
 
 def push_all(stitcher: Stitcher, *transcripts: str) -> list[str]:
@@ -150,3 +150,51 @@ def test_repeat_collapse_runs_before_stitching():
     stitcher = Stitcher()
     stitcher.push("okay " + "you" * 20)
     assert stitcher.pending == ["okay", "youyouyou"]
+
+
+def test_characterization_push_commits_the_later_decodes_punctuation():
+    """characterization: `push` commits `candidate`'s words, not `_pending`'s.
+
+    Reads like a copy-paste slip — the agreement was computed against
+    `_pending`, so committing `_pending` looks like the obvious intent. It is
+    not. When two decodes agree modulo punctuation the *later* one saw more
+    right-context, so its punctuation is the better guess, and taking it is
+    the whole reason the commit reads from `candidate`.
+
+    Flipping this is a deliberate act. It will not fail loudly if you get it
+    wrong; it will just quietly print slightly worse punctuation forever.
+    """
+    stitcher = Stitcher()
+    stitcher.push("the best pitcher in baseball.")  # first decode: full stop
+    printed = stitcher.push("the best pitcher in baseball,")  # second: comma
+
+    assert printed[-1] == "baseball,"  # the later decode's, not the earlier's
+    assert stitcher._confirmed[-1] == "baseball,"
+
+
+def test_characterization_norm_strips_punctuation_for_comparison_only():
+    """characterization: `_norm` never touches what gets printed.
+
+    The temptation is to normalize once, on the way in, and be done. That
+    would strip Whisper's punctuation and capitalization out of the
+    transcript, and since whisper-small.en is where all of that comes from
+    (nothing here infers it), the captions would arrive as unpunctuated
+    lowercase and the paragraph logic — which looks for sentence ends — would
+    stop finding any.
+    """
+    assert _norm("Baseball.") == _norm("baseball,") == "baseball"
+
+    stitcher = Stitcher()
+    printed = push_all(stitcher, "He won. It's over —", "He won. It's over —")
+    assert printed == ["He", "won.", "It's", "over", "—"]
+
+
+def test_characterization_a_pure_punctuation_token_does_not_normalize_to_empty():
+    """characterization: `_norm` falls back to the raw word when stripping
+    empties it. Without the fallback an em dash normalizes to "" and compares
+    equal to every other punctuation-only token, which is a match the anchor
+    would believe.
+    """
+    assert _norm("—") == "—"
+    assert _norm("...") == "..."
+    assert _norm("—") != _norm("…")
