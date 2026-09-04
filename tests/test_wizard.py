@@ -10,7 +10,7 @@ import sys
 import pytest
 from conftest import fake_version
 
-from vinowhisper import config, wizard
+from vinowhisper import config, integrity, wizard
 
 
 def test_the_npu_export_disables_stateful():
@@ -127,3 +127,51 @@ def test_a_wheel_install_names_the_wizard_instead(monkeypatch, tmp_path):
     # flag it does not take would be worse than naming none.
     assert config.export_command("npu") == "vinowhisper-setup"
     assert config.export_command("stateful") == "vinowhisper-setup"
+
+
+# --- digest verification --------------------------------------------------
+
+
+def _wizard():
+    return wizard.Wizard(dry_run=True)
+
+
+def _verification(status, **kwargs):
+    return integrity.Verification(
+        status=status,
+        model_id=config.MODEL_ID,
+        variant="npu",
+        directory=config.MODEL_DIR,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize(
+    "status, expected_ok",
+    [
+        (integrity.VERIFIED, True),
+        (integrity.UNPINNED, True),
+        (integrity.DRIFT, True),
+        (integrity.MISMATCH, False),
+        (integrity.INCOMPLETE, False),
+        (integrity.KNOWN_BAD, False),
+    ],
+)
+def test_setup_only_fails_on_a_severe_digest_result(monkeypatch, capsys, status, expected_ok):
+    """characterization: an unpinned or drifted export does not block setup.
+
+    Only three of the six statuses mean the export should not be used. The
+    other three are the normal state of an export nobody has pinned, or of a
+    toolchain that has moved since the pin was made, and failing setup on
+    either would make `--model` anything unusable. If this goes red, the
+    question is whether setup was meant to start refusing to finish.
+    """
+    monkeypatch.setattr(
+        integrity, "verify", lambda directory, variant, *args, **kwargs: _verification(status)
+    )
+    outcome = _wizard().check_digests("npu", config.MODEL_DIR, "export present")
+    assert outcome.ok is expected_ok
+    # Whatever it decides, it says why: a silent pass on a drifted export is
+    # the same as not checking.
+    printed = capsys.readouterr().out
+    assert (status == integrity.VERIFIED) == (printed.strip() == "")

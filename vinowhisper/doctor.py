@@ -24,8 +24,9 @@ import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
-from . import __version__, audio, capture, config, devices, distro, recorder
+from . import __version__, audio, capture, config, devices, distro, integrity, recorder
 
 _PROBE_S = 2.0
 
@@ -170,7 +171,27 @@ def _models() -> list[Result]:
             )
         else:
             results.append(Result(OK, label, str(directory)))
+            results.append(_digests(variant, directory, required))
     return results
+
+
+def _digests(variant: str, directory: Path, required: bool) -> Result:
+    """The export's bytes against the pinned ones. ~1.2s for 1.5GB.
+
+    Only reached for an export that is present and is the right shape for its
+    device, because "these hashes do not match" is unhelpful noise next to
+    "this is the wrong export entirely".
+    """
+    result = integrity.verify(directory, variant)
+    label = f"model ({variant}) digests"
+    if result.status == integrity.VERIFIED:
+        return Result(OK, label, result.summary())
+    if result.severe:
+        return Result(FAIL if required else WARN, label, "\n".join(result.lines()[1:]).strip())
+    # UNPINNED is the shipped state for the stateful export and for any
+    # --model this project has not seen; DRIFT is what an optimum bump looks
+    # like. Both are reported, neither is a failure.
+    return Result(UNKNOWN if result.status == integrity.UNPINNED else WARN, label, result.summary())
 
 
 def _server() -> list[Result]:

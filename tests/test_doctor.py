@@ -9,7 +9,7 @@ reporting a fact.
 
 import pytest
 
-from vinowhisper import config, devices, doctor
+from vinowhisper import config, devices, doctor, integrity
 
 
 @pytest.fixture
@@ -138,3 +138,42 @@ def test_unknown_distro_is_a_warning_not_a_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(distro, "OS_RELEASE", tmp_path / "absent")
     monkeypatch.setattr(doctor.distro, "detect", lambda path=None: distro.Distro("x", "X", ""))
     assert doctor._distro().status == doctor.WARN
+
+
+# --- digest verification --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status, required, expected",
+    [
+        (integrity.VERIFIED, True, doctor.OK),
+        (integrity.UNPINNED, True, doctor.UNKNOWN),
+        (integrity.DRIFT, True, doctor.WARN),
+        (integrity.MISMATCH, True, doctor.FAIL),
+        (integrity.KNOWN_BAD, True, doctor.FAIL),
+        # Same finding on the export this machine will never load: still worth
+        # reporting, not worth failing the run over.
+        (integrity.MISMATCH, False, doctor.WARN),
+        (integrity.KNOWN_BAD, False, doctor.WARN),
+    ],
+)
+def test_the_doctor_grades_a_digest_result_by_whether_the_export_is_needed(
+    monkeypatch, tmp_path, status, required, expected
+):
+    monkeypatch.setattr(
+        integrity,
+        "verify",
+        lambda directory, variant, *args, **kwargs: integrity.Verification(
+            status=status, model_id=config.MODEL_ID, variant=variant, directory=directory
+        ),
+    )
+    assert doctor._digests("npu", tmp_path, required).status == expected
+
+
+def test_digests_are_only_checked_on_an_export_of_the_right_shape(model_dirs, monkeypatch):
+    """A wrong-variant export fails first, so hashing it says nothing useful."""
+    model_dirs("npu", with_past=False)  # NPU dir holding the stateful export
+    monkeypatch.setattr(devices, "available", lambda: [])
+    labels = [result.label for result in doctor._models()]
+    assert "model (npu)" in labels
+    assert "model (npu) digests" not in labels

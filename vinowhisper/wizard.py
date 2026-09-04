@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, capture, config, devices, distro
+from . import __version__, capture, config, devices, distro, integrity
 
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
@@ -173,13 +173,34 @@ class Wizard:
         directory = config.model_dir(kind)
 
         if directory.is_dir() and any(directory.glob("*.xml")):
-            return Outcome(True, f"{variant} export present at {directory}")
+            return self.check_digests(
+                variant, directory, f"{variant} export present at {directory}"
+            )
 
         self.say(f"  No {variant} export at {directory}.")
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
         if self.run(export_argv(variant, directory), "export it now?"):
-            return Outcome(True, f"exported to {directory}")
+            return self.check_digests(variant, directory, f"exported to {directory}")
         return Outcome(None, f"run {config.export_command(variant)} when ready")
+
+    def check_digests(self, variant: str, directory: Path, summary: str) -> Outcome:
+        """Compare what is on disk against the pinned digests.
+
+        Runs on an export that was already there as well as one this wizard
+        just produced, because the interesting question is what is about to be
+        loaded onto your hardware, not who downloaded it. ~1.2s for 1.5GB.
+        """
+        result = integrity.verify(directory, variant)
+        if result.status == integrity.VERIFIED:
+            return Outcome(True, f"{summary}, digests verified")
+        for line in result.lines()[1:]:
+            self.say(f"  {line.strip()}")
+        if result.severe:
+            return Outcome(False, f"{summary}, but {result.summary()}")
+        # UNPINNED and DRIFT both warn and continue: an export nobody has
+        # pinned is the normal state for --model anything, and a toolchain bump
+        # legitimately changes the bytes. Neither is a reason to block setup.
+        return Outcome(True, f"{summary} ({result.status})")
 
     def install_units(self) -> Outcome:
         if not _has_systemd():
