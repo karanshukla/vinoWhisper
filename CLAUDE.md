@@ -324,6 +324,23 @@ hardware.
   `pipeline_static.cpp:1147`. Runaway repeats are cleaned up client-side in
   `stitch.collapse_repeats`, at character level rather than by word, because
   the degenerate case has no whitespace to split on ("youyouyouyou...").
+- **The character-level collapse was never blind to whitespace, it is blind to
+  normalization. Measured 2026-09-04.** The obvious reading of the above — that
+  a space-separated repeat needs a word-level pass — is wrong: `"you "` is a
+  repeating *character* unit exactly as `"you"` is, so `collapse_repeats`
+  already folds `"you you you you"` and `"do things do things do things do
+  things"`. What it cannot see is a loop whose reps differ in punctuation or
+  capitalization (`"do things. do things, Do things"`), which is not an exotic
+  input here — drifting punctuation on re-decoded audio is the documented
+  cause of both the 2026-08-07 and 2026-09-01 anchor bugs. `collapse_word_repeats`
+  closes that by comparing through `_norm`, the same normalization the anchor
+  uses. It collapses *adjacent* runs only: a word recurring three times
+  anywhere in a cycle is ordinary speech, and with an append-only transcript a
+  false positive deletes a real word with no way to restore it. Both passes run
+  on the raw cycle in `push`, not on the words about to be committed — cleaning
+  only the commit would leave `_confirmed` holding a collapsed run while the
+  next cycle's `curr` still holds the full one, which is the anchor mismatch
+  that causes reprints in the first place.
 - **Model size is settled: whisper-small.en.** base.en (2.6x faster) and
   tiny.en (3.8x faster) both introduce real transcription errors. INT8 on
   small.en is free accuracy-wise but only buys ~10%, since the bottleneck is
