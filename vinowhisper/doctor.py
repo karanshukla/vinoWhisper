@@ -24,6 +24,7 @@ import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from . import __version__, audio, capture, config, devices, distro, integrity, recorder
 
@@ -174,7 +175,7 @@ def _models() -> list[Result]:
     return results
 
 
-def _digests(variant: str, directory, required: bool) -> Result:
+def _digests(variant: str, directory: Path, required: bool) -> Result:
     """The export's bytes against the pinned ones. ~1.2s for 1.5GB.
 
     Only reached for an export that is present and is the right shape for its

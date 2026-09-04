@@ -84,7 +84,7 @@ verify_one() {
     local variant="$1" out="$2"
     if ! python3 -c "import vinowhisper" >/dev/null 2>&1; then
         echo "==> skipping digest check: vinowhisper not importable by $(command -v python3)"
-        echo "    (run this as 'uv run $0 $*', or check by hand with"
+        echo "    (re-run this as 'uv run $0', or check by hand with"
         echo "     python -m vinowhisper.integrity --variant $variant --dir $out)"
         return 0
     fi
