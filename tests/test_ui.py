@@ -13,7 +13,7 @@ import io
 from rich.console import Console
 
 from vinowhisper import events
-from vinowhisper.ui import RichRenderer
+from vinowhisper.ui import _PARAGRAPH_SILENCE_S, RichRenderer
 
 
 def make_console(width: int = 80) -> Console:
@@ -95,6 +95,46 @@ def test_a_pause_breaks_the_paragraph_only_once_a_word_follows():
     output = rendered(console)
     assert "" in output.splitlines()
     assert output.splitlines()[-1].startswith("[0:00]")
+
+
+def test_a_pause_shorter_than_the_paragraph_threshold_is_just_breath():
+    """_PARAGRAPH_SILENCE_S sits well above a normal inter-sentence gap on
+    purpose: a threshold low enough to catch ordinary speech rhythm shreds the
+    transcript into two-line stanzas. Both sides of it are pinned here, since
+    only the far side was covered.
+    """
+    console = make_console()
+    renderer = RichRenderer(console=console)
+    renderer.handle(cycle(["first", "sentence."]))
+    renderer.handle(events.Silence(elapsed_s=_PARAGRAPH_SILENCE_S - 0.1, rms=0.0, sink_muted=False))
+    renderer.handle(cycle(["still", "the", "same", "thought"]))
+    renderer._flush_line()
+
+    assert "" not in rendered(console).splitlines()
+
+
+def test_a_pause_at_the_paragraph_threshold_breaks():
+    console = make_console()
+    renderer = RichRenderer(console=console)
+    renderer.handle(cycle(["first", "sentence."]))
+    renderer.handle(events.Silence(elapsed_s=_PARAGRAPH_SILENCE_S, rms=0.0, sink_muted=False))
+    renderer.handle(cycle(["a", "new", "thought"]))
+    renderer._flush_line()
+
+    assert "" in rendered(console).splitlines()
+
+
+def test_a_pause_before_any_words_does_not_open_with_a_blank_line():
+    """The break is only ever spent on a word, and there is no paragraph to
+    end yet — so silence at the very start of a session leaves no gap.
+    """
+    console = make_console()
+    renderer = RichRenderer(console=console)
+    renderer.handle(events.Silence(elapsed_s=30.0, rms=0.0, sink_muted=False))
+    renderer.handle(cycle(["first", "words"]))
+    renderer._flush_line()
+
+    assert rendered(console).splitlines()[0].startswith("[0:00]")
 
 
 def test_stopped_flushes_the_pending_tail():
