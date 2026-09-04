@@ -154,3 +154,52 @@ def test_long_pending_text_is_truncated_from_the_left():
     renderer = RichRenderer(console=make_console(width=60))
     renderer.handle(cycle([], pending=["word"] * 40))
     assert "…" in render_panel(renderer)
+
+
+class RecordingLive:
+    """Stands in for rich.live.Live, recording how update() was called."""
+
+    def __init__(self) -> None:
+        self.refreshes: list[bool] = []
+
+    def update(self, renderable, refresh: bool = False) -> None:
+        self.refreshes.append(refresh)
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+def test_characterization_every_live_update_passes_refresh_true():
+    """characterization: `Live.update()` is never called bare here.
+
+    Reads like a redundant argument — auto-refresh is on at 4/s, so the new
+    renderable will be picked up anyway. It will, on the *next tick*, and any
+    redraw triggered in between paints the previous renderable. The one that
+    matters is the redraw Live does when the transcript scrolls, which lands
+    between ticks constantly and repainted stale numbers onto the status bar.
+
+    This was a real bug caught in rendering tests, so removing the argument
+    costs nothing visible in CI and quietly regresses the bar on hardware.
+    """
+    renderer = RichRenderer(console=make_console())
+    renderer._live = RecordingLive()
+
+    renderer.handle(events.Ready(device="NPU"))
+    renderer.handle(cycle(["a", "word"]))
+    renderer.handle(events.Silence(elapsed_s=1.0, rms=0.0, sink_muted=False))
+
+    assert renderer._live.refreshes == [True, True, True]
+
+
+def test_characterization_the_status_bar_is_torn_down_with_a_refresh_too():
+    """characterization: same rule on the way out. The final update clears the
+    panel so the transcript is the last thing on screen, and a bare update
+    would leave the bar painted until a tick that never comes.
+    """
+    renderer = RichRenderer(console=make_console())
+    live = RecordingLive()
+    renderer._live = live
+    renderer.__exit__()
+
+    assert live.refreshes[-1] is True
+    assert renderer._live is None

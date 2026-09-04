@@ -156,8 +156,15 @@ def test_pipewire_streams_are_application_nodes(monkeypatch, on_path):
     assert streams == [{"target": "1234", "app": "Chromium", "media": "Playback"}]
 
 
-def test_pulse_lists_monitor_sources_not_sink_inputs(monkeypatch, on_path):
-    """Listing sink-inputs would look targetable and isn't; parec can't record them."""
+def test_characterization_pulse_lists_monitor_sources_not_application_streams(monkeypatch, on_path):
+    """characterization: --target on PulseAudio is refused, never reinterpreted.
+
+    Looks like a missing feature and is a deliberate one. Listing sink-inputs
+    here would be worse than listing nothing: they would read as valid
+    --target values and parec cannot record them, so the tool would appear
+    to work and capture the wrong thing. Per-application capture is
+    PipeWire-only and says so rather than guessing.
+    """
     on_path("parec", "pactl")
     monkeypatch.setattr(
         capture,
