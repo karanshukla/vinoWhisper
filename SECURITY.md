@@ -41,6 +41,10 @@ Two limits worth stating plainly rather than implying:
   verifies as `unpinned`, which warns and continues. A hard failure there would
   make the tool unusable the first time anyone exported something new, and this
   project ships exactly one pinned export.
+- **The pin also records toolchains measured to produce a broken export**, not
+  only tampered bytes. That is not an integrity property and it lives here
+  because this file is already the record of which toolchain the pinned export
+  came from. See `known_bad` in the pin file.
 - **A pin outlives about one toolchain.** The export is bit-reproducible on a
   fixed toolchain (measured 2026-09-04, two runs, 16 of 16 files identical) and
   is not across one, so a `drift` result is reported separately from bytes

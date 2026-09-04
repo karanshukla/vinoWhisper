@@ -169,14 +169,14 @@ machine:
 - **Package names for seven of the eight distro families are unverified.** If
   one is wrong for yours, that is expected, and it is the fastest thing in this
   repo to fix.
-- **The current export toolchain produces a broken NPU model.** Measured
-  2026-09-04: optimum-intel 2.1.0 / transformers 5.5.4, which is what a fresh
-  install resolves to, exports a graph that compiles and then fails at
-  `generate()` with `Port for tensor name cache_position was not found`. The
-  digest check catches it and says so rather than letting it fail at the first
-  transcription, but it is not fixed.
+- **Export the model with `transformers<5.4`.** Bisected on hardware
+  2026-09-04: 5.4.0 and up produce a graph that compiles and then fails at
+  `generate()` with `Port for tensor name cache_position was not found`, and a
+  fresh install resolves to 5.5.4. The digest check catches it and says so
+  rather than letting it fail at the first transcription, but it is not fixed
+  upstream.
   [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
-  has the control run.
+  has the bisect table.
 
 ## More
 

@@ -116,12 +116,11 @@ out identical across both. That is why drift is reported separately from a
 real mismatch, and the versions are read out of the export's own `rt_info`
 block rather than from whatever happens to be installed.
 
-## The export toolchain currently produces a broken NPU model
+## transformers 5.4.0 breaks the NPU export
 
-**Measured 2026-09-04, unresolved.** optimum-intel 2.1.0 / optimum 2.3.0 /
-transformers 5.5.4, which is what `pip install optimum[openvino]` resolves to
-today, exports a graph that the NPU static pipeline compiles and then cannot
-run:
+**Bisected on hardware 2026-09-04.** Export with `transformers<5.4`. Anything
+from 5.4.0 on produces a Whisper decoder the NPU static pipeline compiles and
+then cannot run:
 
 ```
 RuntimeError: Port for tensor name cache_position was not found.
@@ -129,15 +128,37 @@ RuntimeError: Port for tensor name cache_position was not found.
 ```
 
 It fails at `generate()`, not at load, so nothing complains until the first
-transcription. The control run is what makes this the export rather than the
-runtime: on the same openvino 2026.3.1 and openvino-genai 2026.3.1.0, the
-pinned 2026-08-03 export builds and decodes in 0.34s.
+transcription.
 
-Which of the three packages introduces `cache_position` has not been isolated,
-so the pin's `known_bad` entry matches all three versions together and
-`vinowhisper-setup` now says so instead of handing over a model that fails
-later. The workaround until this is fixed is an export made with the pinned
-toolchain.
+The bisect held optimum-intel 2.1.0, optimum 2.3.0, openvino 2026.3.1,
+openvino-genai 2026.3.1.0 and torch 2.13.0 fixed, exported whisper-small.en
+with `--disable-stateful` in a clean venv per version, and loaded each on the
+NPU:
+
+| transformers | Pipeline build | `generate()` |
+|---|---|---|
+| 5.0.0 | ok | 0.96s |
+| 5.2.0 | ok | 0.86s |
+| 5.3.0 | ok | 0.71s |
+| 5.4.0 | ok | **fails** |
+| 5.5.4 | ok | **fails** |
+
+Two control runs rule out the rest of the stack. optimum-intel 2.1.0 with
+transformers 5.0.0 works, so the optimum pair is not at fault; the full
+2026-08-03 package set re-run under openvino 2026.3.1 also works, so the
+runtime is not either.
+
+**The mechanism is a tensor name.** `cache_position` appears exactly once in
+each transformers 5.3.0 decoder graph, on the output port of
+`__module.model.model.decoder/aten::arange/Range`, and zero times in the 5.4.0
+graphs. It is neither a model input nor a model output in either export, so the
+static pipeline is resolving an internal traced tensor by name, and 5.4.0
+stopped emitting that name. The exported input and output signatures are
+otherwise identical between the two.
+
+Until upstream fixes it, the pin's `known_bad` entry carries a floor at
+transformers 5.4.0, so `vinowhisper-setup` and `convert_model.sh` report a
+`known_bad` export rather than handing over a model that fails later.
 
 ## Pinning it on top
 

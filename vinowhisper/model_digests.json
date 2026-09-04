@@ -19,12 +19,10 @@
       },
       "known_bad": [
         {
-          "match": {
-            "optimum_intel_version": "2.1.0",
-            "optimum_version": "2.3.0",
-            "transformers_version": "5.5.4"
+          "at_least": {
+            "transformers_version": "5.4.0"
           },
-          "reason": "measured 2026-09-04: this toolchain exports a graph the NPU static pipeline builds and then cannot run. WhisperPipeline(..., STATIC_PIPELINE=True) compiles in 44.6s and generate() raises `Port for tensor name cache_position was not found` (infer_request.cpp:191). Control run on the same openvino 2026.3.1 / openvino-genai 2026.3.1.0 with the pinned export decodes in 0.34s, so it is the export, not the runtime. Which of the three packages introduces cache_position has not been isolated, hence all three are matched."
+          "reason": "transformers >= 5.4.0 exports a Whisper decoder the NPU static pipeline compiles and then cannot run: generate() raises `Port for tensor name cache_position was not found` (infer_request.cpp:191). Bisected on hardware 2026-09-04 with optimum-intel 2.1.0, optimum 2.3.0, openvino 2026.3.1 and openvino-genai 2026.3.1.0 all held fixed: transformers 5.0.0, 5.2.0 and 5.3.0 build and decode in under 1s; 5.4.0 and 5.5.4 fail identically. The name `cache_position` appears exactly once in each 5.3.0 decoder graph, on the output port of __module.model.model.decoder/aten::arange/Range, and zero times in the 5.4.0 graphs, so the pipeline is resolving an internal traced tensor by name and 5.4.0 stopped emitting it. Export with transformers<5.4."
         }
       ],
       "files": {

@@ -43,7 +43,7 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 |---|---|
 | Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
 | Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
-| Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the export-toolchain regression below on the way. |
+| Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
 Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
@@ -299,32 +299,45 @@ check that runs only when the internal `SequenceMatcher` search comes back
 empty. Reproduced and verified against a stubbed stitcher, not yet re-run on
 hardware.
 
-## The export toolchain regression, found 2026-09-04
+## transformers 5.4.0 breaks the NPU export, bisected 2026-09-04
 
-**Today's `pip install optimum[openvino]` exports an NPU model that loads and
-then cannot run.** Found while generating digest pins for issue #9, which
-needed a fresh export to pin, which is the only reason anyone re-exported.
+**Export with `transformers<5.4`.** Found while generating digest pins for
+issue #9, which needed a fresh export to pin, which is the only reason anyone
+re-exported. `pip install optimum[openvino]` resolves transformers 5.5.4 today,
+so a clean install produces a model that loads and then cannot run.
 
-optimum-intel 2.1.0 / optimum 2.3.0 / transformers 5.5.4, under openvino
-2026.3.1 and openvino-genai 2026.3.1.0: `WhisperPipeline(..., STATIC_PIPELINE=
-True)` compiles in 44.6s, then `generate()` raises `Port for tensor name
-cache_position was not found` (`infer_request.cpp:191`). Control run, same
-runtime and same genai, against the 2026-08-03 export (openvino 2026.2.1,
-optimum-intel 2.0.0, optimum 2.2.0, transformers 5.0.0): builds and decodes in
-0.34s. So it is the export, not the runtime, and not the genai version.
+`WhisperPipeline(..., STATIC_PIPELINE=True)` builds, then `generate()` raises
+`Port for tensor name cache_position was not found`
+(`infer_request.cpp:191`). Bisected in a clean venv per version, with
+optimum-intel 2.1.0, optimum 2.3.0, openvino 2026.3.1, openvino-genai 2026.3.1.0
+and torch 2.13.0 all held fixed:
 
-Which of the three packages introduces `cache_position` is **not isolated**.
-That would need a downgrade-and-re-export per package, ~4 minutes each, and it
-is the obvious next step if this matters upstream. Until then the `known_bad`
-entry in `model_digests.json` matches all three versions together, which is
-conservative: a partial overlap does not fire.
+| transformers | `generate()` |
+|---|---|
+| 5.0.0, 5.2.0, 5.3.0 | ok, 0.71-0.96s |
+| 5.4.0, 5.5.4 | fails |
 
-Consequence to keep in mind: **`vinowhisper-setup` on a clean machine produces
-a broken model right now.** The digest check reports it as `known_bad` and
-fails the step instead of handing over a model that dies at the first
-transcription, but the underlying export problem is not fixed by anything in
-this repo. Pinning the export toolchain in `pyproject.toml` is the obvious
-fix and has not been done, because it changes the dependency set for everyone.
+Two controls rule out the rest of the stack: optimum-intel 2.1.0 with
+transformers 5.0.0 works (so the optimum pair is fine), and the full 2026-08-03
+package set re-run under openvino 2026.3.1 works (so the runtime is fine).
+
+**The mechanism is a tensor name, which is why it is so easy to break.**
+`cache_position` appears exactly once in each 5.3.0 decoder graph, on the output
+port of `__module.model.model.decoder/aten::arange/Range`, and zero times in
+the 5.4.0 graphs. It is neither a model input nor a model output in either
+export, and the input/output signatures are otherwise identical, so the static
+pipeline is resolving an *internal traced tensor* by name and 5.4.0 stopped
+emitting that name. Patching `num_hidden_layers` back into 5.4.0's config.json
+(the other visible config change) does not help, which is how that hypothesis
+was ruled out.
+
+Not fixed here: `pyproject.toml` does not pin `transformers<5.4`. It would
+hold a package back for everyone, and it is a dependency-policy call rather
+than a bug fix. The verified-working combination is optimum-intel 2.1.0 +
+optimum 2.3.0 + transformers 5.3.0, so the pin is narrow if it is wanted.
+Meanwhile the `known_bad` entry in `model_digests.json` carries a floor at
+transformers 5.4.0, so `vinowhisper-setup` fails that step rather than handing
+over a model that dies at the first transcription.
 
 ## Known gotchas
 
@@ -474,15 +487,16 @@ Ordered by what would most change the design.
    an issue template pointed at exactly this.
 6. **Does the PulseAudio backend capture anything?** `parec` argv is unit-
    tested; it has never run against a PulseAudio server.
-7. **Which package broke the export?** See the regression section above.
-   optimum-intel, optimum and transformers all moved between the working
-   export and the broken one, and the fix depends on which. If it is
-   transformers, pinning it is cheap; if it is optimum-intel, the export flags
-   may need to change instead.
-8. **Should the export toolchain be pinned in `pyproject.toml`?** It would make
-   exports reproducible for everyone and would make the digest pin mean
-   something on a fresh install, at the cost of holding three packages back for
-   a reason most users will never see. Not done, deliberately, pending 7.
+7. **Should `pyproject.toml` pin `transformers<5.4`?** Answered as far as the
+   measurement goes: it is transformers, the pin is narrow, and
+   optimum-intel 2.1.0 + optimum 2.3.0 + transformers 5.3.0 is verified working
+   on the NPU. What is left is the policy call, holding a package back for
+   everyone against shipping a tool whose first export fails. Only the export
+   needs the old transformers; the runtime does not use it at all, which is an
+   argument for a separate export extra rather than a hard dependency pin.
+8. **Does the same break exist on the stateful (CPU/GPU) path?** The failure is
+   in the NPU static pipeline specifically, and nobody has produced a stateful
+   export at all, so it is unknown whether transformers 5.4.0 matters there.
 
 ## Conventions
 

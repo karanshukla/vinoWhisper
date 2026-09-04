@@ -192,15 +192,28 @@ class Pin:
     def bad_toolchain(self, toolchain: dict[str, str]) -> str:
         """The reason this toolchain is known bad, or "" if it is not listed.
 
-        Every key in an entry's `match` has to equal the local value, so a
-        partial overlap (same optimum-intel, different transformers) does not
-        fire. Conservative on purpose: a false alarm here is worse than a
-        missed one, since the digest comparison still reports the drift.
+        An entry can pin exact versions (`match`) or an open-ended floor
+        (`at_least`), and every key in both has to hold. Two clauses because
+        the two shapes of finding are different: "this exact combination was
+        measured broken" and "everything from this release on is broken", and
+        the transformers 5.4.0 regression is the second kind. A key the export
+        does not report never satisfies a floor, so an export whose rt_info is
+        unreadable is not accused of anything.
+
+        Conservative on purpose. A false alarm here is worse than a missed
+        one, because the digest comparison reports the difference either way
+        and only the severity is at stake.
         """
         for entry in self.known_bad:
             match = entry.get("match") or {}
-            if match and all(toolchain.get(key) == value for key, value in match.items()):
-                return str(entry.get("reason", "known-bad export toolchain"))
+            floors = entry.get("at_least") or {}
+            if not match and not floors:
+                continue
+            if any(toolchain.get(key) != value for key, value in match.items()):
+                continue
+            if any(not _at_least(toolchain.get(key), floor) for key, floor in floors.items()):
+                continue
+            return str(entry.get("reason", "known-bad export toolchain"))
         return ""
 
     def as_json(self) -> dict[str, Any]:
@@ -316,6 +329,30 @@ class Verification:
             if self.pinned_toolchain.get(key) != self.local_toolchain.get(key)
         ]
         return "; ".join(deltas[:2]) or "unknown versions"
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """`5.4.0` -> (5, 4, 0). Stops at the first component that is not a number.
+
+    These strings come out of rt_info, where they range from a clean `5.4.0`
+    to `2026.3.1-22476-759c5a6ab8c-releases/2026/3`, so the build suffix has to
+    be dropped rather than parsed. Deliberately not `packaging.version`: this
+    module is stdlib-only and is imported by the wizard on a machine that may
+    have nothing else installed yet.
+    """
+    parts: list[int] = []
+    for piece in _short(version).split("."):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts)
+
+
+def _at_least(version: str | None, floor: str) -> bool:
+    """Whether `version` is at or above `floor`. Unknown is never at least."""
+    if not version:
+        return False
+    return _version_tuple(version) >= _version_tuple(floor)
 
 
 def _short(version: str | None) -> str:

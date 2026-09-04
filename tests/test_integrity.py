@@ -279,17 +279,71 @@ def test_regenerating_a_pin_keeps_the_known_bad_list(tmp_path):
     assert fresh.known_bad == _BAD
 
 
-def test_the_shipped_pin_names_the_toolchain_that_breaks_the_npu_export():
-    """Regression guard on the finding, not just on the mechanism."""
-    pin = integrity.load_pins()[f"{config.MODEL_ID}/npu"]
-    reason = pin.bad_toolchain(
+def test_a_version_floor_covers_everything_from_that_release_on(tmp_path):
+    """`at_least`, for a regression with no known upper bound."""
+    directory = make_export(tmp_path / "npu")
+    bad = [{"at_least": {"transformers_version": "5.4.0"}, "reason": "cache_position"}]
+    pins = pin_for(directory, known_bad=bad)
+    pin = pins[f"{config.MODEL_ID}/npu"]
+
+    assert not pin.bad_toolchain({"transformers_version": "5.3.0"})
+    assert pin.bad_toolchain({"transformers_version": "5.4.0"})
+    assert pin.bad_toolchain({"transformers_version": "5.16.1"})
+
+
+def test_a_floor_on_a_version_the_export_does_not_report_never_fires(tmp_path):
+    """An unreadable rt_info is unknown, and unknown is not an accusation."""
+    directory = make_export(tmp_path / "npu")
+    bad = [{"at_least": {"transformers_version": "5.4.0"}}]
+    pin = pin_for(directory, known_bad=bad)[f"{config.MODEL_ID}/npu"]
+    assert not pin.bad_toolchain({})
+    assert not pin.bad_toolchain({"optimum_version": "2.3.0"})
+
+
+def test_exact_versions_and_a_floor_both_have_to_hold(tmp_path):
+    directory = make_export(tmp_path / "npu")
+    bad = [
         {
-            "optimum_intel_version": "2.1.0",
-            "optimum_version": "2.3.0",
-            "transformers_version": "5.5.4",
+            "match": {"optimum_intel_version": "2.1.0"},
+            "at_least": {"transformers_version": "5.4.0"},
         }
+    ]
+    pin = pin_for(directory, known_bad=bad)[f"{config.MODEL_ID}/npu"]
+    assert pin.bad_toolchain({"optimum_intel_version": "2.1.0", "transformers_version": "5.5.4"})
+    assert not pin.bad_toolchain(
+        {"optimum_intel_version": "2.0.0", "transformers_version": "5.5.4"}
     )
-    assert "cache_position" in reason
+    assert not pin.bad_toolchain(
+        {"optimum_intel_version": "2.1.0", "transformers_version": "5.3.0"}
+    )
+
+
+@pytest.mark.parametrize(
+    "version, floor, expected",
+    [
+        ("5.4.0", "5.4.0", True),
+        ("5.5.4", "5.4.0", True),
+        ("5.16.1", "5.4.0", True),  # 16 > 4, not "1.6"
+        ("5.3.0", "5.4.0", False),
+        ("2026.3.1-22476-759c5a6ab8c-releases/2026/3", "2026.3.0", True),
+        (None, "5.4.0", False),
+    ],
+)
+def test_version_comparison_is_numeric_and_ignores_the_build_suffix(version, floor, expected):
+    assert integrity._at_least(version, floor) is expected
+
+
+def test_the_shipped_pin_names_the_transformers_release_that_breaks_the_export():
+    """Regression guard on the finding, not just on the mechanism.
+
+    Bisected on hardware 2026-09-04, everything else held fixed: transformers
+    5.0.0, 5.2.0 and 5.3.0 build and decode on the NPU; 5.4.0 and 5.5.4 fail
+    identically at `generate()`.
+    """
+    pin = integrity.load_pins()[f"{config.MODEL_ID}/npu"]
+    assert not pin.bad_toolchain({"transformers_version": "5.3.0"})
+    assert "cache_position" in pin.bad_toolchain({"transformers_version": "5.4.0"})
+    assert pin.bad_toolchain({"transformers_version": "5.5.4"})
 
 
 # --- every failure names its fix ------------------------------------------
