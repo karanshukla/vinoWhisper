@@ -95,6 +95,13 @@ dev = [
     "types-requests",
     "numpy",
     "rich",
+    # Not for making requests — nothing here talks to the server. It is here
+    # because vinowhisper.caption imports it at module scope (via client.py),
+    # so tests/test_caption.py cannot even be *collected* without it, and the
+    # silence notice it pins is the one piece of prose in this project that was
+    # wrong for a month. ~100KB of pure Python, so it costs nothing against the
+    # reason this group exists, which is the ~400MB of OpenVINO above it.
+    "requests",
 ]
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
