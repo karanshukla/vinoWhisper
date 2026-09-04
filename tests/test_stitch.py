@@ -5,7 +5,7 @@ as a fixture. The 2026-08-06 and 2026-08-07 reviews found all of them with
 throwaway scripts against a stubbed pipeline; this is those scripts, kept.
 """
 
-from vinowhisper.stitch import Stitcher, _norm, collapse_repeats
+from vinowhisper.stitch import Stitcher, _norm, collapse_repeats, collapse_word_repeats
 
 
 def push_all(stitcher: Stitcher, *transcripts: str) -> list[str]:
@@ -198,3 +198,94 @@ def test_characterization_a_pure_punctuation_token_does_not_normalize_to_empty()
     assert _norm("—") == "—"
     assert _norm("...") == "..."
     assert _norm("—") != _norm("…")
+
+
+def words(text: str) -> list[str]:
+    return collapse_word_repeats(text.split())
+
+
+def test_the_character_pass_already_catches_an_exact_spaced_repeat():
+    """Measured 2026-09-04, and it is the reason #10 needed re-stating: the
+    character-level pass is not blind to whitespace-separated repeats at all.
+    "you " repeats as a character unit exactly as "you" does.
+    """
+    assert collapse_repeats("you you you you you you you") == "you you you you"
+    assert collapse_repeats("do things " * 5).split() == ["do", "things"] * 3
+
+
+def test_punctuation_drift_between_repeats_defeats_the_character_pass():
+    """Which is what actually leaves a loop uncaught, and it is not a rare
+    input: drifting punctuation on re-decoded audio is documented here twice
+    (2026-08-07, 2026-09-01).
+    """
+    looped = "do things. do things, do things do things! do things"
+    assert collapse_repeats(looped) == looped  # unchanged — nothing to see
+    assert words(looped) == ["do", "things.", "do", "things,", "do", "things"]
+
+
+def test_capitalization_drift_between_repeats_is_caught_too():
+    looped = "Do things do things Do things do things Do things"
+    assert collapse_repeats(looped) == looped
+    assert words(looped) == ["Do", "things", "do", "things", "Do", "things"]
+
+
+def test_a_looped_single_word_survives_punctuation_drift():
+    assert words("you you. you, You you you") == ["you", "you.", "you,"]
+
+
+def test_the_collapsed_words_keep_the_punctuation_they_arrived_with():
+    """_norm is for comparing, never for printing — same rule as the anchor."""
+    assert words("bam! bam? bam. bam bam") == ["bam!", "bam?", "bam."]
+
+
+def test_a_long_unit_is_left_alone_rather_than_guessed_at():
+    """Past _MAX_REPEAT_UNIT_WORDS a repeated run is as likely to be a speaker
+    restating themselves as a decoder loop, and an append-only transcript
+    cannot take back a wrong guess.
+    """
+    long_unit = "the quick brown fox jumps over the lazy dog " * 5
+    assert words(long_unit) == long_unit.split()
+
+
+def test_ordinary_speech_repetition_is_left_alone():
+    for text in (
+        "he said that that was the plan",
+        "very very good",
+        "no no I meant it",
+        "and thanks for watching and thanks so much for watching",
+    ):
+        assert words(text) == text.split(), text
+
+
+def test_a_word_repeated_non_adjacently_is_not_touched():
+    """Deliberate. Real speech does this constantly and the cost of a false
+    positive is a word deleted from scrollback with no way to restore it.
+    """
+    text = "the ball hit the wall past the line"
+    assert words(text) == text.split()
+
+
+def test_word_level_collapse_runs_before_stitching():
+    stitcher = Stitcher()
+    stitcher.push("okay do things. do things, do things do things! do things")
+    assert stitcher.pending == ["okay", "do", "things.", "do", "things,", "do", "things"]
+
+
+def test_a_drifting_loop_never_reaches_the_confirmed_transcript():
+    """The end-to-end shape: two cycles agree on the cleaned text, so what
+    prints is the collapsed run rather than the loop.
+    """
+    stitcher = Stitcher()
+    printed = push_all(
+        stitcher,
+        "and then you know. you know, You know you know you know it stopped",
+        "and then you know. you know, You know you know you know it stopped",
+    )
+    # Three reps kept, each with the punctuation it arrived with, and the real
+    # words on the far side of the loop still reach the screen.
+    kept = "and then you know. you know, You know it stopped"
+    assert printed == kept.split()
+
+
+def test_collapse_word_repeats_of_nothing_is_nothing():
+    assert collapse_word_repeats([]) == []

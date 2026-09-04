@@ -62,6 +62,15 @@ _MIN_MATCH_WORDS = 3
 _MAX_CONSECUTIVE_REPEATS = 3
 _MAX_REPEAT_UNIT_CHARS = 50
 
+# The word-level pass's equivalent of _MAX_REPEAT_UNIT_CHARS. Past roughly this
+# length a repeated run stops looking like a decoder loop and starts looking
+# like a speaker restating themselves, and the two are not distinguishable from
+# the text alone. Erring short is the safe direction: scrollback is
+# append-only, so a false positive silently deletes real words and there is no
+# way to put them back. The longest loop unit actually seen here was five words
+# ("do things that make you", 2026-09-01).
+_MAX_REPEAT_UNIT_WORDS = 6
+
 # Only the last _ANCHOR_WORDS are ever read back, so retaining the whole
 # session's transcript just leaks memory across a long run.
 _MAX_CONFIRMED_WORDS = 200
@@ -109,6 +118,57 @@ def collapse_repeats(text: str) -> str:
             out.append(text[i])
             i += 1
     return "".join(out)
+
+
+def collapse_word_repeats(words: list[str]) -> list[str]:
+    """Word-level counterpart to collapse_repeats, compared through _norm.
+
+    Measured 2026-09-04 against the character-level pass, which turns out to
+    catch more than its docstring claims: an *exact* whitespace-separated
+    repeat ("you you you you", "do things do things do things do things") is
+    already collapsed, because "you " is just as much a repeating character
+    unit as "you" is. So whitespace was never the thing defeating it.
+
+    What defeats it is normalization. Whisper re-decodes the same audio with
+    drifting punctuation and capitalization — documented twice here, on
+    2026-08-07 and again on 2026-09-01 — so a real loop reaches this function
+    as "do things. do things, Do things do things! do things", which shares no
+    repeating character unit at all and passes straight through. Comparing on
+    _norm is what closes that, and it is the same normalization the anchor
+    already uses for the same reason.
+
+    Deliberately only collapses *adjacent* repeats, not a word appearing three
+    times anywhere in the cycle. Real speech does the latter constantly ("the",
+    "and", "you know"), and with an append-only transcript a false positive is
+    unrecoverable, so the cheap-looking extra coverage is the expensive kind.
+
+    Returns the original words, never the normalized ones — _norm is for
+    comparing, never for printing.
+    """
+    keys = [_norm(word) for word in words]
+    total = len(words)
+    out: list[str] = []
+    i = 0
+    while i < total:
+        collapsed = False
+        for unit_len in range(1, _MAX_REPEAT_UNIT_WORDS + 1):
+            if i + unit_len > total:
+                break
+            unit = keys[i : i + unit_len]
+            reps = 1
+            j = i + unit_len
+            while keys[j : j + unit_len] == unit:
+                reps += 1
+                j += unit_len
+            if reps > _MAX_CONSECUTIVE_REPEATS:
+                out.extend(words[i : i + unit_len * _MAX_CONSECUTIVE_REPEATS])
+                i = j
+                collapsed = True
+                break
+        if not collapsed:
+            out.append(words[i])
+            i += 1
+    return out
 
 
 def _strip_confirmed_prefix(confirmed: list[str], curr: list[str]) -> list[str]:
@@ -202,7 +262,13 @@ class Stitcher:
 
     def push(self, transcript: str) -> list[str]:
         """Feed one cycle's transcript; return the words now safe to print."""
-        curr = collapse_repeats(transcript).split()
+        # Both passes run here, on the raw cycle, rather than on the words
+        # about to be committed. Cleaning only the commit would leave
+        # `_confirmed` holding a collapsed run while the next cycle's `curr`
+        # still holds the full one, and an anchor compared against a tail that
+        # no longer matches the audio is exactly the reprint bug this is meant
+        # to defend against. One representation, cleaned once, at the door.
+        curr = collapse_word_repeats(collapse_repeats(transcript).split())
         if not curr:
             return []
 
