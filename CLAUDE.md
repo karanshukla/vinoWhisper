@@ -437,6 +437,17 @@ Ordered by what would most change the design.
   Audited 2026-09-04 while adopting this: four of those five had no test at
   all, only a comment. Adding one is cheap; adding it after someone has
   already deleted the behaviour is not.
+- **Level assertions go through `tests/pcm.py`, not through `np.full`.** The
+  audio layer is where the thresholds live (`SILENCE_RMS_THRESHOLD`,
+  `TARGET_RMS`, `MAX_GAIN`), and on a constant array rms and amplitude are the
+  same number, so `rms(np.full(100, 0.5)) == 0.5` asserts nothing. A sine
+  separates them (rms = amplitude / sqrt(2)) and is what makes those tests
+  mean something. Noise comes from a hand-rolled LCG rather than
+  `numpy.random`, whose stream is versioned — seeding it pins a numpy release
+  instead of a waveform. `pcm.chunks` reads its chunk size off
+  `Recorder._READ_CHUNK_SAMPLES` on purpose: both 2026-08-06 buffer bugs were
+  about chunk *arrival pattern*, so a fixture chunking at some other size
+  tests a program that does not exist.
 - `uv run poe check` is the whole gate (ruff, ruff format, mypy, pytest). CI
   installs `--group dev` only, never `uv sync`: a full resolve pulls ~400MB of
   OpenVINO that no test may import anyway. (Until 2026-08-31 there was a
