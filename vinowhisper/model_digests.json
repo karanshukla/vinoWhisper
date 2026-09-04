@@ -12,7 +12,10 @@
         "optimum_intel_version": "2.0.0",
         "optimum_version": "2.2.0",
         "pytorch_version": "2.13.0",
-        "transformers_version": "5.0.0"
+        "transformers_version": "5.0.0",
+        "openvino_tokenizers_version": "2026.2.1.0-682-6da74a793f0",
+        "openvino_version": "2026.2.1-21919-ede283a88e3-releases/2026/2",
+        "tokenizers_version": "0.22.2"
       },
       "known_bad": [
         {

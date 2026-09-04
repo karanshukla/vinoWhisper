@@ -376,3 +376,45 @@ def test_writing_a_pin_leaves_the_other_entries_alone(tmp_path):
     written = json.loads(path.read_text(encoding="utf-8"))
     assert set(written["exports"]) == {"a/model/npu", "b/model/stateful"}
     assert written["schema"] == integrity.SCHEMA
+
+
+# --- the toolchain is read from every graph, not one -----------------------
+
+
+def test_the_toolchain_merges_what_each_graph_knows(tmp_path):
+    """optimum stamps the model graphs; openvino-tokenizers stamps the pair."""
+    directory = make_export(tmp_path / "npu")
+    (directory / "openvino_tokenizer.xml").write_text(
+        '<net name="t">\n\t<rt_info>\n'
+        '\t\t<info name="OpenVINO Runtime" value="2026.2.1-21919" />\n'
+        '\t\t<tokenizers_version value="0.22.2" />\n'
+        "\t</rt_info>\n</net>\n",
+        encoding="utf-8",
+    )
+    found = integrity.read_toolchain(directory)
+    assert found["optimum_intel_version"] == "2.0.0"
+    assert found["tokenizers_version"] == "0.22.2"
+
+
+def test_characterization_graphs_disagreeing_makes_the_toolchain_unknown(tmp_path):
+    """characterization: one relabelled graph must not buy a softer verdict.
+
+    `drift` warns and `mismatch` fails, and the difference between them is
+    decided by version strings sitting in the same directory as the weights.
+    Reading a single .xml meant editing a single .xml relabelled the whole
+    export. Disagreement now reads as unknown, and an unknown toolchain
+    cannot excuse changed bytes, so the verdict falls back to `mismatch`.
+    Verified on the real 1.5GB export 2026-09-04, by rewriting one graph's
+    rt_info and leaving the other four alone.
+    """
+    directory = make_export(tmp_path / "npu")
+    pins = pin_for(directory)
+    make_export(directory, weights=b"tampered")
+    graph = directory / "openvino_encoder_model.xml"
+    graph.write_text(
+        graph.read_text(encoding="utf-8").replace('value="2.0.0"', 'value="9.9.9"'),
+        encoding="utf-8",
+    )
+
+    assert integrity.read_toolchain(directory) == {}
+    assert integrity.verify(directory, "npu", pins=pins).status == integrity.MISMATCH

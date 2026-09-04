@@ -106,17 +106,34 @@ def digest_export(directory: Path) -> dict[str, str]:
 
 
 def read_toolchain(directory: Path) -> dict[str, str]:
-    """The versions that produced this export, read out of its own rt_info.
+    """The versions that produced this export, merged from every graph's rt_info.
 
-    Empty if there is no readable IR in the directory, which callers treat as
-    "unknown" rather than as a mismatch: an unknown toolchain cannot be
-    compared, so it cannot excuse differing bytes either.
+    Every `.xml` is read, not just the first one, and any key two files
+    disagree on makes the whole answer empty. Two reasons, one of them a hole
+    this had while it read a single file:
+
+    - The blocks are complementary rather than duplicated. optimum writes
+      `optimum_intel_version` and `pytorch_version` into the model graphs;
+      openvino-tokenizers writes `openvino_tokenizers_version` and
+      `tokenizers_version` into the tokenizer pair. The tokenizer `.bin` files
+      are pinned like anything else, so the versions that produced them belong
+      in the record too. `OpenVINO Runtime` and `transformers_version` appear
+      in both and agreed across all five files here, measured 2026-09-04.
+    - Reading one file meant editing one file could relabel the export.
+      `drift` is a softer verdict than `mismatch`, and rt_info is just text
+      sitting next to the weights, so a single edited graph could have bought
+      the softer one. Now it costs a consistent lie across every file, and an
+      inconsistent one reads as unknown, which excuses nothing.
+
+    Empty is also what an export with no readable IR returns. Callers treat
+    unknown as "cannot be compared", never as "assume it is fine".
     """
+    merged: dict[str, str] = {}
     for path in sorted(directory.glob("*.xml")):
-        found = _rt_info(path)
-        if found:
-            return found
-    return {}
+        for key, value in _rt_info(path).items():
+            if merged.setdefault(key, value) != value:
+                return {}
+    return merged
 
 
 def _rt_info(path: Path) -> dict[str, str]:
