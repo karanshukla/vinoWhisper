@@ -150,10 +150,19 @@ vinowhisper/model_digests.json   generated pins; do not hand-edit the hashes
 .github/          CI, release, dependency canary, Bandit, templates
 ```
 
-**The README is an index, not the documentation.** Cut from 365 lines to 121 on
-2026-08-31; the long-form sections live in `docs/` and the README links to
-them. When something here changes, the prose to update is almost always a file
-under `docs/`, not the README.
+**The README is an index and a pitch, not the documentation.** Cut from 365
+lines to 121 on 2026-08-31; the long-form sections live in `docs/` and the
+README links to them. When something here changes, the prose to update is
+almost always a file under `docs/`, not the README.
+
+Rewritten 2026-09-04, at the user's request, to read as a project someone might
+choose rather than as a table of contents: a one-line hook, the "why the NPU"
+angle stated as a bias, a numbers table, five differentiators, a requirements
+table, and an **Honest limits** section. It grew to ~200 lines doing that,
+which is deliberate and not the 365-line regression. The index rule still
+holds: nothing in it explains anything `docs/` explains, every long-form claim
+links out, and **Honest limits** is load-bearing, since every benchmark in it
+is n=1 on one laptop and it says so.
 
 **It ships on PyPI now, so "is this file here?" has two answers.** From
 2026-08-31, `pip install vinowhisper` works: the nightly pin was the only thing
