@@ -43,6 +43,7 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 |---|---|
 | Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
 | Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
+| Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the export-toolchain regression below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
 Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
@@ -133,6 +134,7 @@ vinowhisper/
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
   transcriber.py  WhisperTranscriber, wraps WhisperPipeline, serialized by a lock
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
+  integrity.py    sha256 pins for the model export, and what a mismatch means
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   ui.py           RichRenderer, the pinned status bar
@@ -142,7 +144,9 @@ vinowhisper/
   wizard.py       vinowhisper-setup, the guided install
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
-scripts/          install.sh (bootstrap), convert_model.sh (both exports), completion
+scripts/          install.sh (bootstrap), convert_model.sh (both exports),
+                  update_digests.py (re-pin an export), completion
+vinowhisper/model_digests.json   generated pins; do not hand-edit the hashes
 .github/          CI, release, dependency canary, Bandit, templates
 ```
 
@@ -286,6 +290,33 @@ check that runs only when the internal `SequenceMatcher` search comes back
 empty. Reproduced and verified against a stubbed stitcher, not yet re-run on
 hardware.
 
+## The export toolchain regression, found 2026-09-04
+
+**Today's `pip install optimum[openvino]` exports an NPU model that loads and
+then cannot run.** Found while generating digest pins for issue #9, which
+needed a fresh export to pin, which is the only reason anyone re-exported.
+
+optimum-intel 2.1.0 / optimum 2.3.0 / transformers 5.5.4, under openvino
+2026.3.1 and openvino-genai 2026.3.1.0: `WhisperPipeline(..., STATIC_PIPELINE=
+True)` compiles in 44.6s, then `generate()` raises `Port for tensor name
+cache_position was not found` (`infer_request.cpp:191`). Control run, same
+runtime and same genai, against the 2026-08-03 export (openvino 2026.2.1,
+optimum-intel 2.0.0, optimum 2.2.0, transformers 5.0.0): builds and decodes in
+0.34s. So it is the export, not the runtime, and not the genai version.
+
+Which of the three packages introduces `cache_position` is **not isolated**.
+That would need a downgrade-and-re-export per package, ~4 minutes each, and it
+is the obvious next step if this matters upstream. Until then the `known_bad`
+entry in `model_digests.json` matches all three versions together, which is
+conservative: a partial overlap does not fire.
+
+Consequence to keep in mind: **`vinowhisper-setup` on a clean machine produces
+a broken model right now.** The digest check reports it as `known_bad` and
+fails the step instead of handing over a model that dies at the first
+transcription, but the underlying export problem is not fixed by anything in
+this repo. Pinning the export toolchain in `pyproject.toml` is the obvious
+fix and has not been done, because it changes the dependency set for everyone.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
@@ -341,6 +372,18 @@ hardware.
   only the commit would leave `_confirmed` holding a collapsed run while the
   next cycle's `curr` still holds the full one, which is the anchor mismatch
   that causes reprints in the first place.
+- **The export is bit-reproducible on a fixed toolchain, and not across one.
+  Measured 2026-09-04.** Two independent `optimum-cli export openvino` runs of
+  whisper-small.en on the same machine and toolchain produced all 16 files
+  byte-identical, which is the fact the whole digest-pinning design rests on;
+  without it every user would get a mismatch and learn to ignore it. Across
+  toolchains, the 2026.3.1/2.1.0/5.5.4 export differed from the
+  2026.2.1/2.0.0/5.0.0 one in 9 of 16 files, including both decoder `.bin`
+  weights. `openvino_encoder_model.bin` was identical across both, as were the
+  tokenizer `.bin` files and three of the JSON configs. So a pin outlives about
+  one toolchain, `integrity.py` reads the versions out of the export's own
+  `rt_info` block to tell drift from tampering, and `scripts/update_digests.py`
+  exists so re-pinning is a command rather than a paste.
 - **Model size is settled: whisper-small.en.** base.en (2.6x faster) and
   tiny.en (3.8x faster) both introduce real transcription errors. INT8 on
   small.en is free accuracy-wise but only buys ~10%, since the bottleneck is
@@ -422,6 +465,15 @@ Ordered by what would most change the design.
    an issue template pointed at exactly this.
 6. **Does the PulseAudio backend capture anything?** `parec` argv is unit-
    tested; it has never run against a PulseAudio server.
+7. **Which package broke the export?** See the regression section above.
+   optimum-intel, optimum and transformers all moved between the working
+   export and the broken one, and the fix depends on which. If it is
+   transformers, pinning it is cheap; if it is optimum-intel, the export flags
+   may need to change instead.
+8. **Should the export toolchain be pinned in `pyproject.toml`?** It would make
+   exports reproducible for everyone and would make the digest pin mean
+   something on a fresh install, at the cost of holding three packages back for
+   a reason most users will never see. Not done, deliberately, pending 7.
 
 ## Conventions
 

@@ -78,6 +78,14 @@ build-backend = "setuptools.build_meta"
 # thinking it found two packages. Confirmed failing 2026-08-03.
 packages = ["vinowhisper"]
 
+# model_digests.json is data, not code, so it needs saying out loud or the
+# wheel ships without it. integrity.load_pins() treats a missing file as
+# "nothing pinned" rather than crashing, which means this line going wrong
+# would degrade silently — hence tests/test_integrity.py asserting the file is
+# both declared here and readable.
+[tool.setuptools.package-data]
+vinowhisper = ["model_digests.json"]
+
 # ── uv ────────────────────────────────────────────────────────────────────────
 
 [dependency-groups]

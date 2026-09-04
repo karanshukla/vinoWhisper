@@ -78,6 +78,67 @@ sends the NPU down the generic stateful path, which fails with `Stateful models
 without 'beam_idx' input are not supported in StatefulToStateless
 transformation`. That reads like a bad export and is not one.
 
+## The model export, and what verifies it
+
+Exporting downloads ~1GB from Hugging Face and converts it to OpenVINO IR that
+then runs on your hardware. `vinowhisper/model_digests.json` pins the sha256 of
+every file in the export this project has actually run, and both
+`scripts/convert_model.sh` and `vinowhisper-setup` check what came down against
+it. `vinowhisper-doctor` re-checks it on demand, at about 1.2s for 1.5GB.
+
+The pin is on the exported IR, not on the upstream safetensors, because the IR
+is what `WhisperPipeline` loads and the export is not a pure function of the
+weights. Six statuses, and only three of them stop anything:
+
+| Status | Means | Blocks setup |
+|---|---|---|
+| `verified` | every pinned file matches | |
+| `unpinned` | no pin for this model and variant | no |
+| `drift` | bytes and export toolchain both moved | no |
+| `mismatch` | the *pinned* toolchain produced different bytes | yes |
+| `incomplete` | pinned files are missing, so the export is partial | yes |
+| `known_bad` | exported by a toolchain measured to produce a broken export | yes |
+
+An unpinned export warning is not a problem to fix. It is what
+`--model openai/whisper-base.en` looks like, and what the stateful export looks
+like until someone produces one. Re-pin with
+`./scripts/update_digests.py --variant npu` once you trust an export, and
+commit the diff.
+
+**The export is bit-reproducible, which is what makes any of this work.**
+Measured 2026-09-04: two independent `optimum-cli` exports of
+whisper-small.en on the same toolchain produced all 16 files byte-identical.
+Across toolchains it is not: against the 2026-08-03 export
+(OpenVINO 2026.2.1, optimum-intel 2.0.0, transformers 5.0.0), an export under
+OpenVINO 2026.3.1 / optimum-intel 2.1.0 / transformers 5.5.4 changed 9 of 16
+files, including both decoder `.bin` weights. `openvino_encoder_model.bin` came
+out identical across both. That is why drift is reported separately from a
+real mismatch, and the versions are read out of the export's own `rt_info`
+block rather than from whatever happens to be installed.
+
+## The export toolchain currently produces a broken NPU model
+
+**Measured 2026-09-04, unresolved.** optimum-intel 2.1.0 / optimum 2.3.0 /
+transformers 5.5.4, which is what `pip install optimum[openvino]` resolves to
+today, exports a graph that the NPU static pipeline compiles and then cannot
+run:
+
+```
+RuntimeError: Port for tensor name cache_position was not found.
+  (src/inference/src/cpp/infer_request.cpp:191)
+```
+
+It fails at `generate()`, not at load, so nothing complains until the first
+transcription. The control run is what makes this the export rather than the
+runtime: on the same openvino 2026.3.1 and openvino-genai 2026.3.1.0, the
+pinned 2026-08-03 export builds and decodes in 0.34s.
+
+Which of the three packages introduces `cache_position` has not been isolated,
+so the pin's `known_bad` entry matches all three versions together and
+`vinowhisper-setup` now says so instead of handing over a model that fails
+later. The workaround until this is fixed is an export made with the pinned
+toolchain.
+
 ## Pinning it on top
 
 The status bar is Rich in an ordinary terminal, so keeping it above other

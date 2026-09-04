@@ -7,7 +7,8 @@ node, transcribed by a model running on local hardware, and printed to your
 terminal. There is no network call in the capture or transcription path, no
 telemetry, and no cloud service involved at any point. The only outbound
 traffic the project ever makes is package installation and the one-time model
-download from Hugging Face, both of which you trigger explicitly.
+download from Hugging Face, both of which you trigger explicitly and the second
+of which is checked against pinned digests (below).
 
 `--record` writes audio and transcripts to a directory you name. That file is
 as sensitive as whatever was playing; nothing else touches it.
@@ -24,6 +25,31 @@ transcription and a health check.
 
 If that boundary matters to you, a Unix domain socket in `$XDG_RUNTIME_DIR`
 would be a marginally tighter swap and would be an accepted change.
+
+## The model download is verified
+
+`vinowhisper-setup` and `scripts/convert_model.sh` download ~1GB from Hugging
+Face and convert it into a model that then runs on your hardware. Every file in
+the result is hashed and compared against `vinowhisper/model_digests.json`,
+which pins the sha256 of the export this project has actually run on an NPU.
+The check runs before you are told the export is done, and
+`vinowhisper-doctor` repeats it on demand.
+
+Two limits worth stating plainly rather than implying:
+
+- **It pins one export, not every export.** An unrecognised model or variant
+  verifies as `unpinned`, which warns and continues. A hard failure there would
+  make the tool unusable the first time anyone exported something new, and this
+  project ships exactly one pinned export.
+- **A pin outlives about one toolchain.** The export is bit-reproducible on a
+  fixed toolchain (measured 2026-09-04, two runs, 16 of 16 files identical) and
+  is not across one, so a `drift` result is reported separately from bytes
+  changing under the toolchain that produced the pin. Drift warns. Only the
+  same toolchain producing different bytes is treated as alarming.
+
+Re-pinning is `./scripts/update_digests.py`, deliberately a script and
+deliberately not automatic: the diff it produces is a list of hashes, and it is
+meant to be read in review.
 
 ## The setup wizard runs commands
 

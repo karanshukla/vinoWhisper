@@ -25,6 +25,10 @@
 #   ./scripts/convert_model.sh --variant stateful   # cpu/gpu variant
 #   ./scripts/convert_model.sh --variant both
 #   ./scripts/convert_model.sh --model openai/whisper-base.en --out /tmp/x
+#
+# Each export is checked against the digests pinned in
+# vinowhisper/model_digests.json before you are told it is done. That check
+# warns and continues on anything unpinned; see vinowhisper/integrity.py.
 set -euo pipefail
 
 MODEL_ID="openai/whisper-small.en"
@@ -70,6 +74,24 @@ if ! command -v optimum-cli >/dev/null 2>&1; then
     exit 1
 fi
 
+INTEGRITY_FAILED=0
+
+# Verify what came down against vinowhisper/model_digests.json. Warn-and-
+# continue on an export nobody has pinned or a toolchain that has moved on;
+# non-zero only when the pinned toolchain produced different bytes, which is
+# the case worth stopping for. See vinowhisper/integrity.py.
+verify_one() {
+    local variant="$1" out="$2"
+    if ! python3 -c "import vinowhisper" >/dev/null 2>&1; then
+        echo "==> skipping digest check: vinowhisper not importable by $(command -v python3)"
+        echo "    (run this as 'uv run $0 $*', or check by hand with"
+        echo "     python -m vinowhisper.integrity --variant $variant --dir $out)"
+        return 0
+    fi
+    echo "==> verifying digests ($variant)"
+    python3 -m vinowhisper.integrity --variant "$variant" --dir "$out" || INTEGRITY_FAILED=1
+}
+
 export_one() {
     local variant="$1" out="$2"
     local args=(--model "$MODEL_ID" --task automatic-speech-recognition-with-past)
@@ -79,6 +101,7 @@ export_one() {
     echo "==> exporting $MODEL_ID ($variant) to $out"
     optimum-cli export openvino "${args[@]}" "$out"
     echo "==> done: $out"
+    verify_one "$variant" "$out"
 }
 
 for variant in npu stateful; do
@@ -89,3 +112,10 @@ for variant in npu stateful; do
         export_one stateful "${OUT_DIR:-$DATA_HOME/vinowhisper/models/whisper-small.en-ov-stateful}"
     fi
 done
+
+# Deliberately not `set -e`-aborting mid-loop: with --variant both, a digest
+# problem on the first export should not hide whether the second one worked.
+if [[ "$INTEGRITY_FAILED" -ne 0 ]]; then
+    echo "==> the export completed, but its digests did not verify (see above)" >&2
+    exit 1
+fi

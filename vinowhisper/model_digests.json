@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "generated_by": "scripts/update_digests.py \u2014 generated data, do not edit by hand",
+  "exports": {
+    "openai/whisper-small.en/npu": {
+      "model_id": "openai/whisper-small.en",
+      "variant": "npu",
+      "recorded": "2026-09-04",
+      "note": "The export this project has actually run on the NPU: built 2026-08-03, re-confirmed 2026-09-04 under openvino-genai 2026.3.1.0 (builds the static pipeline, generate() returns in 0.34s).",
+      "toolchain": {
+        "OpenVINO Runtime": "2026.2.1-21919-ede283a88e3-releases/2026/2",
+        "optimum_intel_version": "2.0.0",
+        "optimum_version": "2.2.0",
+        "pytorch_version": "2.13.0",
+        "transformers_version": "5.0.0"
+      },
+      "known_bad": [
+        {
+          "match": {
+            "optimum_intel_version": "2.1.0",
+            "optimum_version": "2.3.0",
+            "transformers_version": "5.5.4"
+          },
+          "reason": "measured 2026-09-04: this toolchain exports a graph the NPU static pipeline builds and then cannot run. WhisperPipeline(..., STATIC_PIPELINE=True) compiles in 44.6s and generate() raises `Port for tensor name cache_position was not found` (infer_request.cpp:191). Control run on the same openvino 2026.3.1 / openvino-genai 2026.3.1.0 with the pinned export decodes in 0.34s, so it is the export, not the runtime. Which of the three packages introduces cache_position has not been isolated, hence all three are matched."
+        }
+      ],
+      "files": {
+        "config.json": "54d2bd991c5c5a793ac005d60182adfba7df3d95ec18c5158f42e08cb19537d3",
+        "generation_config.json": "ff2859bdd35656396b6ebead175eb791acd5c1868263569082094b45fa6537e5",
+        "openvino_decoder_model.bin": "c4c743b277a8082dfc274f22df2b49c378d19114df80a05160633495a360ef65",
+        "openvino_decoder_model.xml": "e1fa0882e4e2c9565eb4dd3cf07366409d5ef9decee4ac3be2e497371c9d2dde",
+        "openvino_decoder_with_past_model.bin": "bc85439379cc560bb4af3fac6460c6ecf9f3ede7fa15b6db090c8c18b62544ae",
+        "openvino_decoder_with_past_model.xml": "471a9be1baaac6f42514b860fd1d7733b9de2ddb35a32d4e98bbd877aaefb443",
+        "openvino_detokenizer.bin": "7045e2ab69c216fa4ef1d129fcce4d36bcf5583f01b823279278b52626238e0c",
+        "openvino_detokenizer.xml": "c705d6446d5b93ee41b6f562589b64de1046cf0be6b3ea120e41317c2ba0a63f",
+        "openvino_encoder_model.bin": "28717c4c34590fa42bad223f02c533d22a89382f5dfb50e7800aa8551bbe93b3",
+        "openvino_encoder_model.xml": "94fcaf34d72bc349b2475161399022a786db24cde15c4684d48c45e3e5affa74",
+        "openvino_tokenizer.bin": "8c9def49b61ff1cdd929b1c4b035e6714f69157587ada9cbb61cb15d6248ea2b",
+        "openvino_tokenizer.xml": "612c07a026ab23da8dab966e1c83b4bca65ad34d777565a8fc39cee7f30d623a",
+        "preprocessor_config.json": "ba2e601484abc80f4cded977f9a4fd4a53175b7d35c2f2511f0cfc3a32ad2499",
+        "processor_config.json": "8c648fa85aafc59a07435ed751322499bd4238b819ca9200ddd2b5ba4df50e68",
+        "tokenizer.json": "287537d5be89a39bd18e7e3875ad9900faa668493fb759392b8f52a492eca5db",
+        "tokenizer_config.json": "06385e2ea0c6eb9b0cd78b821968a0f8bf2f5146d51ce3b135eb2ba4a4951353"
+      }
+    },
+    "openai/whisper-small.en/stateful": {
+      "model_id": "openai/whisper-small.en",
+      "variant": "stateful",
+      "recorded": "",
+      "note": "Unpinned on purpose: the stateful (CPU/GPU) export has never been produced on this hardware, so there is nothing honest to pin. An empty entry verifies as 'unpinned', which warns and continues. Run scripts/update_digests.py --variant stateful once one exists.",
+      "toolchain": {},
+      "known_bad": [],
+      "files": {}
+    }
+  }
+}
