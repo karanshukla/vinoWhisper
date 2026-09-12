@@ -22,6 +22,17 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   back to full-colour pixmaps. All of it is generated from `gui/src/icon.rs`,
   and existing installs pick up the new icons on their next launch.
 
+### ⚡ Performance
+
+- **Nothing wakes while the overlay is hidden.** Measured on hardware, the GUI
+  woke once a second for a "Starting…" counter it was not showing, and the
+  resident server twice a second for `serve_forever`'s shutdown poll, which
+  nothing uses. Both are now at zero. A visible overlay no longer redraws on
+  silence events that change nothing on screen, which cut its wakeups from 8.7
+  to 3.7 a second and spares the compositor a repaint each time. The NPU was
+  never the problem: it suspends 100ms after the last inference, loaded model
+  or not. See `docs/architecture.md`.
+
 ### 📚 Documentation
 
 - **Comments out of the code, notes into `docs/`.** Nearly every comment and

@@ -52,3 +52,30 @@ again on first connection.
   the journal and `/health` even when loading then fails on a missing export.
 - Started by hand rather than by the socket unit, it never idles out; the
   unload applies only to a socket-activated start.
+
+## Power
+
+Measured 2026-09-12 on the Wildcat Lake laptop, per process over 15 to 30s,
+with nothing being said:
+
+| | Overlay visible, silence | Overlay hidden |
+|---|---|---|
+| NPU | suspended | suspended |
+| Speaker sink | running, held by the capture | suspended |
+| `vinowhisper-gui` | 3.7 wakeups/s | 0 |
+| `vinowhisper-caption` + `pw-record` | 2.2 + 51.5 wakeups/s | not running |
+| `vinowhisper-server` | 0 | 0 |
+
+- **A loaded model does not hold the NPU awake.** The kernel parks it 100ms
+  after the last inference (`/sys/class/accel/accel0/device/power`), and the
+  caption loop skips inference below the silence gate, so a resident server
+  costs RAM, not NPU power.
+- **The cost of a visible overlay is the capture.** A stream on the sink
+  monitor keeps the audio hardware running even when nothing plays, and
+  `pw-record` wakes at PipeWire's graph clock (quantum 1024 at 48kHz, about 47
+  times a second), which it does not set. Hiding stops the capture, and the
+  sink suspends within seconds.
+- **Hidden, nothing wakes** apart from the server's idle watchdog, once every
+  30s until it exits. Before this was measured, the GUI ticked every second
+  for a counter it was not showing, the server woke twice a second for
+  `serve_forever`'s shutdown poll, and every silence event redrew the overlay.

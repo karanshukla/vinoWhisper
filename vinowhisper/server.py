@@ -136,7 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     fd = _systemd_socket_fd()
     # make_server, not run_simple (which has no fd=); threaded so /health answers mid-decode.
     server = make_server(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
-    server.serve_forever()
+    # The poll only serves shutdown(), which nothing calls; a short one wakes an idle server.
+    server.serve_forever(poll_interval=3600)
     return 0
 
 

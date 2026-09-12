@@ -189,9 +189,12 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
 - **The surface spans the whole output width** and the box is centred in it.
   Being click-through makes the empty sides free, and no output size has to be
   known before the compositor picks an output.
-- **Redraws follow events.** A once-a-second timer exists only for the
-  "Starting… Ns" counter. The tray is updated only when its menu or tooltip
-  actually changed, since each update is a D-Bus round trip.
+- **Redraws follow what is on screen, not events.** The caption process sends
+  an event every half second even in silence, and one that changes nothing
+  visible draws nothing, since every frame also makes the compositor repaint.
+  The once-a-second timer runs only while "Starting… Ns" is showing, so a
+  hidden overlay has no timer at all. The tray is updated only when its menu
+  or tooltip actually changed, since each update is a D-Bus round trip.
 - **The tray decides nothing.** Each choice goes to the main loop as a command,
   and the main loop answers with a fresh view. Registration is assumed rather
   than checked, since at login the overlay can start before Plasma's tray.

@@ -104,6 +104,10 @@ impl Captions {
         self.degraded
     }
 
+    pub fn frame(&self) -> ((Tone, Vec<Span>), Vec<Span>, bool) {
+        (self.status(), self.caption_spans(), self.degraded)
+    }
+
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::Ready {
@@ -469,6 +473,18 @@ mod tests {
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Good);
         assert!(!status.iter().any(|s| s.tone == Tone::Warn));
+    }
+
+    #[test]
+    fn silence_that_changes_nothing_on_screen_leaves_the_frame_alone() {
+        let mut captions = Captions::new();
+        captions.apply(cycle(&["hello"], &["there"]));
+        captions.apply(silence(0.5));
+        let quiet = captions.frame();
+        captions.apply(silence(1.0));
+        assert_eq!(captions.frame(), quiet, "a breath redraws nothing");
+        captions.apply(silence(NO_SIGNAL_AFTER_S + 1.0));
+        assert_ne!(captions.frame(), quiet, "no signal does");
     }
 
     #[test]

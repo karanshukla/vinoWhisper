@@ -130,6 +130,7 @@ pub struct App {
     caption_program: Option<PathBuf>,
 
     handle: LoopHandle<'static, App>,
+    ticking: bool,
     signal: LoopSignal,
     tx: Sender<Command>,
     tray: Option<tray::Handle>,
@@ -179,12 +180,6 @@ pub fn run(options: Options) -> Result<(), String> {
             }
         })
         .map_err(|err| format!("command channel: {err}"))?;
-    handle
-        .insert_source(Timer::from_duration(TICK), |_, _, app: &mut App| {
-            app.tick();
-            TimeoutAction::ToDuration(TICK)
-        })
-        .map_err(|err| format!("timer: {err}"))?;
 
     let ipc = {
         let tx = tx.clone();
@@ -233,6 +228,7 @@ pub fn run(options: Options) -> Result<(), String> {
         overlay: None,
         painter: Painter::new(),
         captions: Captions::new(),
+        ticking: false,
         settings,
         source_override: options.source,
         visible: false,
@@ -291,8 +287,11 @@ impl App {
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::Caption { generation, event } => {
                 if self.is_current(generation) {
+                    let before = self.captions.frame();
                     self.captions.apply(event);
-                    self.draw();
+                    if self.captions.frame() != before {
+                        self.draw();
+                    }
                 }
             }
             Command::CaptionExited {
@@ -384,6 +383,25 @@ impl App {
             }
         }
         self.draw();
+        self.start_ticking();
+    }
+
+    fn start_ticking(&mut self) {
+        if self.ticking {
+            return;
+        }
+        self.ticking = true;
+        let _ = self
+            .handle
+            .insert_source(Timer::from_duration(TICK), |_, _, app: &mut App| {
+                if app.overlay.is_some() && *app.captions.phase() == Phase::Starting {
+                    app.draw();
+                    TimeoutAction::ToDuration(TICK)
+                } else {
+                    app.ticking = false;
+                    TimeoutAction::Drop
+                }
+            });
     }
 
     fn stop_session(&mut self) {
@@ -533,12 +551,6 @@ impl App {
             return;
         }
         overlay.layer.commit();
-    }
-
-    fn tick(&mut self) {
-        if self.overlay.is_some() && *self.captions.phase() == Phase::Starting {
-            self.draw();
-        }
     }
 
     fn view(&self) -> tray::View {

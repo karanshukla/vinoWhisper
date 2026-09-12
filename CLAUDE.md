@@ -153,7 +153,11 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   because this laptop runs at 1.5x.
 - **Hidden means stopped.** Hiding sends SIGINT to the caption process, so the
   server still idles out. A hidden overlay that kept transcribing would defeat
-  scale-to-zero.
+  scale-to-zero. Measured 2026-09-12: hidden, the GUI and the server make no
+  wakeups and the speaker sink suspends. The NPU runtime-suspends 100ms after
+  the last inference whether or not a model is loaded, so the resident server
+  costs RAM, not NPU power. A visible overlay's real cost is the capture
+  holding the sink awake. Table in `docs/architecture.md`.
 - **The shortcut needs a desktop file. Measured 2026-09-12 on Plasma 6.7:**
   without `io.github.karanshukla.vinowhisper.desktop`, the portal registry
   refuses the app id ("App info not found") and GlobalShortcuts refuses the
