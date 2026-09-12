@@ -1,5 +1,10 @@
-//! `--install` and `--uninstall`: a launcher entry, an icon, and optionally
-//! a login autostart. All per-user, nothing needs root.
+//! Desktop integration: a launcher entry, an icon, and a login autostart.
+//!
+//! `--install` writes the launcher and icon for a per-user copy, `--autostart`
+//! the login entry (on its own, for a packaged copy whose launcher came with
+//! the package), `--uninstall` removes what those wrote, and
+//! `--export-desktop DIR` writes the launcher and icon into a package's
+//! buildroot. None of it needs root.
 //!
 //! The desktop file is more than a menu entry: the global shortcut cannot
 //! exist without it (see `ensure_launcher`).
@@ -11,31 +16,56 @@ use crate::APP_ID;
 use crate::icon;
 use crate::settings;
 
+/// What a package puts on PATH, and so what a packaged launcher names
+/// instead of a path.
+const COMMAND: &str = "vinowhisper-gui";
+
 struct Dirs {
     data: PathBuf,
     config: PathBuf,
+    /// `$XDG_DATA_DIRS`, where a package's launcher lives.
+    system: Vec<PathBuf>,
 }
 
 impl Dirs {
     fn from_env() -> Dirs {
+        let system = match std::env::var_os("XDG_DATA_DIRS") {
+            Some(dirs) if !dirs.is_empty() => std::env::split_paths(&dirs).collect(),
+            _ => vec!["/usr/local/share".into(), "/usr/share".into()],
+        };
         Dirs {
             data: settings::data_home(),
             config: settings::config_home(),
+            system,
         }
     }
 
     fn launcher(&self) -> PathBuf {
-        self.data.join(format!("applications/{APP_ID}.desktop"))
+        launcher_in(&self.data)
     }
 
     fn icon(&self) -> PathBuf {
-        self.data
-            .join(format!("icons/hicolor/scalable/apps/{APP_ID}.svg"))
+        icon_in(&self.data)
     }
 
     fn autostart(&self) -> PathBuf {
         self.config.join(format!("autostart/{APP_ID}.desktop"))
     }
+
+    fn packaged_launcher(&self) -> Option<PathBuf> {
+        self.system
+            .iter()
+            .map(|dir| launcher_in(dir))
+            .find(|path| path.exists())
+    }
+}
+
+fn launcher_in(data: &Path) -> PathBuf {
+    data.join(format!("applications/{APP_ID}.desktop"))
+}
+
+fn icon_in(data: &Path) -> PathBuf {
+    data.join(format!("icons/hicolor/scalable/apps/{APP_ID}.svg"))
 }
 
 pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
@@ -47,26 +77,46 @@ pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBu
     )
 }
 
+/// The login entry alone, for a copy whose launcher came from a package.
+pub fn autostart(caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
+    autostart_into(&Dirs::from_env(), &std::env::current_exe()?, caption)
+}
+
 pub fn uninstall() -> io::Result<Vec<PathBuf>> {
     uninstall_from(&Dirs::from_env())
 }
 
-/// The launcher and icon, written only if the launcher is missing. Returns
-/// the launcher's path when it had to be written.
+/// For packagers: the launcher and icon under `data_dir` (a buildroot's
+/// /usr/share). The launcher names the command rather than a path, since a
+/// package puts it on PATH and the buildroot path would be wrong once
+/// installed.
+pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
+    Ok(vec![
+        write(
+            &launcher_in(data_dir),
+            &desktop_entry(Path::new(COMMAND), None, false),
+        )?,
+        write(&icon_in(data_dir), icon::APP_SVG)?,
+    ])
+}
+
+/// The launcher and icon, written only if there is no launcher yet, per-user
+/// or packaged. Returns the launcher's path when it had to be written.
 ///
 /// Measured 2026-09-12 on Plasma 6.7: with no desktop file, the portal
 /// registry refuses the app id ("App info not found for
 /// 'io.github.karanshukla.vinowhisper'"), and the GlobalShortcuts portal then
 /// refuses the shortcut outright ("An app id is required"). So a first run
 /// that never saw `--install` would get no shortcut at all. An existing
-/// launcher is left alone, since `--install` may have baked a `--caption`
-/// path into it.
+/// launcher is left alone: `--install` may have baked a `--caption` path into
+/// it, and a packaged one must not be shadowed by a copy in the home
+/// directory.
 pub fn ensure_launcher() -> io::Result<Option<PathBuf>> {
     ensure_launcher_in(&Dirs::from_env(), &std::env::current_exe()?)
 }
 
 fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
-    if dirs.launcher().exists() {
+    if dirs.launcher().exists() || dirs.packaged_launcher().is_some() {
         return Ok(None);
     }
     write(&dirs.icon(), icon::APP_SVG)?;
@@ -84,15 +134,19 @@ fn install_into(
         write(&dirs.icon(), icon::APP_SVG)?,
     ];
     if autostart {
-        written.push(write(
-            &dirs.autostart(),
-            &desktop_entry(exe, caption, true),
-        )?);
+        written.extend(autostart_into(dirs, exe, caption)?);
     } else if dirs.autostart().exists() {
         // Re-running --install without --autostart is how it gets turned off.
         std::fs::remove_file(dirs.autostart())?;
     }
     Ok(written)
+}
+
+fn autostart_into(dirs: &Dirs, exe: &Path, caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
+    Ok(vec![write(
+        &dirs.autostart(),
+        &desktop_entry(exe, caption, true),
+    )?])
 }
 
 fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
@@ -192,6 +246,7 @@ mod tests {
         Dirs {
             data: root.join("data"),
             config: root.join("config"),
+            system: vec![root.join("usr/share")],
         }
     }
 
@@ -268,6 +323,34 @@ mod tests {
         assert_eq!(again, None);
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
         assert!(entry.contains("Exec=/first/vinowhisper-gui"));
+    }
+
+    #[test]
+    fn a_packaged_launcher_is_not_shadowed_by_a_first_run() {
+        let dirs = scratch("packaged");
+        export(&dirs.system[0]).unwrap();
+        assert_eq!(
+            ensure_launcher_in(&dirs, Path::new("/usr/bin/vinowhisper-gui")).unwrap(),
+            None
+        );
+        assert!(!dirs.launcher().exists());
+    }
+
+    #[test]
+    fn an_exported_launcher_names_the_command_not_a_buildroot_path() {
+        let dirs = scratch("export");
+        let written = export(&dirs.data).unwrap();
+        assert_eq!(written, vec![dirs.launcher(), dirs.icon()]);
+        let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
+        assert_eq!(exec_line(&entry), "Exec=vinowhisper-gui");
+    }
+
+    #[test]
+    fn autostart_on_its_own_writes_only_the_login_entry() {
+        let dirs = scratch("autostart-only");
+        let written = autostart_into(&dirs, Path::new("/usr/bin/vinowhisper-gui"), None).unwrap();
+        assert_eq!(written, vec![dirs.autostart()]);
+        assert!(!dirs.launcher().exists());
     }
 
     #[test]

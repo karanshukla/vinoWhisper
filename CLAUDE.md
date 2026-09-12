@@ -165,6 +165,22 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   from the main thread.
 - **One instance per session** via `$XDG_RUNTIME_DIR/vinowhisper-gui.sock`, so
   `vinowhisper-gui toggle` works from any keybinding tool.
+- **Distribution: a GitHub release asset, installed by the wizard. Not PyPI,
+  not (yet) COPR.** Both were user decisions on 2026-09-12. A Rust binary
+  inside a Python wheel was rejected outright. COPR is deferred, not refused:
+  Fedora 44 cannot carry the Python side at all (openvino 2025.1.0 against a
+  2026.3.1 floor, and no openvino-genai, openvino-tokenizers or optimum), and
+  its Rust crates are too old (smithay-client-toolkit 0.19, no cosmic-text or
+  ksni), so it would be an overlay-only package with vendored crates.
+  `--export-desktop` and the wizard's /usr/bin handling are the hooks left for
+  it.
+- **How the wizard trusts the download** (`vinowhisper/overlay.py`):
+  release.yml builds the musl binary, `scripts/pin_gui_release.py` writes its
+  sha256 into `vinowhisper/gui_release.json`, and only then is the wheel built,
+  so PyPI's wheel pins GitHub's binary. **No pin means no download**
+  (characterization test), and a mismatch installs nothing and fails setup.
+  This is why the whole repo has one version, held by `bump-my-version` and
+  `tests/test_packaging.py`: the download URL is the Python package's version.
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
   portal. They draw into memory and bind scratch sockets. The `gui` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.

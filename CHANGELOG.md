@@ -20,9 +20,15 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   desktop portal and rebindable from the tray or System Settings. Hiding it
   stops captioning, so the server still scales to zero. Tested on KDE Plasma
   6.7; GNOME has no layer-shell and is refused with a message saying so.
-- **Rust, and optional.** One 5.6MB binary that links only libc, built with
-  `./scripts/install.sh --gui`. The Python package gains no dependencies, and
-  the terminal UI is unchanged.
+- **Rust, optional, and never on PyPI.** `vinowhisper-setup --gui` downloads a
+  static musl binary (6.0MB) from the GitHub release and checks it against the
+  sha256 the release workflow pins into the wheel before building it. A
+  mismatch installs nothing, and a build with no pin (a source checkout)
+  never downloads; it offers a cargo build instead. The Python package gains
+  no dependencies, and the terminal UI is unchanged.
+- One version for the whole repo: `bump-my-version` now moves
+  `gui/Cargo.toml` and its lock entry with `pyproject.toml`, because the wizard
+  downloads the overlay from the release tagged with the Python version.
 - `vinowhisper-caption --json`: one ASCII-escaped JSON object per event on
   stdout (`events.to_dict`, verbatim), plus an `Error` record when the CLI
   gives up. It is what the overlay reads, and it is there for anything else

@@ -89,8 +89,9 @@ environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.
-Add `--gui` (`| bash -s -- --gui`) to also build the caption overlay, which
-needs a Rust toolchain.
+The caption overlay is one more command once that is done:
+`vinowhisper-setup --gui`, which downloads it from the GitHub release and
+checks it against a digest pinned in the Python package.
 
 From a checkout, or to see what it would do without doing it:
 
@@ -148,6 +149,7 @@ vinowhisper-gui --install --autostart     # launcher entry, and the tray at logi
 vinowhisper-setup                         # guided install; re-runnable, idempotent
 vinowhisper-setup --dry-run               # print the plan, change nothing
 vinowhisper-setup --print-units           # the systemd units it would generate
+vinowhisper-setup --gui                   # just the optional caption overlay
 
 vinowhisper-doctor                        # devices, model, digests, audio, live levels
 vinowhisper-doctor --json                 # the same, for a bug report

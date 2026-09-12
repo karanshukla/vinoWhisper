@@ -11,11 +11,37 @@ server and every fix to them are shared with the terminal UI.
 
 ## Install
 
+```bash
+vinowhisper-setup --gui
+```
+
+That downloads `vinowhisper-gui-x86_64-linux` from the GitHub release matching
+your installed vinoWhisper and checks it against the sha256 pinned inside the
+Python package. It installs the binary into `~/.local/bin`, adds a launcher
+entry, and asks whether to start the tray at login. A plain
+`vinowhisper-setup` offers the same step when it runs in a Wayland session.
+Nothing needs Rust.
+
+**It is not on PyPI, on purpose.** A Rust GUI has no place inside a Python
+wheel, and `pip install vinowhisper` stays the terminal tool alone. The link
+between the two is the pin. The release workflow builds the binary, writes its
+sha256 into the wheel (`vinowhisper/gui_release.json`), and only then builds
+the wheel, so the digest on PyPI and the binary on GitHub come out of one
+workflow run.
+
+- **A mismatch installs nothing**, not even a partial file, and fails setup.
+- **No pin means no download.** A source checkout has no pin, and neither does
+  a wheel built outside the release workflow. There the wizard offers a cargo
+  build instead, never an unverified binary. It is the same line
+  `model_digests.json` draws for the model export.
+- **x86_64 only**, for now. On other architectures the wizard points at cargo.
+
 From a checkout, with a Rust toolchain ([rustup](https://rustup.rs) or your
-distro's `cargo` package):
+distro's `cargo` package), either of these builds it locally:
 
 ```bash
-./scripts/install.sh --gui
+vinowhisper-setup --gui        # sees the checkout and offers `cargo build`
+./scripts/install.sh --gui     # the bootstrap installer, same result
 ```
 
 Or by hand:
@@ -26,10 +52,17 @@ install -Dm755 gui/target/release/vinowhisper-gui ~/.local/bin/vinowhisper-gui
 vinowhisper-gui --install --autostart   # launcher, icon, tray at login
 ```
 
-What you get is one 5.6MB binary that links nothing beyond libc (measured
-2026-09-12, x86_64 release build). Every dependency is pure Rust and compiled
-in, so there is nothing to install alongside it on any distro. The 135 crates
-it pulls in are a build-time cost only.
+The release asset is a fully static musl build, 6.0MB, so the same file runs
+on any distro's libc. A local `cargo build` is 5.6MB and links only libc
+(both measured 2026-09-12). Every dependency is pure Rust and compiled in, and
+the 135 crates it pulls in are a build-time cost only.
+
+A distro package is not available yet. Fedora cannot package the Python side:
+its openvino is 2025.1.0, older than the 2026.3.1 floor, and openvino-genai
+and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
+is planned. `vinowhisper-gui --export-desktop DIR` writes the launcher and
+icon for a packager, and `vinowhisper-setup --gui` already recognises a copy in
+/usr/bin.
 
 It needs `vinowhisper-caption` from the Python package. It looks for it on
 `PATH`, then in `~/.local/bin` (where `vinowhisper-setup` links it), then next

@@ -47,8 +47,12 @@ Options:
   --source SOURCE   'output' (system audio, the default) or 'mic', this run only
   --caption PATH    the vinowhisper-caption to run, when it is not on PATH
   --install         add a launcher entry and icon for this binary
-  --autostart       with --install, also start in the tray at login
-  --uninstall       remove what --install added
+  --autostart       start in the tray at login (with --install, or alone for
+                    a packaged copy whose launcher came with the package)
+  --uninstall       remove what --install and --autostart added
+  --export-desktop DIR
+                    for packagers: write the launcher and icon under DIR
+                    (a buildroot's /usr/share), naming the command, not a path
   -V, --version     print the version
   -h, --help        print this help
 
@@ -66,6 +70,7 @@ struct Args {
     install: bool,
     autostart: bool,
     uninstall: bool,
+    export_desktop: Option<PathBuf>,
     help: bool,
     version: bool,
 }
@@ -91,6 +96,13 @@ impl Args {
                 "--caption" => {
                     parsed.caption = Some(args.next().ok_or("--caption needs a path")?.into());
                 }
+                "--export-desktop" => {
+                    parsed.export_desktop = Some(
+                        args.next()
+                            .ok_or("--export-desktop needs a directory")?
+                            .into(),
+                    );
+                }
                 option if option.starts_with('-') => {
                     return Err(format!("unknown option {option}"));
                 }
@@ -104,8 +116,13 @@ impl Args {
                 }
             }
         }
-        if parsed.autostart && !parsed.install {
-            return Err("--autostart goes with --install".into());
+        if parsed.export_desktop.is_some()
+            && (parsed.install || parsed.autostart || parsed.uninstall)
+        {
+            return Err("--export-desktop is for packagers and goes on its own".into());
+        }
+        if parsed.uninstall && (parsed.install || parsed.autostart) {
+            return Err("--uninstall undoes --install and --autostart; pick one".into());
         }
         Ok(parsed)
     }
@@ -127,7 +144,7 @@ fn main() -> ExitCode {
         println!("vinowhisper-gui {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    if args.install || args.uninstall {
+    if args.install || args.autostart || args.uninstall || args.export_desktop.is_some() {
         return run_install(&args);
     }
 
@@ -166,10 +183,15 @@ fn main() -> ExitCode {
 }
 
 fn run_install(args: &Args) -> ExitCode {
-    let result = if args.uninstall {
+    let caption = args.caption.as_deref();
+    let result = if let Some(dir) = &args.export_desktop {
+        install::export(dir)
+    } else if args.uninstall {
         install::uninstall()
+    } else if args.install {
+        install::install(args.autostart, caption)
     } else {
-        install::install(args.autostart, args.caption.as_deref())
+        install::autostart(caption)
     };
     match result {
         Ok(paths) => {
@@ -177,7 +199,8 @@ fn run_install(args: &Args) -> ExitCode {
             for path in paths {
                 println!("{verb} {}", path.display());
             }
-            if args.install && session::find_caption(args.caption.as_deref()).is_none() {
+            let integrating = args.install || args.autostart;
+            if integrating && session::find_caption(args.caption.as_deref()).is_none() {
                 eprintln!("note: {}", session::not_found_message());
             }
             ExitCode::SUCCESS
@@ -220,6 +243,23 @@ mod tests {
         assert!(parse(&["ping"]).is_err(), "ping is internal, not a command");
         assert!(parse(&["show", "hide"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
-        assert!(parse(&["--autostart"]).is_err());
+        assert!(parse(&["--export-desktop"]).is_err(), "needs a directory");
+        assert!(parse(&["--export-desktop", "/tmp/x", "--install"]).is_err());
+        assert!(parse(&["--uninstall", "--autostart"]).is_err());
+    }
+
+    #[test]
+    fn autostart_stands_alone_for_a_packaged_copy() {
+        let args = parse(&["--autostart"]).unwrap();
+        assert!(args.autostart && !args.install);
+    }
+
+    #[test]
+    fn export_desktop_takes_a_directory() {
+        let args = parse(&["--export-desktop", "/buildroot/usr/share"]).unwrap();
+        assert_eq!(
+            args.export_desktop,
+            Some(PathBuf::from("/buildroot/usr/share"))
+        );
     }
 }

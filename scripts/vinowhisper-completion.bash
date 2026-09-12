@@ -103,7 +103,7 @@ _vinowhisper() {
             fi
             if [[ $cmd == vinowhisper-setup ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "
-                    --yes --dry-run --device --print-units --version --help" -- "$cur")
+                    --yes --dry-run --device --print-units --gui --version --help" -- "$cur")
             else
                 mapfile -t COMPREPLY < <(compgen -W "--device --version --help" -- "$cur")
             fi

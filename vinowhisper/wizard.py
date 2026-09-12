@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, capture, config, devices, distro, integrity
+from . import __version__, capture, config, devices, distro, integrity, overlay
 
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
@@ -97,14 +97,16 @@ class Wizard:
             return False
         return True
 
-    def step(self, title: str, action: Callable[[], Outcome]) -> None:
+    def step(self, title: str, action: Callable[[], Outcome], optional: bool = False) -> None:
         self.say(f"\n── {title}")
         outcome = action()
         marker = {True: "✓", False: "✗", None: "…"}[outcome.ok]
         self.say(f"  {marker} {outcome.summary}")
         if outcome.ok is False:
             self.failed.append(title)
-        elif outcome.ok is None:
+        elif outcome.ok is None and not optional:
+            # An optional step left undone is a choice, not unfinished setup,
+            # so it does not earn a "re-run this" at the end.
             self.skipped.append(title)
 
     # --- steps -----------------------------------------------------------
@@ -279,6 +281,50 @@ class Wizard:
             link.symlink_to(source)
         return Outcome(True, f"completion installed for {len(COMMANDS)} commands")
 
+    def install_overlay(self) -> Outcome:
+        """The optional caption overlay, vinowhisper-gui, a Rust binary.
+
+        Never from PyPI. Already installed, then the release binary checked
+        against the sha256 pinned in this package, then a cargo build from a
+        checkout (see overlay.py for why that order, and why no pin means no
+        download).
+        """
+        path = overlay.installed(BIN_DIR)
+        if path is not None:
+            self.say(f"  Found {path}")
+        else:
+            got = self._get_overlay()
+            if isinstance(got, Outcome):
+                return got
+            path = got
+
+        # A distro package ships its own launcher in /usr/share; a copy in the
+        # home directory needs one written, and not only for the menu: the
+        # desktop's shortcut portal will not grant a shortcut without it.
+        if path.is_relative_to(Path.home()):
+            self.run([str(path), "--install"], "add a launcher entry for it?")
+        self.run([str(path), "--autostart"], "start it in the tray at login?")
+        return Outcome(True, f"{path} (open it from the app menu, or run vinowhisper-gui)")
+
+    def _get_overlay(self) -> Path | Outcome:
+        available = overlay.availability()
+        if isinstance(available, overlay.Pin):
+            self.say(f"  Download {available.url}")
+            self.say(f"  sha256   {available.sha256} (pinned in vinowhisper {available.version})")
+            if not self.confirm(f"install it into {BIN_DIR}?"):
+                return Outcome(None, "skipped; `vinowhisper-setup --gui` installs it any time")
+            try:
+                return overlay.fetch(available, BIN_DIR / overlay.BINARY)
+            except overlay.OverlayError as exc:
+                return Outcome(False, str(exc))
+
+        if overlay.can_build():
+            if not self.run(overlay.build_argv(), "build it with cargo? (minutes, the first time)"):
+                return Outcome(None, "not built; `vinowhisper-setup --gui` builds it any time")
+            return overlay.install_binary(overlay.built_binary(), BIN_DIR / overlay.BINARY)
+
+        return Outcome(None, available)
+
     # --- driver ----------------------------------------------------------
 
     def run_all(self) -> int:
@@ -295,6 +341,10 @@ class Wizard:
         self.step("Systemd units", self.install_units)
         self.step("Commands on PATH", self.link_binaries)
         self.step("Bash completion", self.install_completion)
+        # Only offered where it could run: a headless box or an X11 session has
+        # no use for a Wayland overlay. `--gui` asks regardless.
+        if os.environ.get("WAYLAND_DISPLAY"):
+            self.step("Caption overlay (optional)", self.install_overlay, optional=True)
 
         self.say("")
         if self.failed:
@@ -307,6 +357,14 @@ class Wizard:
             return 0
         self.say("✓ Ready. Run `vinowhisper-caption` with something playing.")
         return 0
+
+    def run_overlay(self) -> int:
+        """`vinowhisper-setup --gui`: the overlay step and nothing else."""
+        self.say(f"vinowhisper-setup {__version__}: the caption overlay")
+        if self.dry_run:
+            self.say("\n  --dry-run: nothing will be changed; every command is printed.")
+        self.step("Caption overlay", self.install_overlay)
+        return 1 if self.failed else 0
 
 
 def export_argv(variant: str, directory: Path | None = None) -> list[str]:
@@ -423,6 +481,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print the systemd units that would be generated, then exit.",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Install only the optional caption overlay (vinowhisper-gui): the "
+        "release binary, checked against the sha256 pinned in this package, or a "
+        "cargo build from a checkout.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
 
@@ -438,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
 
     wizard = Wizard(assume_yes=args.yes, dry_run=args.dry_run, device=args.device)
     try:
-        return wizard.run_all()
+        return wizard.run_overlay() if args.gui else wizard.run_all()
     except KeyboardInterrupt:
         print("\ninterrupted; nothing further was changed", file=sys.stderr)
         return 130

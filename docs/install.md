@@ -162,9 +162,11 @@ transformers 5.4.0, so `vinowhisper-setup` and `convert_model.sh` report a
 
 ## The caption overlay (optional)
 
-`./scripts/install.sh --gui` also builds `vinowhisper-gui`, a floating
-caption box with a tray icon and a global shortcut. It needs a Rust toolchain
-to build and nothing at runtime. See [gui.md](gui.md).
+`vinowhisper-setup --gui` installs `vinowhisper-gui`, a floating caption box
+with a tray icon and a global shortcut. It downloads the binary from the
+GitHub release and checks it against the sha256 pinned in the Python package,
+so no Rust toolchain is needed. It is never on PyPI; from a checkout it can be
+built with cargo instead (`./scripts/install.sh --gui`). See [gui.md](gui.md).
 
 ## Pinning the terminal on top
 

@@ -83,8 +83,14 @@ packages = ["vinowhisper"]
 # "nothing pinned" rather than crashing, which means this line going wrong
 # would degrade silently — hence tests/test_integrity.py asserting the file is
 # both declared here and readable.
+#
+# gui_release.json is the same kind of file and the same risk, with one
+# difference: it exists only in a release build. release.yml writes it (the
+# sha256 of the overlay binary attached to the GitHub Release) just before
+# `uv build`, then checks the wheel carries it. A checkout has none, and
+# overlay.availability() then refuses to download, which is the point.
 [tool.setuptools.package-data]
-vinowhisper = ["model_digests.json"]
+vinowhisper = ["model_digests.json", "gui_release.json"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 
@@ -217,3 +223,16 @@ pre_commit_hooks = ["uv lock", "git add uv.lock"]
 filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
+
+# One version for the whole repo: the overlay is downloaded from the release
+# tagged with the Python package's version, so the two cannot be allowed to
+# differ. tests/test_packaging.py fails if any of these three drift apart.
+[[tool.bumpversion.files]]
+filename = "gui/Cargo.toml"
+search = "name = \"vinowhisper-gui\"\nversion = \"{current_version}\""
+replace = "name = \"vinowhisper-gui\"\nversion = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "gui/Cargo.lock"
+search = "name = \"vinowhisper-gui\"\nversion = \"{current_version}\""
+replace = "name = \"vinowhisper-gui\"\nversion = \"{new_version}\""
