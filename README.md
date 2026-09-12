@@ -9,8 +9,9 @@
 
 **Live captions for anything playing on your Linux laptop, running on the NPU
 that came with it.** No cloud, no API key, no account, no audio leaving the
-machine. Point it at whatever is playing and it captions in your terminal.
-There is nothing to interact with: start it and it goes.
+machine. Point it at whatever is playing and it captions in your terminal, or
+in a floating box above everything else on screen. There is nothing to
+interact with: start it and it goes.
 
 <img width="1237" height="530" alt="vinoWhisper captioning a video, with the status bar pinned at the bottom" src="https://github.com/user-attachments/assets/f263eabf-f1f4-4ab2-9b68-bc50eaf92ea0" />
 
@@ -70,6 +71,13 @@ then CPU, and a fallback is never silent: it shows up in the server journal, in
 **It tells you how to fix it.** Nearly every error path here prints the command
 that resolves it, in your distro's package names, for eight distro families.
 
+**The overlay is optional, and native.** `vinowhisper-gui` is a 5.6MB Rust
+binary that floats a caption box above every window, fullscreen video
+included, with a tray icon and a global shortcut. It links nothing but libc
+and adds nothing to the Python install. It draws the same event stream as the
+terminal UI rather than reimplementing any of it.
+[docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md)
+
 ## Install
 
 ```bash
@@ -81,6 +89,8 @@ environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.
+Add `--gui` (`| bash -s -- --gui`) to also build the caption overlay, which
+needs a Rust toolchain.
 
 From a checkout, or to see what it would do without doing it:
 
@@ -129,6 +139,11 @@ vinowhisper-caption --list-targets        # capture one app instead of the whole
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save the session for replay
 vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
+vinowhisper-caption --json                # one event per line, what the overlay reads
+
+vinowhisper-gui                           # the floating overlay and tray icon
+vinowhisper-gui toggle                    # show/hide it; Meta+Alt+C does the same
+vinowhisper-gui --install --autostart     # launcher entry, and the tray at login
 
 vinowhisper-setup                         # guided install; re-runnable, idempotent
 vinowhisper-setup --dry-run               # print the plan, change nothing
@@ -147,6 +162,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 | | |
 |---|---|
 | [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
+| [Caption overlay](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcut: installing, which desktops it works on, and why it is Rust |
 | [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
@@ -166,6 +182,10 @@ machine:
   explains the one knob that moves it.
 - **Wording drifts between cycles**, because each window is re-decoded with
   more right-context than the last. The stitcher hides most of it and not all.
+- **The overlay needs wlr-layer-shell.** Tested on KDE Plasma 6.7 only. GNOME
+  does not offer the protocol, so there the overlay refuses to start and the
+  terminal UI is the way in. Sway, Hyprland, niri and COSMIC should work and
+  are untested.
 - **Package names for seven of the eight distro families are unverified.** If
   one is wrong for yours, that is expected, and it is the fastest thing in this
   repo to fix.
