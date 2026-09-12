@@ -573,8 +573,9 @@ Ordered by what would most change the design.
    in the NPU static pipeline specifically, and nobody has produced a stateful
    export at all, so it is unknown whether transformers 5.4.0 matters there.
 9. **Does the overlay work anywhere but Plasma?** Sway, Hyprland, niri and
-   COSMIC all offer layer-shell; none has been tried. And should releases
-   attach a prebuilt `vinowhisper-gui`, so installing it stops needing cargo?
+   COSMIC all offer layer-shell; none has been tried. (Releases attach a
+   prebuilt static `vinowhisper-gui` from 0.4.0 on, installed and verified by
+   `vinowhisper-setup --gui`, so installing it no longer needs cargo.)
 
 ## Conventions
 
