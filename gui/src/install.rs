@@ -44,8 +44,8 @@ impl Dirs {
         launcher_in(&self.data)
     }
 
-    fn icon(&self) -> PathBuf {
-        icon_in(&self.data)
+    fn icons(&self) -> [(PathBuf, String); 2] {
+        icons_in(&self.data)
     }
 
     fn autostart(&self) -> PathBuf {
@@ -64,8 +64,26 @@ fn launcher_in(data: &Path) -> PathBuf {
     data.join(format!("applications/{APP_ID}.desktop"))
 }
 
-fn icon_in(data: &Path) -> PathBuf {
-    data.join(format!("icons/hicolor/scalable/apps/{APP_ID}.svg"))
+/// The launcher's icon, and the one-colour one the tray asks for by name.
+fn icons_in(data: &Path) -> [(PathBuf, String); 2] {
+    let hicolor = data.join("icons/hicolor");
+    [
+        (
+            hicolor.join(format!("scalable/apps/{APP_ID}.svg")),
+            icon::app_svg(),
+        ),
+        (
+            hicolor.join(format!("symbolic/apps/{APP_ID}-symbolic.svg")),
+            icon::symbolic_svg(),
+        ),
+    ]
+}
+
+fn write_icons(data: &Path) -> io::Result<Vec<PathBuf>> {
+    icons_in(data)
+        .iter()
+        .map(|(path, svg)| write(path, svg))
+        .collect()
 }
 
 pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
@@ -91,17 +109,17 @@ pub fn uninstall() -> io::Result<Vec<PathBuf>> {
 /// package puts it on PATH and the buildroot path would be wrong once
 /// installed.
 pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
-    Ok(vec![
-        write(
-            &launcher_in(data_dir),
-            &desktop_entry(Path::new(COMMAND), None, false),
-        )?,
-        write(&icon_in(data_dir), icon::APP_SVG)?,
-    ])
+    let mut written = vec![write(
+        &launcher_in(data_dir),
+        &desktop_entry(Path::new(COMMAND), None, false),
+    )?];
+    written.extend(write_icons(data_dir)?);
+    Ok(written)
 }
 
-/// The launcher and icon, written only if there is no launcher yet, per-user
-/// or packaged. Returns the launcher's path when it had to be written.
+/// The launcher, written only if there is no launcher yet, per-user or
+/// packaged, and the per-user icons, brought up to date unless a package owns
+/// them. Returns the launcher's path when it had to be written.
 ///
 /// Measured 2026-09-12 on Plasma 6.7: with no desktop file, the portal
 /// registry refuses the app id ("App info not found for
@@ -116,10 +134,21 @@ pub fn ensure_launcher() -> io::Result<Option<PathBuf>> {
 }
 
 fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
-    if dirs.launcher().exists() || dirs.packaged_launcher().is_some() {
+    let own = dirs.launcher().exists();
+    if !own && dirs.packaged_launcher().is_some() {
         return Ok(None);
     }
-    write(&dirs.icon(), icon::APP_SVG)?;
+    // Unlike the launcher, the icons hold nothing of the user's, so a newer
+    // binary brings its own. Compared first, so an unchanged icon is not
+    // rewritten on every launch.
+    for (path, svg) in dirs.icons() {
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(svg.as_str()) {
+            write(&path, &svg)?;
+        }
+    }
+    if own {
+        return Ok(None);
+    }
     write(&dirs.launcher(), &desktop_entry(exe, None, false)).map(Some)
 }
 
@@ -129,10 +158,11 @@ fn install_into(
     autostart: bool,
     caption: Option<&Path>,
 ) -> io::Result<Vec<PathBuf>> {
-    let mut written = vec![
-        write(&dirs.launcher(), &desktop_entry(exe, caption, false))?,
-        write(&dirs.icon(), icon::APP_SVG)?,
-    ];
+    let mut written = vec![write(
+        &dirs.launcher(),
+        &desktop_entry(exe, caption, false),
+    )?];
+    written.extend(write_icons(&dirs.data)?);
     if autostart {
         written.extend(autostart_into(dirs, exe, caption)?);
     } else if dirs.autostart().exists() {
@@ -151,7 +181,10 @@ fn autostart_into(dirs: &Dirs, exe: &Path, caption: Option<&Path>) -> io::Result
 
 fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
-    for path in [dirs.launcher(), dirs.icon(), dirs.autostart()] {
+    let paths = std::iter::once(dirs.launcher())
+        .chain(dirs.icons().map(|(path, _)| path))
+        .chain([dirs.autostart()]);
+    for path in paths {
         match std::fs::remove_file(&path) {
             Ok(()) => removed.push(path),
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -302,11 +335,11 @@ mod tests {
     fn install_then_uninstall_leaves_nothing_behind() {
         let dirs = scratch("round-trip");
         let written = install_into(&dirs, Path::new("/bin/vinowhisper-gui"), true, None).unwrap();
-        assert_eq!(written.len(), 3);
+        assert_eq!(written.len(), 4);
         assert!(written.iter().all(|path| path.exists()));
 
         let removed = uninstall_from(&dirs).unwrap();
-        assert_eq!(removed.len(), 3);
+        assert_eq!(removed.len(), 4);
         assert!(written.iter().all(|path| !path.exists()));
     }
 
@@ -315,7 +348,7 @@ mod tests {
         let dirs = scratch("ensure");
         let written = ensure_launcher_in(&dirs, Path::new("/first/vinowhisper-gui")).unwrap();
         assert_eq!(written, Some(dirs.launcher()));
-        assert!(dirs.icon().exists());
+        assert!(dirs.icons().iter().all(|(path, _)| path.exists()));
 
         // A later run from elsewhere must not replace what is there, which
         // may be an --install with a --caption path in it.
@@ -340,9 +373,35 @@ mod tests {
     fn an_exported_launcher_names_the_command_not_a_buildroot_path() {
         let dirs = scratch("export");
         let written = export(&dirs.data).unwrap();
-        assert_eq!(written, vec![dirs.launcher(), dirs.icon()]);
+        let icons = dirs.icons().map(|(path, _)| path);
+        assert_eq!(written, [vec![dirs.launcher()], icons.to_vec()].concat());
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
         assert_eq!(exec_line(&entry), "Exec=vinowhisper-gui");
+    }
+
+    #[test]
+    fn a_later_run_updates_stale_icons_but_not_the_launcher() {
+        let dirs = scratch("stale-icons");
+        install_into(
+            &dirs,
+            Path::new("/bin/vinowhisper-gui"),
+            false,
+            Some(Path::new("/opt/venv/bin/vinowhisper-caption")),
+        )
+        .unwrap();
+        let launcher = std::fs::read_to_string(dirs.launcher()).unwrap();
+        for (path, _) in dirs.icons() {
+            std::fs::write(path, "<svg>an older design</svg>").unwrap();
+        }
+
+        assert_eq!(
+            ensure_launcher_in(&dirs, Path::new("/elsewhere/vinowhisper-gui")).unwrap(),
+            None
+        );
+        for (path, svg) in dirs.icons() {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), svg);
+        }
+        assert_eq!(std::fs::read_to_string(dirs.launcher()).unwrap(), launcher);
     }
 
     #[test]

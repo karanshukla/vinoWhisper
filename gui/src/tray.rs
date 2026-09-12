@@ -11,6 +11,7 @@ use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
+use crate::APP_ID;
 use crate::app::Command;
 use crate::icon;
 use crate::settings::{Position, Source, TextSize};
@@ -162,8 +163,10 @@ impl ksni::Tray for Tray {
     }
 
     fn icon_name(&self) -> String {
-        // Themed and symbolic, so Plasma recolours it to match the panel.
-        "media-view-subtitles-symbolic".into()
+        // The app's own mark in one colour, which Plasma recolours to match
+        // the panel. `install` puts it next to the launcher's icon; the
+        // pixmaps below are for a tray that cannot find it.
+        format!("{APP_ID}-symbolic")
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {

@@ -19,10 +19,11 @@ use crate::settings::TextSize;
 pub const LINES: usize = 2;
 
 /// Dark and mostly opaque. Captions sit over arbitrary video, and legibility
-/// on a white frame matters more than seeing the frame through the box.
-const BACKGROUND: Rgba = Rgba(14, 14, 16, 214);
+/// on a white frame matters more than seeing the frame through the box. The
+/// icon is drawn in these colours too.
+pub const BACKGROUND: Rgba = Rgba(14, 14, 16, 214);
 
-fn tone_rgba(tone: Tone) -> Rgba {
+pub fn tone_rgba(tone: Tone) -> Rgba {
     match tone {
         Tone::Caption => Rgba(250, 250, 250, 255),
         Tone::Pending => Rgba(160, 164, 172, 255),

@@ -181,6 +181,15 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   (characterization test), and a mismatch installs nothing and fails setup.
   This is why the whole repo has one version, held by `bump-my-version` and
   `tests/test_packaging.py`: the download URL is the Python package's version.
+- **The icon is drawn once, as data** (`gui/src/icon.rs`, 2026-09-12). Tray
+  pixmaps, the launcher SVG, the symbolic tray SVG and `docs/assets/*.svg`
+  (the README logo) all come from one list of shapes coloured from
+  `paint.rs`'s palette, so the icon looks like the overlay. The assets are
+  generated: `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test
+  fails when they are stale. The tray asks for `<APP_ID>-symbolic` by name,
+  which resolves only once `install` has written it, so the first-run check
+  also rewrites per-user icons that differ (they hold nothing of the user's,
+  unlike the launcher).
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
   portal. They draw into memory and bind scratch sockets. The `gui` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.

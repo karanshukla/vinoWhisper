@@ -83,7 +83,7 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions |
-| **Tray icon** | Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Change shortcut… and Quit |
+| **Tray icon** | The app's own mark, in the panel's text colour (installed with the launcher, and refreshed on launch). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Change shortcut… and Quit |
 | **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A

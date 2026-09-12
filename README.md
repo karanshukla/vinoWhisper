@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/docs/assets/vinowhisper.svg" width="112" alt="The vinoWhisper mark: a dark caption box with green voice bars turning into lines of text">
+</p>
+
 # vinoWhisper
 
 [![PyPI](https://img.shields.io/badge/PyPI-vinowhisper-blue?logo=pypi&logoColor=white)](https://pypi.org/project/vinowhisper/)
