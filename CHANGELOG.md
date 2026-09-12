@@ -16,11 +16,11 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   and the README now share one mark: a caption box in the overlay's own
   colours, with green voice bars becoming a word. Until now the launcher had a
   Breeze-blue box and the tray showed the icon theme's stock subtitles icon.
-  The tray asks for `io.github.karanshukla.vinowhisper-symbolic`, a
-  one-colour version Plasma paints in the panel's text colour, and falls back
-  to full-colour pixmaps. All of it is drawn from one list of shapes in
-  `gui/src/icon.rs`, and existing installs pick up the new icons on their next
-  launch.
+  The tray asks for `io.github.karanshukla.vinowhisper-symbolic`, the same
+  mark redrawn in Breeze's style (a one-pixel outline on a 16px grid, voice
+  bars in the accent colour) so it sits with the panel's own icons, and falls
+  back to full-colour pixmaps. All of it is generated from `gui/src/icon.rs`,
+  and existing installs pick up the new icons on their next launch.
 
 ## [0.4.0] - 2026-09-12
 

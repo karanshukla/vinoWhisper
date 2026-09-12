@@ -181,10 +181,13 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   (characterization test), and a mismatch installs nothing and fails setup.
   This is why the whole repo has one version, held by `bump-my-version` and
   `tests/test_packaging.py`: the download URL is the Python package's version.
-- **The icon is drawn once, as data** (`gui/src/icon.rs`, 2026-09-12). Tray
-  pixmaps, the launcher SVG, the symbolic tray SVG and `docs/assets/*.svg`
-  (the README logo) all come from one list of shapes coloured from
-  `paint.rs`'s palette, so the icon looks like the overlay. The assets are
+- **The icon is drawn as data** (`gui/src/icon.rs`, 2026-09-12). Tray
+  pixmaps, the launcher SVG and `docs/assets/vinowhisper.svg` (the README
+  logo) come from one list of shapes coloured from `paint.rs`'s palette, so
+  the icon looks like the overlay. The symbolic tray SVG is the same
+  composition redrawn on Breeze's 16px grid in one-pixel lines, voice bars in
+  `ColorScheme-Accent`: the first cut shrank the 64-unit shapes to a solid
+  block, and the user saw it clash with the panel's outline icons. The assets are
   generated: `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test
   fails when they are stale. The tray asks for `<APP_ID>-symbolic` by name,
   which resolves only once `install` has written it, so the first-run check

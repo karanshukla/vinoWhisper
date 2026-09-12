@@ -4,11 +4,14 @@
 //! word, above a line of confirmed text that ends in a pending one. The box is
 //! the overlay's own background, so the icon looks like what it opens.
 //!
-//! Drawn once, as data. The tray's pixmaps, the launcher's SVG and the
-//! symbolic tray icon all come from `BOX` and `MARKS`, so they cannot drift
-//! apart, and the copies in `docs/assets/` (for the README) are generated
-//! from them too: `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a
-//! test fails when they go stale.
+//! Drawn as data. The tray's pixmaps, the launcher's SVG and the README's
+//! copy come from `BOX` and `MARKS`. The symbolic tray icon is the same
+//! composition redrawn as `TRAY_BOX` and `TRAY_MARKS`, in one-pixel lines on
+//! Breeze's 16px grid: the panel's other icons are outlines, and the 64-unit
+//! shapes shrunk to 16px became a solid block that stood out among them
+//! (tried first, 2026-09-12). Both SVGs in `docs/assets/` are generated:
+//! `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test fails when
+//! they go stale.
 
 use crate::captions::Tone;
 use crate::paint::{BACKGROUND, tone_rgba};
@@ -28,6 +31,11 @@ struct Shape {
 impl Shape {
     const fn pill(x: f32, y: f32, w: f32, h: f32) -> Shape {
         Shape { x, y, w, h, r: 3.0 }
+    }
+
+    /// Square-ended, for lines a pixel wide, where rounding would only blur.
+    const fn line(x: f32, y: f32, w: f32, h: f32) -> Shape {
+        Shape { x, y, w, h, r: 0.0 }
     }
 
     fn inset(self, by: f32) -> Shape {
@@ -57,6 +65,9 @@ impl Shape {
     /// One closed subpath, for the symbolic icon's single path.
     fn svg_path(self) -> String {
         let Shape { x, y, w, h, r } = self;
+        if r <= 0.0 {
+            return format!("M{x} {y}h{w}v{h}h-{w}z");
+        }
         let (across, down) = (w - r * 2.0, h - r * 2.0);
         format!(
             "M{} {y}h{across}a{r} {r} 0 0 1 {r} {r}v{down}a{r} {r} 0 0 1 -{r} {r}\
@@ -89,6 +100,26 @@ const MARKS: [(Shape, Tone); 6] = [
     // and a confirmed line that ends in a word still pending.
     (Shape::pill(12.0, 41.0, 26.0, 6.0), Tone::Caption),
     (Shape::pill(42.0, 41.0, 10.0, 6.0), Tone::Pending),
+];
+
+/// `BOX` and `MARKS` again, for the tray, on a 16px grid with every edge on a
+/// whole pixel. The box is an outline `TRAY_LINE` wide, like Breeze's.
+const TRAY_BOX: Shape = Shape {
+    x: 1.0,
+    y: 2.0,
+    w: 14.0,
+    h: 12.0,
+    r: 2.0,
+};
+const TRAY_LINE: f32 = 1.0;
+
+const TRAY_MARKS: [(Shape, Tone); 6] = [
+    (Shape::line(4.0, 5.0, 1.0, 3.0), Tone::Good),
+    (Shape::line(6.0, 4.0, 1.0, 5.0), Tone::Good),
+    (Shape::line(8.0, 5.0, 1.0, 3.0), Tone::Good),
+    (Shape::line(10.0, 6.0, 3.0, 1.0), Tone::Caption),
+    (Shape::line(4.0, 11.0, 6.0, 1.0), Tone::Caption),
+    (Shape::line(11.0, 11.0, 2.0, 1.0), Tone::Pending),
 ];
 
 /// The overlay's box colour, without the translucency it needs over video.
@@ -124,20 +155,31 @@ pub fn app_svg() -> String {
     svg
 }
 
-/// For the tray: the same shapes in one colour, the marks cut out of the box.
+/// For the tray, in Breeze's style: a one-pixel outline with the voice in the
+/// accent colour, the way Breeze's own subtitles icon uses it.
 ///
-/// The stylesheet is KDE's convention, so Plasma paints it in the panel's text
-/// colour; anything else draws the fallback grey. Holes come from the even-odd
-/// rule rather than a mask, because Qt only promises SVG Tiny, which has none.
+/// The stylesheet is KDE's convention, so Plasma paints `Text` and `Accent`
+/// from the colour scheme; anything else draws the fallbacks. The outline is
+/// the box minus its inset by the even-odd rule rather than a stroke, so it
+/// lands on whole pixels whatever the renderer does with stroke alignment.
 pub fn symbolic_svg() -> String {
-    let path: String = std::iter::once(BOX)
-        .chain(MARKS.iter().map(|(shape, _)| *shape))
-        .map(Shape::svg_path)
-        .collect();
+    let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
+    let (mut voice, mut words, mut pending) = (String::new(), String::new(), String::new());
+    for (shape, tone) in TRAY_MARKS {
+        match tone {
+            Tone::Good => &mut voice,
+            Tone::Pending => &mut pending,
+            _ => &mut words,
+        }
+        .push_str(&shape.svg_path());
+    }
     format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }}</style>
-  <path class="ColorScheme-Text" style="fill:currentColor" fill-rule="evenodd" d="{path}"/>
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }} .ColorScheme-Accent {{ color: #3daee9; }}</style>
+  <path class="ColorScheme-Text" style="fill:currentColor" fill-rule="evenodd" d="{outline}"/>
+  <path class="ColorScheme-Accent" style="fill:currentColor" d="{voice}"/>
+  <path class="ColorScheme-Text" style="fill:currentColor" d="{words}"/>
+  <path class="ColorScheme-Text" style="fill:currentColor;fill-opacity:0.5" d="{pending}"/>
 </svg>
 "#
     )
@@ -196,13 +238,11 @@ mod tests {
         assert_eq!(pixel(0, 0)[0], 0, "a corner is transparent");
     }
 
-    /// The symbolic icon cuts every mark out of the box with the even-odd
-    /// rule, so two marks that touched would fill each other back in, and a
-    /// mark over the edge would show as a notch.
-    #[test]
-    fn the_marks_sit_inside_the_box_and_apart() {
-        let inner = BOX.inset(EDGE_WIDTH);
-        for (a, _) in MARKS {
+    /// A mark touching the box's edge merges into it, and two touching marks
+    /// read as one, which at 16px is most of the drawing.
+    fn assert_inside_and_apart(frame: Shape, edge: f32, marks: &[(Shape, Tone)]) {
+        let inner = frame.inset(edge);
+        for (a, _) in marks {
             assert!(
                 a.x > inner.x
                     && a.y > inner.y
@@ -212,11 +252,29 @@ mod tests {
             );
             assert!(a.r * 2.0 <= a.w.min(a.h), "{a:?} is rounded past a pill");
         }
-        for (i, (a, _)) in MARKS.iter().enumerate() {
-            for (b, _) in &MARKS[i + 1..] {
+        for (i, (a, _)) in marks.iter().enumerate() {
+            for (b, _) in &marks[i + 1..] {
                 let apart =
                     a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y;
                 assert!(apart, "{a:?} touches {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_marks_sit_inside_the_box_and_apart() {
+        assert_inside_and_apart(BOX, EDGE_WIDTH, &MARKS);
+        assert_inside_and_apart(TRAY_BOX, TRAY_LINE, &TRAY_MARKS);
+    }
+
+    /// A one-pixel line on a half-pixel edge renders as two grey ones, which
+    /// is the blur Breeze's grid exists to avoid.
+    #[test]
+    fn the_tray_icon_lands_on_whole_pixels() {
+        let shapes = std::iter::once(TRAY_BOX).chain(TRAY_MARKS.iter().map(|(shape, _)| *shape));
+        for shape in shapes {
+            for edge in [shape.x, shape.y, shape.w, shape.h, TRAY_LINE] {
+                assert_eq!(edge.fract(), 0.0, "{shape:?} is off the pixel grid");
             }
         }
     }
