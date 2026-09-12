@@ -1,17 +1,3 @@
-//! The global shortcut, through the XDG desktop portal.
-//!
-//! Wayland gives no client a way to grab a key while another window has
-//! focus, and that is by design. The portal is the sanctioned route: this app
-//! asks for a shortcut with a *preferred* trigger, the desktop decides (Plasma
-//! asks the user once), and from then on the binding lives in the desktop's
-//! own settings, where it can be changed like any other. "Change shortcut…"
-//! in the tray opens exactly that page. Nothing here stores or parses a key
-//! combination.
-//!
-//! All of it is best-effort. Without the portal (an older desktop, or a
-//! compositor that does not implement GlobalShortcuts), `vinowhisper-gui
-//! toggle` does the same job from any keybinding tool.
-
 use std::thread;
 
 use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut, Shortcut as Bound};
@@ -21,20 +7,13 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::APP_ID;
 use crate::app::Command;
 
-/// The id the desktop stores the binding under. Renaming it orphans every
-/// binding anyone has already made.
+/// Renaming this orphans every binding already made.
 const TOGGLE: &str = "toggle-captions";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
     Pending,
-    Bound {
-        /// How the desktop describes the trigger ("Meta+Alt+C"); empty when
-        /// the user declined to bind one.
-        trigger: String,
-        /// ConfigureShortcuts only exists from portal version 2.
-        configurable: bool,
-    },
+    Bound { trigger: String, configurable: bool },
     Unavailable(String),
 }
 
@@ -65,7 +44,6 @@ impl Shortcut {
         Shortcut { configure }
     }
 
-    /// Open the desktop's own page for this app's shortcuts.
     pub fn configure(&self) {
         let _ = self.configure.try_send(());
     }
@@ -83,12 +61,6 @@ async fn run(
     tx: &Sender<Command>,
     requests: async_channel::Receiver<()>,
 ) -> ashpd::Result<()> {
-    // A host app, unlike a Flatpak, has no app id the portal can see, and
-    // Plasma's GlobalShortcuts refuses a client without one ("An app id is
-    // required", measured 2026-09-12). Registering ties this process to the
-    // desktop file install::ensure_launcher wrote a moment ago. A portal older
-    // than the registry refuses the call; carry on regardless, since some
-    // desktops grant shortcuts without an id.
     if let Err(err) = ashpd::register_host_app(APP_ID.try_into()?).await {
         eprintln!("[vinowhisper-gui] portal registry: {err} (continuing without an app id)");
     }

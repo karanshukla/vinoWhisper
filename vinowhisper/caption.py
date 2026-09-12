@@ -1,21 +1,3 @@
-"""Live captioning entry point. Run manually in a terminal, Ctrl+C to stop.
-
-Each cycle: take the newest WINDOW_S of captured audio, transcribe it, stitch
-the result against what's already on screen, emit whatever that confirms.
-
-The loop is synchronous and self-pacing. There's no hop timer and never more
-than one request in flight, so the hop between windows is just however long
-the previous cycle took. That makes cycle time the one thing that matters for
-latency: the commit policy needs two cycles to agree before anything prints
-(see stitch.py), so captions trail the audio by roughly twice it.
-
-`caption_events` yields events rather than printing (see events.py). The
-terminal renderer below is one consumer, the session recorder is another, the
-Rich status bar a third, and `--json` hands the same stream to anything outside
-this process — which is how vinowhisper-gui (gui/, in Rust) gets its captions
-without a second implementation of any of this.
-"""
-
 import argparse
 import json
 import os
@@ -32,9 +14,6 @@ from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher
 
-# How long a completely silent input has to persist before the terminal
-# renderer says something. Silence is normal; most of a minute of it while the
-# user thinks captions should be running is a symptom worth naming.
 _SILENCE_NOTICE_AFTER_S = 45.0
 
 _SILENCE_NOTICE = """
@@ -56,8 +35,6 @@ _SILENCE_NOTICE = """
   Run vinowhisper-doctor to see the level on every target at once.
 """
 
-# Reported as context, deliberately not as a diagnosis: sink mute does not
-# silence the monitor here, so saying "that is the cause" was wrong.
 _MUTED_LINE = "\n  (The default sink is muted. On this machine that does not silence the monitor.)"
 
 
@@ -67,7 +44,6 @@ def caption_events(
     window_s: float,
     tap: Callable[[np.ndarray], None] | None = None,
 ) -> Iterator[events.Event]:
-    """Run the capture/transcribe/stitch loop, yielding events until Ctrl+C."""
     client = TranscriptionClient()
     health = client.wait_ready()
     yield events.Ready(
@@ -80,12 +56,10 @@ def caption_events(
 
     stitcher = Stitcher()
     index = 0
-    # Measured against Recorder.captured_s, which counts every sample ever
-    # captured, so this stays correct regardless of how much the ring buffer
-    # has since overwritten.
     last_cycle_at_s = 0.0
     silent_since: float | None = None
 
+    # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
         with Recorder(source=source, target=target, tap=tap) as recorder:
             while True:
@@ -96,8 +70,6 @@ def caption_events(
                     time.sleep(config.MIN_WINDOW_S - captured_s)
                     continue
 
-                # Nothing to learn from re-decoding a window that is almost
-                # entirely last cycle's window; wait for real new audio.
                 hop_s = captured_s - last_cycle_at_s
                 if hop_s < config.MIN_HOP_S:
                     time.sleep(config.MIN_HOP_S - hop_s)
@@ -111,8 +83,6 @@ def caption_events(
                     now = time.monotonic()
                     silent_since = now if silent_since is None else silent_since
                     elapsed_s = now - silent_since
-                    # Only shell out to pactl once the silence is worth
-                    # explaining, not on every quiet half-second.
                     muted = sink_muted() if elapsed_s >= _SILENCE_NOTICE_AFTER_S else None
                     yield events.Silence(elapsed_s=elapsed_s, rms=level, sink_muted=muted)
                     continue
@@ -140,21 +110,12 @@ def caption_events(
                     pending=stitcher.pending,
                 )
     except KeyboardInterrupt:
-        # Wraps the whole `with` block, not just the loop, so a second or
-        # mistimed Ctrl+C during Recorder cleanup still exits cleanly instead
-        # of spewing a traceback (confirmed happening in real testing).
         pass
 
-    # Whatever agreed once but never got a confirming cycle: better to show the
-    # last unconfirmed guess than to drop it on exit.
     yield events.Stopped(flushed=stitcher.flush())
 
 
 class TerminalRenderer:
-    """Confirmed words as one growing paragraph on stdout, everything else on
-    stderr so the transcript stays pipeable.
-    """
-
     def __init__(self, debug: bool = False) -> None:
         self.debug = debug
         self._started = False
@@ -209,24 +170,8 @@ class TerminalRenderer:
 
 
 class JsonRenderer:
-    """One JSON object per event on stdout, for vinowhisper-gui or anything
-    else that wants the event stream rather than the text.
-
-    The records are `events.to_dict`, unchanged, so a field added to an event
-    reaches every consumer at once. The one addition is `Error`, which the CLI
-    writes when it gives up: a GUI has no terminal to show stderr on, and "the
-    process exited 1" is not something anyone can act on.
-
-    ASCII-escaped on purpose. Whisper emits curly quotes and em dashes
-    routinely, and a reader on the other end of a pipe (a desktop autostart, a
-    systemd unit under LANG=C) should never have to care what the encoding is;
-    a split multi-byte character is exactly the crash the 2026-08-06 review
-    found in the HTTP client.
-    """
-
     def __init__(self) -> None:
-        # Resolved now rather than at import, so a redirected stdout (pytest's
-        # capsys among them) is the one written to.
+        # Looked up here, not at import, so a redirected stdout is honoured.
         self._stream = sys.stdout
 
     def __enter__(self) -> "JsonRenderer":
@@ -242,16 +187,11 @@ class JsonRenderer:
         self._write({"event": "Error", "message": message})
 
     def _write(self, record: dict) -> None:
-        # Flushed per line: the reader is waiting on each one, and a block
-        # buffer would hold a whole cycle's captions back until it filled.
         self._stream.write(json.dumps(record) + "\n")
         self._stream.flush()
 
 
 def _renderer(plain: bool, debug: bool):
-    """The status bar when there's a terminal to draw it on, plain text
-    otherwise. Both consume the same events; neither knows about the loop.
-    """
     if plain:
         return TerminalRenderer(debug=debug)
     from .ui import RichRenderer
@@ -326,8 +266,6 @@ def _list_targets() -> int:
         return 1
 
     if not active.supports_app_capture:
-        # Saying this once here is cheaper than the alternative, which is
-        # someone concluding the tool cannot see their browser.
         print(
             f"[{active.name}] monitor sources only — PulseAudio cannot tap a single\n"
             "application's stream. Install PipeWire for per-application capture.",
@@ -362,8 +300,6 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    # The status bar redraws, so it and the raw per-cycle dump would fight over
-    # the same screen. --debug is for reading numbers, not watching captions.
     plain = args.plain or args.debug or not sys.stdout.isatty()
     json_out = JsonRenderer() if args.json else None
     writer = session.SessionWriter(args.record) if args.record else None
@@ -399,9 +335,7 @@ def main() -> int:
             )
         return 1
     except BrokenPipeError:
-        # The reader went away: vinowhisper-gui quit, or `| head` had enough.
-        # Point stdout at /dev/null so the interpreter's own flush on the way
-        # out does not raise the same error a second time.
+        # Stops the interpreter's exit flush raising BrokenPipeError again.
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
     except KeyboardInterrupt:

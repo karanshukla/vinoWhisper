@@ -1,23 +1,3 @@
-"""Answers the questions that would otherwise need a dozen hand-run commands.
-
-Most of what goes wrong here is environmental, not code: the NPU not
-enumerating, the model exported the wrong way for the device it ended up on,
-no capture tool installed, nothing actually playing. Each check below asks the
-system directly and reports what it found, and where an answer is actionable it
-prints the command for *this* distro rather than for Fedora.
-
-Two design rules worth keeping:
-
-- **Measure, don't reason.** The level probe exists because the
-  `monitor.channel-volumes` property answers only the volume half of the
-  question, and on 2026-08-07 a whole investigation went the wrong way on
-  reasoning alone. Run it once with audio playing normally and once with the
-  system muted; if the sink monitor drops to silence while an application
-  stream stays audible, that is the mute problem confirmed by measurement.
-- **--json is for bug reports.** Same checks, machine-readable, no probing
-  prompts. Paste it into an issue and the environment stops being a guess.
-"""
-
 import argparse
 import json
 import shutil
@@ -76,7 +56,6 @@ def _openvino() -> list[Result]:
 
 
 def _devices() -> list[Result]:
-    """What OpenVINO can run on, which one gets picked, and why not the NPU."""
     try:
         inventory = devices.available()
     except devices.DeviceError as exc:
@@ -91,8 +70,6 @@ def _devices() -> list[Result]:
         results.append(Result(OK, "npu", str(npu[0])))
     else:
         results.append(Result(FAIL, "npu", "not enumerated by OpenVINO"))
-        # The interesting part: kernel node, permissions, then the userspace
-        # package for this distro. "No NPU" on its own fixes nothing.
         for note in devices.npu_preflight():
             status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
             results.append(Result(status, f"npu: {note.label}", note.detail))
@@ -101,9 +78,6 @@ def _devices() -> list[Result]:
             Result(WARN, "npu: userspace driver", "\n" + "\n".join(remedy.lines()).lstrip())
         )
 
-    # Always, even when the NPU enumerated above. A missing compiler library or
-    # a reverted level-zero symlink both leave the device visible and fail at
-    # compile time, which is the failure this check exists to name.
     for note in devices.npu_userspace():
         status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
         results.append(Result(status, f"npu: {note.label}", note.detail))
@@ -126,7 +100,6 @@ def _devices() -> list[Result]:
 
 
 def _models() -> list[Result]:
-    """Both exports, checked against the device that would actually be used."""
     try:
         inventory = devices.available()
         needed_kind = devices.select(config.DEFAULT_DEVICE, inventory).kind
@@ -155,9 +128,6 @@ def _models() -> list[Result]:
             )
             continue
 
-        # The separate decoder_with_past submodel is the tell that the export
-        # used --disable-stateful, which the NPU static pipeline requires and
-        # which CPU/GPU cannot load at all.
         has_with_past = any(directory.glob("*decoder_with_past*.xml"))
         wrong = has_with_past if kind != "NPU" else not has_with_past
         if wrong:
@@ -176,21 +146,12 @@ def _models() -> list[Result]:
 
 
 def _digests(variant: str, directory: Path, required: bool) -> Result:
-    """The export's bytes against the pinned ones. ~1.2s for 1.5GB.
-
-    Only reached for an export that is present and is the right shape for its
-    device, because "these hashes do not match" is unhelpful noise next to
-    "this is the wrong export entirely".
-    """
     result = integrity.verify(directory, variant)
     label = f"model ({variant}) digests"
     if result.status == integrity.VERIFIED:
         return Result(OK, label, result.summary())
     if result.severe:
         return Result(FAIL if required else WARN, label, "\n".join(result.lines()[1:]).strip())
-    # UNPINNED is the shipped state for the stateful export and for any
-    # --model this project has not seen; DRIFT is what an optimum bump looks
-    # like. Both are reported, neither is a failure.
     return Result(UNKNOWN if result.status == integrity.UNPINNED else WARN, label, result.summary())
 
 
@@ -218,8 +179,6 @@ def _server() -> list[Result]:
 
     results = [Result(OK, "server", f"{config.SERVER_URL} on {payload.get('device', '?')}")]
     if payload.get("version") and payload["version"] != __version__:
-        # A stale resident server is easy to miss: it self-exits only after
-        # IDLE_TIMEOUT_S, so an upgrade does not take effect until it does.
         results.append(
             Result(
                 WARN,
@@ -283,17 +242,12 @@ def _sink() -> list[Result]:
             Result(
                 WARN if muted else OK,
                 "muted",
-                # Not "so captions cannot work": measured 2026-08-07, this
-                # machine's monitor carries full signal while muted. Whether
-                # mute matters is what the level probe below decides.
                 "YES (the level probe below decides whether that matters)" if muted else "no",
             )
         )
 
+    # PipeWire defaults this to false, so unset means pre-volume, not unknown.
     monitor_volumes = capture.monitor_channel_volumes(sink)
-    # Unset is not unknown on PipeWire: it defaults this to false, so an absent
-    # property is a definitive "pre-volume". Reporting it as UNKNOWN sent a
-    # real investigation chasing a non-problem on 2026-08-07.
     results.append(
         Result(
             WARN if monitor_volumes else OK,
@@ -308,7 +262,6 @@ def _sink() -> list[Result]:
 
 
 def _probe(source: str, target: str | None, label: str) -> Result:
-    """Capture for a couple of seconds and report the level actually seen."""
     try:
         with recorder.Recorder(source=source, target=target) as rec:
             time.sleep(_PROBE_S)
@@ -386,7 +339,6 @@ def _verdict(results: list[Result]) -> str | None:
 
 
 def collect(probe: bool = True) -> list[Result]:
-    """Every check, in the order that makes a failure readable top to bottom."""
     results: list[Result] = [
         Result(OK, "vinowhisper", __version__),
         _python(),

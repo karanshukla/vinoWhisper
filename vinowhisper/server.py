@@ -1,14 +1,3 @@
-"""Local-only HTTP wrapper around WhisperTranscriber.
-
-Socket-activated, not a plain always-on service (see vinowhisper-server.socket
-+ vinowhisper-server.service): systemd owns the listening socket and only
-spawns this process on the first connection, mirroring a serverless
-scale-to-zero pattern. This process self-exits after config.IDLE_TIMEOUT_S of
-inactivity; the next request through the socket respawns it and pays the NPU
-model-load cost again. That cold-start/idle-unload trade is deliberate: see
-docs/architecture.md.
-"""
-
 import argparse
 import os
 import sys
@@ -45,14 +34,11 @@ def _touch_activity() -> None:
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe() -> Response:
-    # Raw little-endian float32 PCM, no WAV container — the client is a
-    # continuous rolling-buffer capture, it never has a WAV file to send.
     raw = request.get_data()
     if not raw or len(raw) % audio.BYTES_PER_SAMPLE:
         return _error(f"body must be a non-empty multiple of {audio.BYTES_PER_SAMPLE} bytes")
 
-    # copy=True on purpose: np.frombuffer over a bytes object is read-only, and
-    # handing a read-only array to the pipeline is asking for trouble.
+    # copy=True: frombuffer over bytes is read-only.
     samples = np.frombuffer(raw, dtype="<f4").astype(np.float32, copy=True)
     duration_s = samples.size / config.SAMPLE_RATE_HZ
     if duration_s > config.MAX_WINDOW_S:
@@ -67,8 +53,6 @@ def transcribe() -> Response:
 
 @app.route("/health", methods=["GET"])
 def health() -> Response:
-    # The client blocks on this through a cold start, so it is also the one
-    # chance to tell the UI that it is about to caption on the wrong device.
     return jsonify({"status": "ok", "version": __version__, **transcriber.describe()})
 
 
@@ -79,7 +63,6 @@ def _error(message: str) -> Response:
 
 
 def _track_in_flight(stream: Iterator[str]) -> Iterator[str]:
-    """Keep the idle watchdog from killing the process mid-transcription."""
     _mark_activity(+1)
     try:
         yield from stream
@@ -94,16 +77,11 @@ def _idle_watchdog(timeout_s: float) -> None:
             idle_for = time.monotonic() - _last_request_at
             busy = _in_flight > 0
         if not busy and idle_for >= timeout_s:
-            # _exit, not sys.exit: this is a daemon thread, and a clean exit(0)
-            # is what tells systemd this was an idle unload rather than a crash
-            # (Restart=on-failure).
+            # _exit(0): a clean exit tells systemd this was an idle unload, not a crash.
             os._exit(0)
 
 
 def _systemd_socket_fd() -> int | None:
-    """Fd systemd handed us via socket activation, or None if launched directly
-    (e.g. manual testing outside systemd — no idle-unload behavior).
-    """
     if os.environ.get("LISTEN_PID") != str(os.getpid()):
         return None
     try:
@@ -132,8 +110,6 @@ def main(argv: list[str] | None = None) -> int:
     global transcriber
     transcriber = WhisperTranscriber(device=args.device)
 
-    # Selected before loading, so the "wrong device" warning reaches the
-    # journal even if the load itself then fails on a missing export.
     try:
         selection = transcriber.select_device()
     except devices.DeviceError as exc:
@@ -157,15 +133,8 @@ def main(argv: list[str] | None = None) -> int:
         daemon=True,
     ).start()
 
-    # threaded=True so /health answers while a decode is in flight; the
-    # transcriber's own lock serializes actual pipeline use.
-    #
-    # make_server(), not run_simple(): run_simple() never exposed an fd=
-    # kwarg (it's a thin CLI-style wrapper), so passing one raised
-    # TypeError before the server could even bind. make_server() is what
-    # run_simple() calls internally and does accept fd=, which is what
-    # lets systemd's socket-activation handoff actually work.
     fd = _systemd_socket_fd()
+    # make_server, not run_simple (which has no fd=); threaded so /health answers mid-decode.
     server = make_server(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
     server.serve_forever()
     return 0

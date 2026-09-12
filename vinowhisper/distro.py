@@ -1,45 +1,16 @@
-"""Which Linux this is, and what the things it needs are called here.
-
-Every actionable message this tool prints — the doctor's remediation lines, the
-setup wizard's steps, the "pw-record not found" error — needs a package name,
-and package names are the one thing that genuinely differs between distros.
-Keeping that mapping in one table means the rest of the code can ask for a
-*capability* ("something that provides pw-record") and let this module answer
-in the local dialect.
-
-Scope, deliberately: this maps capabilities to commands, it does not run them.
-Nothing here shells out, so it is safe to call from anywhere and trivially
-testable against a fixture `os-release`.
-
-Honesty about coverage. Fedora is the machine this was built on and the only
-family where the package names are confirmed by use. The rest are derived from
-each distro's package index rather than from a working install, so the wizard
-and the doctor always print the command instead of silently running it, and
-every NPU entry carries the upstream release URL as the authoritative fallback.
-If you fix a wrong package name for your distro, fix it here.
-"""
-
 from dataclasses import dataclass, field
 from pathlib import Path
 
 OS_RELEASE = Path("/etc/os-release")
 
-# Capabilities the rest of the codebase asks for by name.
-AUDIO_PIPEWIRE = "pipewire-tools"  # pw-record, pw-dump
-AUDIO_PULSE = "pulse-tools"  # pactl, parec
-NPU_DRIVER = "npu-driver"  # level-zero + the NPU compiler/firmware userspace
-NPU_COMPILER = "npu-compiler"  # libopenvino_intel_npu_compiler.so, packaged nowhere
-GPU_RUNTIME = "gpu-runtime"  # compute runtime for OpenVINO's GPU plugin
+AUDIO_PIPEWIRE = "pipewire-tools"
+AUDIO_PULSE = "pulse-tools"
+NPU_DRIVER = "npu-driver"
+NPU_COMPILER = "npu-compiler"
+GPU_RUNTIME = "gpu-runtime"
 
-# The NPU userspace is the one dependency with no reliable distro package
-# across the board, so every family's guidance ends up pointing here.
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
-# The compiler libraries are a special case even among the NPU parts: no family
-# in the table below packages them at all, so there is no local dialect to
-# answer in and the steps are the same everywhere. They are plain userspace
-# .so files with no kernel-module or packaging-system dependency, which is why
-# extracting Intel's Ubuntu .debs works unchanged on an rpm distro.
 NPU_COMPILER_STEPS = (
     "No distro packages libopenvino_intel_npu_compiler.so. Intel ships it only "
     "inside intel-driver-compiler-npu, in the release archive below.",
@@ -56,8 +27,6 @@ NPU_COMPILER_STEPS = (
 
 @dataclass(frozen=True)
 class Distro:
-    """A parsed /etc/os-release, plus the family whose tooling it uses."""
-
     id: str
     name: str
     version: str
@@ -74,8 +43,6 @@ class Distro:
 
 @dataclass(frozen=True)
 class Remediation:
-    """How to obtain a capability here: commands to run, caveats to read."""
-
     capability: str
     commands: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
@@ -95,18 +62,12 @@ class Remediation:
 
 @dataclass(frozen=True)
 class Family:
-    """One packaging ecosystem: how to install, and what things are called."""
-
     name: str
-    install: str  # prefix; package names are appended
+    install: str
     packages: dict[str, tuple[str, ...]] = field(default_factory=dict)
     notes: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
-# `--needed`/`-y`-style flags are included so the printed command is the one to
-# run, not a template to fix up. Nothing here is executed without the user
-# saying yes first (see wizard.py), so a non-interactive flag is a convenience,
-# not a policy.
 _FAMILIES: dict[str, Family] = {
     "fedora": Family(
         name="fedora",
@@ -206,9 +167,6 @@ _FAMILIES: dict[str, Family] = {
             GPU_RUNTIME: ("intel-compute-runtime", "level-zero"),
         },
     ),
-    # NixOS is not "a distro with a different package manager", it is a
-    # different model: imperative installs do not persist, so printing an
-    # `nix-env` line would be actively bad advice. Point at configuration.nix.
     "nixos": Family(
         name="nixos",
         install="",
@@ -222,8 +180,6 @@ _FAMILIES: dict[str, Family] = {
     ),
 }
 
-# ID_LIKE is not always present and not always helpful, so map the IDs that
-# actually turn up first and fall back to ID_LIKE only when the ID is unknown.
 _ID_TO_FAMILY = {
     "fedora": "fedora",
     "rhel": "fedora",
@@ -262,13 +218,11 @@ def _parse_os_release(text: str) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        # Values are shell-quoted, and PRETTY_NAME essentially always is.
         values[key.strip()] = value.strip().strip("\"'")
     return values
 
 
 def detect(path: Path = OS_RELEASE) -> Distro:
-    """Read /etc/os-release. Never raises: an unreadable file is 'unknown'."""
     try:
         values = _parse_os_release(path.read_text(encoding="utf-8"))
     except OSError:
@@ -292,7 +246,6 @@ def detect(path: Path = OS_RELEASE) -> Distro:
 
 
 def remediation(capability: str, distro: Distro | None = None) -> Remediation:
-    """How to get `capability` on this system, as commands plus caveats."""
     distro = distro or detect()
     family = _FAMILIES.get(distro.family)
     url = NPU_RELEASES_URL if capability in (NPU_DRIVER, NPU_COMPILER) else ""
@@ -309,8 +262,6 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
 
     packages = family.packages.get(capability, ())
     commands = (f"{family.install} {' '.join(packages)}",) if packages and family.install else ()
-    # NPU_COMPILER has no packaged form anywhere, so a family that says nothing
-    # about it is the normal case rather than a gap in the table.
     default = NPU_COMPILER_STEPS if capability == NPU_COMPILER else ()
     return Remediation(
         capability=capability,
@@ -321,10 +272,5 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
 
 
 def install_command(capability: str, distro: Distro | None = None) -> str | None:
-    """The single command that installs `capability`, if there is one.
-
-    None means "no package, read the notes" — which is the normal case for the
-    NPU driver on most distros, not an error.
-    """
     commands = remediation(capability, distro).commands
     return commands[0] if commands else None

@@ -2,7 +2,11 @@
 
 `--record DIR` writes `audio.wav` (16kHz mono, opens in Audacity) plus
 `events.jsonl`, one JSON object per cycle with every number `--debug` prints
-and the raw pre-stitch transcript. Roughly 2MB per minute.
+and the raw pre-stitch transcript. Roughly 2MB per minute. The WAV is int16
+because the `wave` module only writes integer PCM, which still leaves about 65
+steps of amplitude at the ~0.002 rms levels worth investigating.
+`events.jsonl` is flushed on every event, so a session cut short by Ctrl+C
+still leaves a usable log.
 
 That turns "it was laggy while I watched a video" into a fixture:
 

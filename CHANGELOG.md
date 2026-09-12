@@ -22,6 +22,15 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   back to full-colour pixmaps. All of it is generated from `gui/src/icon.rs`,
   and existing installs pick up the new icons on their next launch.
 
+### 📚 Documentation
+
+- **Comments out of the code, notes into `docs/`.** Nearly every comment and
+  docstring in `vinowhisper/` and `gui/src/` is gone, about 1,600 lines. The
+  few left each guard code that would otherwise invite a wrong fix. What was
+  worth keeping moved into the docs page it belongs to, and
+  `docs/terminal.md` is new. No code changed: the Python ASTs are identical
+  with docstrings stripped, and the Rust differs only in comments.
+
 ## [0.4.0] - 2026-09-12
 
 ### ✨ Features

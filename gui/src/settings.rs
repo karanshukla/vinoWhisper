@@ -1,9 +1,3 @@
-//! What the tray menu changes, remembered between runs.
-//!
-//! `$XDG_CONFIG_HOME/vinowhisper/gui.json`. Every field has a default and an
-//! unreadable file is reported and ignored, because a settings file is never
-//! a reason for captions not to start.
-
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +6,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
-    /// System audio, via the default sink's monitor. What this was built for.
     #[default]
     Output,
     Mic,
@@ -21,7 +14,6 @@ pub enum Source {
 impl Source {
     pub const ALL: [Source; 2] = [Source::Output, Source::Mic];
 
-    /// The value `vinowhisper-caption --source` takes.
     pub fn as_arg(self) -> &'static str {
         match self {
             Source::Output => "output",
@@ -41,7 +33,6 @@ impl Source {
 pub enum Position {
     #[default]
     Bottom,
-    /// For video that burns its own subtitles into the bottom of the frame.
     Top,
 }
 
@@ -61,7 +52,6 @@ pub enum TextSize {
 impl TextSize {
     pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Medium, TextSize::Large];
 
-    /// Caption font size in logical pixels.
     pub fn caption_px(self) -> f32 {
         match self {
             TextSize::Small => 20.0,
@@ -71,14 +61,6 @@ impl TextSize {
     }
 }
 
-/// In the XDG shortcuts syntax the portal takes, and only ever a *preferred*
-/// trigger: the desktop decides, Plasma asks the user first, and once bound
-/// the shortcut lives in the desktop's own settings, where it is changed like
-/// any other. Changing this later has no effect on a binding that already
-/// exists; use "Change shortcut…" in the tray menu for that.
-///
-/// Meta+Alt+C rather than the Meta+H once planned for this: Meta+H is bound
-/// to Ghostty's new-window on the machine this was built on.
 pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

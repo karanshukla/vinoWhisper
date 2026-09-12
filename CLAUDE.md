@@ -641,6 +641,12 @@ Ordered by what would most change the design.
   command that resolves it, and on anything environmental it prints the
   command *for the local distro* (`distro.remediation`). An exception that only
   says what went wrong is half-finished.
+- **Comments are minimal, at the user's request (2026-09-12).** No module,
+  class or function docstrings in `vinowhisper/`, no `//!` or item docs in
+  `gui/src/`. A comment stays only where the code would invite a wrong "fix"
+  without it, and then it is one line. Rationale, measurements and gotchas go
+  in the matching `docs/` page instead. `tests/` is exempt, since the
+  `characterization:` docstrings there are the rule below.
 - Measured claims carry a date. This file and the README both previously
   asserted the opposite of the truth about the sink monitor in seven places;
   the dates are what made that recoverable.

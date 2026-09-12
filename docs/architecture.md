@@ -38,3 +38,17 @@ The socket unit is what respawns the service, so disabling it (not just the
 service) is the one to use before a reboot or when you're done with the tool
 for a while, otherwise the next `vinowhisper-caption` run just spawns it
 again on first connection.
+
+## The server itself
+
+- `/transcribe` takes raw little-endian float32 PCM, 16kHz mono and under 30s,
+  with no WAV container, because the client is a rolling buffer that never has
+  a file.
+- Calls into the pipeline are serialized by a lock. `WhisperPipeline` is not
+  documented as thread-safe, and the NPU static pipeline holds one set of
+  compiled requests. The server is threaded only so `/health` answers during
+  a decode.
+- The device is chosen before the model loads, so a fallback warning reaches
+  the journal and `/health` even when loading then fails on a missing export.
+- Started by hand rather than by the socket unit, it never idles out; the
+  unload applies only to a socket-activated start.

@@ -1,19 +1,3 @@
-"""Re-run a recorded session (vinowhisper-caption --record DIR).
-
-Two modes, deliberately separate because they need different things:
-
-    vinowhisper-replay DIR --restitch
-        Offline. Feeds the recorded transcripts back through the Stitcher.
-        No NPU, no server, no audio. This is the one to use while changing
-        stitch.py: the model output is frozen, so any difference in what gets
-        printed is your change and nothing else.
-
-    vinowhisper-replay DIR --sweep 8,12,16,20
-        Needs the NPU and a running server. Slices the recorded audio at a
-        fixed hop and transcribes it at each window size, so the latency cost
-        of --window is measured on your own audio rather than guessed.
-"""
-
 import argparse
 import sys
 import time
@@ -26,9 +10,6 @@ from . import audio, config, session
 from .client import TranscriptionClient
 from .stitch import Stitcher
 
-# Fixed, so every window size in a sweep sees the same number of decodes over
-# the same audio. Not the hop a live run would use (that's whatever the last
-# cycle took), which is the point: this isolates window size from pacing.
 _SWEEP_HOP_S = 4.0
 
 
@@ -130,9 +111,6 @@ def _sweep(directory: Path, window_sizes: list[float]) -> int:
         p90 = float(np.percentile(timings, 90))
         first = float(np.mean(first_pieces)) if first_pieces else float("nan")
         words = float(np.mean(word_counts))
-        # The commit policy needs two cycles to agree, and the hop is whatever
-        # the last cycle took, so this is the floor on how far behind the audio
-        # a caption lands.
         print(
             f"| {window_s:.0f}s | {len(timings)} | {mean:.2f}s | {p90:.2f}s | "
             f"{first:.2f}s | {words:.0f} | ~{2 * mean:.1f}s |"

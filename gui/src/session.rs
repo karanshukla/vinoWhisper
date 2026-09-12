@@ -1,5 +1,3 @@
-//! The `vinowhisper-caption --json` child: found, started, read and stopped.
-
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -18,12 +16,8 @@ use crate::settings::{self, Source};
 
 const PROGRAM: &str = "vinowhisper-caption";
 
-/// Lines of the child's stderr kept for explaining an exit it did not
-/// explain itself.
 const STDERR_TAIL: usize = 8;
 
-/// Where the caption command is, in order: `--caption`, `$VINOWHISPER_CAPTION`,
-/// `$PATH`, then the places `$PATH` tends to miss.
 pub fn find_caption(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = explicit {
         return Some(path.to_owned());
@@ -34,9 +28,6 @@ pub fn find_caption(explicit: Option<&Path>) -> Option<PathBuf> {
     let on_path = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
-    // A desktop launcher or a login autostart often runs with a PATH that
-    // lacks ~/.local/bin, which is exactly where vinowhisper-setup links the
-    // commands. Next to this binary covers a venv's bin/ as well.
     let fallbacks = [
         Some(settings::home().join(".local/bin")),
         std::env::current_exe()
@@ -70,13 +61,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Start a caption process. Its events arrive as `Command::Caption`, and
-    /// its exit as `Command::CaptionExited`, both tagged with `generation` so
-    /// that a session being replaced cannot talk over the one replacing it.
-    ///
-    /// Must be called from the main thread: Linux delivers the parent-death
-    /// signal when the *thread* that forked exits, not the process, so a
-    /// child spawned from a short-lived thread would be killed with it.
+    /// Main thread only: the parent-death signal fires when the spawning thread exits.
     pub fn start(
         program: &Path,
         source: Source,
@@ -89,12 +74,7 @@ impl Session {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // If this process dies without stopping the child (a crash, a
-        // SIGKILL), the child is told to go too, rather than capturing audio
-        // and keeping the NPU busy for nobody.
-        //
-        // SAFETY: runs between fork and exec, so it must be
-        // async-signal-safe. prctl is, and nothing here allocates.
+        // SAFETY: between fork and exec; prctl is async-signal-safe and nothing allocates.
         unsafe {
             process.pre_exec(|| {
                 set_parent_process_death_signal(Some(Signal::TERM)).map_err(io::Error::from)
@@ -112,9 +92,6 @@ impl Session {
                 .name("caption-stderr".into())
                 .spawn(move || {
                     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        // Passed through as well as kept: this is where the
-                        // Python side's human-readable diagnostics go, and a
-                        // terminal or the journal is where someone reads them.
                         eprintln!("[caption] {line}");
                         let mut tail = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                         if tail.len() == STDERR_TAIL {
@@ -162,15 +139,11 @@ impl Session {
         })
     }
 
-    /// Ctrl+C, as far as the Python side can tell. It releases the words
-    /// still waiting on a second cycle, emits Stopped, and stops pw-record on
-    /// its way out.
     pub fn interrupt(&mut self) {
         self.stopping = true;
         let _ = kill_process(self.pid, Signal::INT);
     }
 
-    /// For a process that ignored `interrupt`.
     pub fn kill(&self) {
         let _ = kill_process(self.pid, Signal::KILL);
     }

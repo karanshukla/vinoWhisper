@@ -1,17 +1,3 @@
-//! The event loop and everything that happens on it.
-//!
-//! One thread owns all of the state. The tray, the portal, the IPC socket and
-//! the caption process each run on their own thread and reach this one only
-//! by sending a Command, so nothing here is shared or locked.
-//!
-//! The overlay is a wlr-layer-shell surface on the *overlay* layer, and that
-//! is the whole answer to floating above other applications: the overlay
-//! layer sits above ordinary windows and fullscreen ones alike, which is
-//! where a video being captioned usually is, with no window rule or
-//! keep-above hint involved. Its input region is empty, so a click anywhere
-//! on it lands on whatever is underneath. It is driven from the tray and the
-//! shortcut, never by clicking it.
-
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -52,15 +38,10 @@ use crate::settings::{Position, Settings, Source, TextSize};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
 
-/// Logical pixels between the overlay and the sides of the screen.
 const SIDE_MARGIN: i32 = 16;
-/// Logical pixels between the overlay and the edge it is anchored to.
 const EDGE_MARGIN: i32 = 48;
 
-/// How long a caption process gets to act on SIGINT before it is killed. The
-/// Python side needs a moment to stop pw-record and flush its last words.
 const KILL_AFTER: Duration = Duration::from_secs(4);
-/// And how long quitting waits for that, past the kill.
 const QUIT_AFTER: Duration = Duration::from_secs(5);
 
 const TICK: Duration = Duration::from_secs(1);
@@ -94,18 +75,14 @@ pub struct Options {
     pub caption: Option<PathBuf>,
 }
 
-/// The layer surface while it is showing. Dropped to hide it.
 struct Overlay {
     layer: LayerSurface,
     fractional: Option<WpFractionalScaleV1>,
     viewport: Option<WpViewport>,
-    /// Logical size, as configured by the compositor.
     width: u32,
     height: u32,
     configured: bool,
-    /// The compositor's preferred scale in 120ths (wp_fractional_scale_v1).
     scale120: u32,
-    /// The whole-number fallback when fractional scaling is not offered.
     buffer_scale: i32,
 }
 
@@ -121,7 +98,6 @@ impl Overlay {
 
 impl Drop for Overlay {
     fn drop(&mut self) {
-        // Before the surface they belong to, which the layer drops after this.
         if let Some(viewport) = self.viewport.take() {
             viewport.destroy();
         }
@@ -145,7 +121,6 @@ pub struct App {
 
     captions: Captions,
     settings: Settings,
-    /// `--source` for this run, until the tray picks one.
     source_override: Option<Source>,
     visible: bool,
     session: Option<Session>,
@@ -182,10 +157,6 @@ pub fn run(options: Options) -> Result<(), String> {
             .to_owned()
     })?;
     let shm = Shm::bind(&globals, &qh).map_err(|err| format!("wl_shm: {err}"))?;
-    // Fractional scaling takes both: the compositor names the scale, and the
-    // viewport maps a buffer of that many pixels onto the logical size.
-    // Without them this renders at the next whole-number scale and lets the
-    // compositor shrink it, which a 1.5x display shows as slightly soft text.
     let scaling = match (
         globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()),
         globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()),
@@ -239,8 +210,7 @@ pub fn run(options: Options) -> Result<(), String> {
         }
     };
 
-    // Before the portal is asked for anything: it will not grant a shortcut
-    // to an app with no desktop file (see install::ensure_launcher).
+    // Before the portal: it refuses a shortcut to an app with no desktop file.
     match install::ensure_launcher() {
         Ok(Some(path)) => eprintln!(
             "[vinowhisper-gui] added a launcher at {} (the shortcut portal needs one)",
@@ -346,10 +316,6 @@ impl App {
         self.start_session();
     }
 
-    /// Hidden means stopped, not merely invisible. An overlay that kept
-    /// transcribing out of sight would keep the server from ever idling out,
-    /// and scale-to-zero is the reason the server is socket-activated at all
-    /// (docs/architecture.md).
     fn hide(&mut self) {
         self.visible = false;
         self.overlay = None;
@@ -365,8 +331,6 @@ impl App {
             return;
         }
         self.stop_session();
-        // The session reporting its exit is the clean way out (see
-        // session_ended); this is for one that never does.
         let _ = self
             .handle
             .insert_source(Timer::from_duration(QUIT_AFTER), |_, _, app| {
@@ -391,8 +355,6 @@ impl App {
         }
     }
 
-    // --- the caption process -------------------------------------------
-
     fn is_current(&self, generation: u64) -> bool {
         self.session
             .as_ref()
@@ -401,7 +363,6 @@ impl App {
 
     fn start_session(&mut self) {
         match &self.session {
-            // Still shutting down the last one; start again once it has gone.
             Some(session) if session.stopping() => {
                 self.restart_pending = true;
                 return;
@@ -466,8 +427,6 @@ impl App {
             .take()
             .is_some_and(|session| session.stopping());
         if !asked_to_stop && !success && !matches!(self.captions.phase(), Phase::Failed(_)) {
-            // It died without writing an Error record, so the best account of
-            // why is the last thing it said on stderr.
             let why = stderr
                 .last()
                 .cloned()
@@ -486,8 +445,6 @@ impl App {
         self.draw();
     }
 
-    // --- the overlay ---------------------------------------------------
-
     fn create_overlay(&mut self) {
         let surface = self.compositor.create_surface(&self.qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -498,12 +455,10 @@ impl App {
             None,
         );
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        // Zero, not -1: stay clear of panels rather than sliding under them.
+        // Zero, not -1: stay clear of panels.
         layer.set_exclusive_zone(0);
         place(&layer, &self.settings);
-        // An empty input region, so every click goes through to the window
-        // underneath: the overlay must never block the video controls it is
-        // sitting over.
+        // Empty input region: click-through, so it never blocks the video under it.
         match Region::new(&self.compositor) {
             Ok(region) => layer
                 .wl_surface()
@@ -517,8 +472,6 @@ impl App {
             ),
             None => (None, None),
         };
-        // The first commit carries no buffer; the compositor answers with a
-        // configure, and drawing starts from there.
         layer.commit();
         self.overlay = Some(Overlay {
             layer,
@@ -582,15 +535,11 @@ impl App {
         overlay.layer.commit();
     }
 
-    /// Once a second: only the "Starting… Ns" counter needs a clock, since
-    /// everything else redraws when an event arrives.
     fn tick(&mut self) {
         if self.overlay.is_some() && *self.captions.phase() == Phase::Starting {
             self.draw();
         }
     }
-
-    // --- the tray ------------------------------------------------------
 
     fn view(&self) -> tray::View {
         tray::View {
@@ -619,9 +568,6 @@ impl App {
         }
     }
 
-    /// Only when something in the menu or tooltip actually changed: caption
-    /// events arrive a couple of times a second, and each update is a D-Bus
-    /// round trip for the tray host.
     fn sync_tray(&mut self) {
         let view = self.view();
         if self.tray_view.as_ref() == Some(&view) {
@@ -639,15 +585,11 @@ fn place(layer: &LayerSurface, settings: &Settings) {
         Position::Bottom => (Anchor::BOTTOM, (0, EDGE_MARGIN)),
         Position::Top => (Anchor::TOP, (EDGE_MARGIN, 0)),
     };
-    // Full width, with the box centred inside it by the painter: the surface
-    // is click-through, so the empty sides cost nothing, and this way no
-    // output size has to be known before the compositor picks an output.
+    // Full width on purpose: click-through, and no output size is needed up front.
     layer.set_anchor(anchor | Anchor::LEFT | Anchor::RIGHT);
     layer.set_size(0, paint::logical_height(settings.size));
     layer.set_margin(top, SIDE_MARGIN, bottom, SIDE_MARGIN);
 }
-
-// --- Wayland plumbing ----------------------------------------------------
 
 impl CompositorHandler for App {
     fn scale_factor_changed(
@@ -697,8 +639,6 @@ impl CompositorHandler for App {
 }
 
 impl LayerShellHandler for App {
-    /// The compositor withdrew the surface, usually because its output went
-    /// away. Put it back if it is meant to be showing.
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
         if self
             .overlay

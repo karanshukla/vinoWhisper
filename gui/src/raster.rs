@@ -1,10 +1,3 @@
-//! The few shapes this draws: rounded rectangles, circles, and alpha blending.
-//!
-//! Into a premultiplied ARGB8888 buffer in Wayland's byte order, which is
-//! B, G, R, A in memory. A caption box and a tray icon need nothing more, and
-//! that is not enough to earn a 2D graphics library.
-
-/// A colour with straight (not premultiplied) alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgba(pub u8, pub u8, pub u8, pub u8);
 
@@ -60,8 +53,6 @@ impl<'a> Canvas<'a> {
         self.pixels.fill(0);
     }
 
-    /// Source-over one pixel. `coverage` (0..=1) scales the colour's own
-    /// alpha, which is how both antialiased edges and glyph masks arrive.
     pub fn blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {
         if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height {
             return;
@@ -85,7 +76,6 @@ impl<'a> Canvas<'a> {
         self.cover(rect, color, |x, y| rounded_coverage(x, y, rect, radius));
     }
 
-    /// An outline `width` thick, drawn inside `rect`.
     pub fn stroke_rounded(&mut self, rect: Rect, radius: f32, width: f32, color: Rgba) {
         let inner = rect.inset(width);
         let inner_radius = (radius - width).max(0.0);
@@ -94,7 +84,6 @@ impl<'a> Canvas<'a> {
         });
     }
 
-    /// A circle is a square rounded all the way.
     pub fn fill_circle(&mut self, cx: f32, cy: f32, radius: f32, color: Rgba) {
         let rect = Rect {
             x0: cx - radius,
@@ -118,8 +107,6 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Straight-alpha ARGB32 in network byte order, which is what a
-    /// StatusNotifierItem pixmap is.
     pub fn to_argb32_be(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.pixels.len());
         for pixel in self.pixels.as_chunks::<4>().0 {
@@ -143,11 +130,6 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// How much of the pixel centred on (px, py) a rounded rectangle covers,
-/// from 0 to 1.
-///
-/// A signed distance to the shape's edge, mapped to a one-pixel ramp, so
-/// corners and straight edges are antialiased by the same rule.
 pub fn rounded_coverage(px: f32, py: f32, rect: Rect, radius: f32) -> f32 {
     let half_w = (rect.x1 - rect.x0) / 2.0;
     let half_h = (rect.y1 - rect.y0) / 2.0;
@@ -182,7 +164,6 @@ mod tests {
 
     #[test]
     fn a_square_corner_is_fully_covered_up_to_its_edge() {
-        // The pixel centred half a pixel in from both edges, with no rounding.
         assert_eq!(rounded_coverage(0.5, 0.5, SQUARE, 0.0), 1.0);
     }
 
@@ -206,7 +187,6 @@ mod tests {
         let mut pixels = vec![0u8; 4];
         let mut canvas = Canvas::new(&mut pixels, 1, 1);
         canvas.blend(0, 0, Rgba(255, 0, 0, 128), 1.0);
-        // B, G, R, A, with red scaled by its own alpha.
         assert_eq!(pixels, vec![0, 0, 128, 128]);
     }
 

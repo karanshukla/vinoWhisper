@@ -1,11 +1,3 @@
-//! The wire format: one JSON object per line from `vinowhisper-caption --json`.
-//!
-//! Each record is `events.to_dict()` on the Python side, plus the `Error`
-//! record the CLI writes when it gives up. Only the fields drawn here are
-//! declared and serde ignores the rest, so the Python events can grow fields
-//! without this binary needing a release to keep up. Renaming one is another
-//! matter: tests/test_caption.py names the fields read here for that reason.
-
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -39,9 +31,7 @@ pub enum Event {
     },
 }
 
-/// `None` for anything that is not an event this build knows. Skipped rather
-/// than fatal: a newer Python side may emit records an older overlay has never
-/// heard of, and a stray line on stdout should cost that line, not the session.
+/// Unknown records are skipped, not fatal: a newer Python side may add some.
 pub fn parse(line: &str) -> Option<Event> {
     serde_json::from_str(line.trim()).ok()
 }
@@ -50,8 +40,6 @@ pub fn parse(line: &str) -> Option<Event> {
 mod tests {
     use super::*;
 
-    // Captured from vinowhisper.caption.JsonRenderer, not written by hand, so
-    // these pin the actual wire format rather than this file's idea of it.
     const READY: &str = r#"{"event": "Ready", "device": "NPU", "device_full": "Intel(R) AI Boost", "degraded": false, "warnings": [], "server_version": "0.3.1"}"#;
     const DEGRADED: &str = r#"{"event": "Ready", "device": "CPU", "device_full": "Intel(R) Core(TM) Ultra 5", "degraded": true, "warnings": ["No NPU found; running on CPU, expect several times the lag."], "server_version": "0.3.1"}"#;
     const CYCLE: &str = r#"{"event": "Cycle", "index": 3, "captured_s": 14.2, "window_s": 12.0, "hop_s": 1.3, "rms": 0.0312, "gain": 1.6, "first_piece_s": 0.204, "total_s": 1.19, "transcript": "I don’t think so — really.", "confirmed": ["I", "don’t"], "pending": ["think", "so"]}"#;

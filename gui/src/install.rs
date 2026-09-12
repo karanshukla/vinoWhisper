@@ -1,14 +1,3 @@
-//! Desktop integration: a launcher entry, an icon, and a login autostart.
-//!
-//! `--install` writes the launcher and icon for a per-user copy, `--autostart`
-//! the login entry (on its own, for a packaged copy whose launcher came with
-//! the package), `--uninstall` removes what those wrote, and
-//! `--export-desktop DIR` writes the launcher and icon into a package's
-//! buildroot. None of it needs root.
-//!
-//! The desktop file is more than a menu entry: the global shortcut cannot
-//! exist without it (see `ensure_launcher`).
-
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -16,14 +5,11 @@ use crate::APP_ID;
 use crate::icon;
 use crate::settings;
 
-/// What a package puts on PATH, and so what a packaged launcher names
-/// instead of a path.
 const COMMAND: &str = "vinowhisper-gui";
 
 struct Dirs {
     data: PathBuf,
     config: PathBuf,
-    /// `$XDG_DATA_DIRS`, where a package's launcher lives.
     system: Vec<PathBuf>,
 }
 
@@ -64,7 +50,6 @@ fn launcher_in(data: &Path) -> PathBuf {
     data.join(format!("applications/{APP_ID}.desktop"))
 }
 
-/// The launcher's icon, and the one-colour one the tray asks for by name.
 fn icons_in(data: &Path) -> [(PathBuf, String); 2] {
     let hicolor = data.join("icons/hicolor");
     [
@@ -95,7 +80,6 @@ pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBu
     )
 }
 
-/// The login entry alone, for a copy whose launcher came from a package.
 pub fn autostart(caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
     autostart_into(&Dirs::from_env(), &std::env::current_exe()?, caption)
 }
@@ -104,10 +88,6 @@ pub fn uninstall() -> io::Result<Vec<PathBuf>> {
     uninstall_from(&Dirs::from_env())
 }
 
-/// For packagers: the launcher and icon under `data_dir` (a buildroot's
-/// /usr/share). The launcher names the command rather than a path, since a
-/// package puts it on PATH and the buildroot path would be wrong once
-/// installed.
 pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
     let mut written = vec![write(
         &launcher_in(data_dir),
@@ -117,18 +97,6 @@ pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(written)
 }
 
-/// The launcher, written only if there is no launcher yet, per-user or
-/// packaged, and the per-user icons, brought up to date unless a package owns
-/// them. Returns the launcher's path when it had to be written.
-///
-/// Measured 2026-09-12 on Plasma 6.7: with no desktop file, the portal
-/// registry refuses the app id ("App info not found for
-/// 'io.github.karanshukla.vinowhisper'"), and the GlobalShortcuts portal then
-/// refuses the shortcut outright ("An app id is required"). So a first run
-/// that never saw `--install` would get no shortcut at all. An existing
-/// launcher is left alone: `--install` may have baked a `--caption` path into
-/// it, and a packaged one must not be shadowed by a copy in the home
-/// directory.
 pub fn ensure_launcher() -> io::Result<Option<PathBuf>> {
     ensure_launcher_in(&Dirs::from_env(), &std::env::current_exe()?)
 }
@@ -138,9 +106,6 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
     if !own && dirs.packaged_launcher().is_some() {
         return Ok(None);
     }
-    // Unlike the launcher, the icons hold nothing of the user's, so a newer
-    // binary brings its own. Compared first, so an unchanged icon is not
-    // rewritten on every launch.
     for (path, svg) in dirs.icons() {
         if std::fs::read_to_string(&path).ok().as_deref() != Some(svg.as_str()) {
             write(&path, &svg)?;
@@ -166,7 +131,6 @@ fn install_into(
     if autostart {
         written.extend(autostart_into(dirs, exe, caption)?);
     } else if dirs.autostart().exists() {
-        // Re-running --install without --autostart is how it gets turned off.
         std::fs::remove_file(dirs.autostart())?;
     }
     Ok(written)
@@ -202,8 +166,6 @@ fn write(path: &Path, contents: &str) -> io::Result<PathBuf> {
     Ok(path.to_owned())
 }
 
-/// The launcher, or with `autostart` its login twin, which starts in the tray
-/// without showing captions (and so without touching the NPU until asked).
 fn desktop_entry(exe: &Path, caption: Option<&Path>, autostart: bool) -> String {
     let mut exec = exec_arg(&exe.to_string_lossy());
     if let Some(caption) = caption {
@@ -239,8 +201,6 @@ Exec={exec} toggle
     )
 }
 
-/// One argument of an `Exec=` line, quoted by the Desktop Entry spec's rules
-/// when it has to be. `%` is a field code there, so it is doubled either way.
 fn exec_arg(arg: &str) -> String {
     const RESERVED: &[char] = &[
         ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#', '(',
@@ -350,8 +310,6 @@ mod tests {
         assert_eq!(written, Some(dirs.launcher()));
         assert!(dirs.icons().iter().all(|(path, _)| path.exists()));
 
-        // A later run from elsewhere must not replace what is there, which
-        // may be an --install with a --caption path in it.
         let again = ensure_launcher_in(&dirs, Path::new("/second/vinowhisper-gui")).unwrap();
         assert_eq!(again, None);
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();

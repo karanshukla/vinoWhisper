@@ -1,11 +1,3 @@
-//! vinowhisper-gui: a floating caption overlay, a tray icon and a global
-//! shortcut for vinoWhisper, on Wayland.
-//!
-//! A renderer, not a second implementation. It runs `vinowhisper-caption
-//! --json` and draws the events that come back, so capture, stitching and the
-//! server all stay in the Python package, and the Python package gains no GUI
-//! dependencies. docs/gui.md has the reasoning behind each piece.
-
 mod app;
 mod captions;
 mod icon;
@@ -25,8 +17,7 @@ use std::process::ExitCode;
 use ipc::Request;
 use settings::Source;
 
-/// The desktop file's name, and the app id the portal ties the global
-/// shortcut to. Changing it orphans every shortcut already bound.
+/// Changing this orphans every shortcut already bound.
 pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
 
 const USAGE: &str = "\
@@ -148,8 +139,6 @@ fn main() -> ExitCode {
         return run_install(&args);
     }
 
-    // `--hidden` only asks whether an instance exists, so an autostart that
-    // finds one already running leaves it exactly as it is.
     let request = args.command.unwrap_or(if args.hidden {
         Request::Ping
     } else {

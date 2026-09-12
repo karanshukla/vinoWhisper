@@ -1,10 +1,3 @@
-//! The tray icon: a StatusNotifierItem over D-Bus, which is what Plasma's
-//! system tray speaks natively (and GNOME's, with the AppIndicator extension).
-//!
-//! It holds a copy of what its menu shows and decides nothing. Every choice
-//! made in it goes to the main loop as a Command, and the main loop answers
-//! with a fresh View.
-
 use std::sync::OnceLock;
 
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
@@ -46,8 +39,7 @@ impl Tray {
 
 pub fn spawn(tray: Tray) -> Option<Handle> {
     use ksni::blocking::TrayMethods;
-    // Assumed rather than checked: at login this can start before Plasma's
-    // tray does, and an icon that registers a moment late beats none.
+    // Assumed, not checked: at login this can start before Plasma's tray does.
     match tray.assume_sni_available(true).spawn() {
         Ok(handle) => Some(handle),
         Err(err) => {
@@ -85,7 +77,6 @@ fn size_name(size: TextSize) -> &'static str {
     }
 }
 
-/// The shortcut entry's label, and whether choosing it can do anything.
 fn shortcut_label(state: &ShortcutState) -> (String, bool) {
     match state {
         ShortcutState::Pending => ("Shortcut: asking the desktop…".into(), false),
@@ -97,8 +88,6 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
             trigger,
             configurable: true,
         } => (format!("Change shortcut ({trigger})…"), true),
-        // Portal version 1 cannot open its own settings page, but the binding
-        // is still an ordinary desktop shortcut and can be changed there.
         ShortcutState::Bound { trigger, .. } if trigger.is_empty() => (
             "No shortcut bound: set one in System Settings".into(),
             false,
@@ -163,9 +152,6 @@ impl ksni::Tray for Tray {
     }
 
     fn icon_name(&self) -> String {
-        // The app's own mark in one colour, which Plasma recolours to match
-        // the panel. `install` puts it next to the launcher's icon; the
-        // pixmaps below are for a tray that cannot find it.
         format!("{APP_ID}-symbolic")
     }
 
@@ -182,7 +168,6 @@ impl ksni::Tray for Tray {
         }
     }
 
-    /// A left click does what the shortcut does.
     fn activate(&mut self, _x: i32, _y: i32) {
         self.send(Command::Toggle);
     }

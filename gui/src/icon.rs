@@ -1,24 +1,7 @@
-//! The mark: speech turning into words, inside the caption box.
-//!
-//! Three voice bars, in the green of the overlay's listening dot, become a
-//! word, above a line of confirmed text that ends in a pending one. The box is
-//! the overlay's own background, so the icon looks like what it opens.
-//!
-//! Drawn as data. The tray's pixmaps, the launcher's SVG and the README's
-//! copy come from `BOX` and `MARKS`. The symbolic tray icon is the same
-//! composition redrawn as `TRAY_BOX` and `TRAY_MARKS`, in one-pixel lines on
-//! Breeze's 16px grid: the panel's other icons are outlines, and the 64-unit
-//! shapes shrunk to 16px became a solid block that stood out among them
-//! (tried first, 2026-09-12). Both SVGs in `docs/assets/` are generated:
-//! `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test fails when
-//! they go stale.
-
 use crate::captions::Tone;
 use crate::paint::{BACKGROUND, tone_rgba};
 use crate::raster::{Canvas, Rect, Rgba};
 
-/// A rounded rectangle in the icon's 64-unit grid. Everything in the mark is
-/// one.
 #[derive(Debug, Clone, Copy)]
 struct Shape {
     x: f32,
@@ -33,7 +16,6 @@ impl Shape {
         Shape { x, y, w, h, r: 3.0 }
     }
 
-    /// Square-ended, for lines a pixel wide, where rounding would only blur.
     const fn line(x: f32, y: f32, w: f32, h: f32) -> Shape {
         Shape { x, y, w, h, r: 0.0 }
     }
@@ -62,7 +44,6 @@ impl Shape {
         format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" {paint}/>"#)
     }
 
-    /// One closed subpath, for the symbolic icon's single path.
     fn svg_path(self) -> String {
         let Shape { x, y, w, h, r } = self;
         if r <= 0.0 {
@@ -85,25 +66,18 @@ const BOX: Shape = Shape {
     r: 12.0,
 };
 
-/// A faint light edge inside the box, so a dark box still has an outline on a
-/// dark panel or menu.
 const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const EDGE_WIDTH: f32 = 2.0;
 
 const MARKS: [(Shape, Tone); 6] = [
-    // The voice...
     (Shape::pill(12.0, 22.0, 6.0, 10.0), Tone::Good),
     (Shape::pill(22.0, 17.0, 6.0, 20.0), Tone::Good),
     (Shape::pill(32.0, 21.0, 6.0, 12.0), Tone::Good),
-    // ...becoming a word,
     (Shape::pill(42.0, 24.0, 10.0, 6.0), Tone::Caption),
-    // and a confirmed line that ends in a word still pending.
     (Shape::pill(12.0, 41.0, 26.0, 6.0), Tone::Caption),
     (Shape::pill(42.0, 41.0, 10.0, 6.0), Tone::Pending),
 ];
 
-/// `BOX` and `MARKS` again, for the tray, on a 16px grid with every edge on a
-/// whole pixel. The box is an outline `TRAY_LINE` wide, like Breeze's.
 const TRAY_BOX: Shape = Shape {
     x: 1.0,
     y: 2.0,
@@ -122,7 +96,6 @@ const TRAY_MARKS: [(Shape, Tone); 6] = [
     (Shape::line(11.0, 11.0, 2.0, 1.0), Tone::Pending),
 ];
 
-/// The overlay's box colour, without the translucency it needs over video.
 fn box_rgba() -> Rgba {
     Rgba(BACKGROUND.0, BACKGROUND.1, BACKGROUND.2, 255)
 }
@@ -131,7 +104,6 @@ fn hex(Rgba(r, g, b, _): Rgba) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
-/// For the launcher, installed by `--install` and on first run.
 pub fn app_svg() -> String {
     let mut svg =
         String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">\n");
@@ -141,8 +113,7 @@ pub fn app_svg() -> String {
         svg.push('\n');
     };
     line(BOX.svg_rect(&format!(r#"fill="{}""#, hex(box_rgba()))));
-    // An SVG stroke straddles its path and `stroke_rounded` draws inside the
-    // rectangle, so the SVG's is inset by half its width to match.
+    // SVG strokes straddle the path; inset by half to match stroke_rounded.
     line(BOX.inset(EDGE_WIDTH / 2.0).svg_rect(&format!(
         r#"fill="none" stroke="{}" stroke-opacity="{:.2}" stroke-width="{EDGE_WIDTH}""#,
         hex(EDGE),
@@ -155,15 +126,6 @@ pub fn app_svg() -> String {
     svg
 }
 
-/// For the tray, in Breeze's style: a one-pixel outline, with the voice in the
-/// launcher icon's green so the two read as one app. (It was the scheme's
-/// accent first, the way Breeze's own subtitles icon does it, which Plasma
-/// paints blue and so split the tray from the start menu.)
-///
-/// The stylesheet is KDE's convention, so Plasma paints `Text` from the
-/// colour scheme; anything else draws the fallback. The outline is
-/// the box minus its inset by the even-odd rule rather than a stroke, so it
-/// lands on whole pixels whatever the renderer does with stroke alignment.
 pub fn symbolic_svg() -> String {
     let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
     let green = hex(tone_rgba(Tone::Good));
@@ -188,7 +150,6 @@ pub fn symbolic_svg() -> String {
     )
 }
 
-/// For a tray that cannot find the symbolic icon by name.
 pub fn tray_icons() -> Vec<ksni::Icon> {
     [16, 22, 24, 32, 48, 64]
         .into_iter()
@@ -241,8 +202,6 @@ mod tests {
         assert_eq!(pixel(0, 0)[0], 0, "a corner is transparent");
     }
 
-    /// A mark touching the box's edge merges into it, and two touching marks
-    /// read as one, which at 16px is most of the drawing.
     fn assert_inside_and_apart(frame: Shape, edge: f32, marks: &[(Shape, Tone)]) {
         let inner = frame.inset(edge);
         for (a, _) in marks {
@@ -270,8 +229,6 @@ mod tests {
         assert_inside_and_apart(TRAY_BOX, TRAY_LINE, &TRAY_MARKS);
     }
 
-    /// A one-pixel line on a half-pixel edge renders as two grey ones, which
-    /// is the blur Breeze's grid exists to avoid.
     #[test]
     fn the_tray_icon_lands_on_whole_pixels() {
         let shapes = std::iter::once(TRAY_BOX).chain(TRAY_MARKS.iter().map(|(shape, _)| *shape));

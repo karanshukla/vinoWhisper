@@ -1,12 +1,3 @@
-//! One instance per desktop session, and the commands that reach it.
-//!
-//! A second launch is a request to the first: that is what makes a key bound
-//! to `vinowhisper-gui toggle` work on desktops with no shortcuts portal, and
-//! what keeps a double-clicked launcher from starting two overlays.
-//!
-//! A Unix socket in `$XDG_RUNTIME_DIR`, which belongs to the session and to no
-//! other user, carrying one word per connection.
-
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -22,8 +13,6 @@ pub enum Request {
     Hide,
     Toggle,
     Quit,
-    /// Is anyone there? What `--hidden` sends, so an autostart that finds an
-    /// instance already running leaves it alone.
     Ping,
 }
 
@@ -102,8 +91,6 @@ fn send_to(path: &Path, request: Request) -> Result<(), SendError> {
     }
 }
 
-/// Removes the socket file when dropped, so a clean exit leaves nothing for
-/// the next launch to trip over.
 pub struct Listener {
     path: PathBuf,
 }
@@ -122,8 +109,7 @@ fn listen_at(path: PathBuf, on_request: impl Fn(Request) + Send + 'static) -> io
     let listener = match UnixListener::bind(&path) {
         Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
-            // Either another instance, or the socket file of one that was
-            // killed before it could clean up. Only a live one answers.
+            // Maybe a stale socket from a killed instance: only a live one answers.
             if UnixStream::connect(&path).is_ok() {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
