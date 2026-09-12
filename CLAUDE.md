@@ -186,7 +186,8 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   logo) come from one list of shapes coloured from `paint.rs`'s palette, so
   the icon looks like the overlay. The symbolic tray SVG is the same
   composition redrawn on Breeze's 16px grid in one-pixel lines, voice bars in
-  `ColorScheme-Accent`: the first cut shrank the 64-unit shapes to a solid
+  the launcher's green (not `ColorScheme-Accent`, which Plasma paints blue and
+  which split the tray from the start menu): the first cut shrank the 64-unit shapes to a solid
   block, and the user saw it clash with the panel's outline icons. The assets are
   generated: `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test
   fails when they are stale. The tray asks for `<APP_ID>-symbolic` by name,

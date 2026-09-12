@@ -18,7 +18,7 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   Breeze-blue box and the tray showed the icon theme's stock subtitles icon.
   The tray asks for `io.github.karanshukla.vinowhisper-symbolic`, the same
   mark redrawn in Breeze's style (a one-pixel outline on a 16px grid, voice
-  bars in the accent colour) so it sits with the panel's own icons, and falls
+  bars in the launcher's green) so it sits with the panel's own icons, and falls
   back to full-colour pixmaps. All of it is generated from `gui/src/icon.rs`,
   and existing installs pick up the new icons on their next launch.
 

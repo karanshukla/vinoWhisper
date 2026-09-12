@@ -155,15 +155,18 @@ pub fn app_svg() -> String {
     svg
 }
 
-/// For the tray, in Breeze's style: a one-pixel outline with the voice in the
-/// accent colour, the way Breeze's own subtitles icon uses it.
+/// For the tray, in Breeze's style: a one-pixel outline, with the voice in the
+/// launcher icon's green so the two read as one app. (It was the scheme's
+/// accent first, the way Breeze's own subtitles icon does it, which Plasma
+/// paints blue and so split the tray from the start menu.)
 ///
-/// The stylesheet is KDE's convention, so Plasma paints `Text` and `Accent`
-/// from the colour scheme; anything else draws the fallbacks. The outline is
+/// The stylesheet is KDE's convention, so Plasma paints `Text` from the
+/// colour scheme; anything else draws the fallback. The outline is
 /// the box minus its inset by the even-odd rule rather than a stroke, so it
 /// lands on whole pixels whatever the renderer does with stroke alignment.
 pub fn symbolic_svg() -> String {
     let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
+    let green = hex(tone_rgba(Tone::Good));
     let (mut voice, mut words, mut pending) = (String::new(), String::new(), String::new());
     for (shape, tone) in TRAY_MARKS {
         match tone {
@@ -175,9 +178,9 @@ pub fn symbolic_svg() -> String {
     }
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }} .ColorScheme-Accent {{ color: #3daee9; }}</style>
+  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }}</style>
   <path class="ColorScheme-Text" style="fill:currentColor" fill-rule="evenodd" d="{outline}"/>
-  <path class="ColorScheme-Accent" style="fill:currentColor" d="{voice}"/>
+  <path style="fill:{green}" d="{voice}"/>
   <path class="ColorScheme-Text" style="fill:currentColor" d="{words}"/>
   <path class="ColorScheme-Text" style="fill:currentColor;fill-opacity:0.5" d="{pending}"/>
 </svg>
