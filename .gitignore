@@ -12,6 +12,7 @@ coverage.lcov
 htmlcov/
 dist/
 build/
+gui/target/
 
 # recorded sessions (vinowhisper-caption --record), ~2MB per minute
 *.wav
