@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/docs/assets/vinowhisper.svg" width="112" alt="The vinoWhisper mark: a dark caption box with green voice bars turning into lines of text">
+</p>
+
 # vinoWhisper
 
 [![PyPI](https://img.shields.io/badge/PyPI-vinowhisper-blue?logo=pypi&logoColor=white)](https://pypi.org/project/vinowhisper/)
@@ -164,6 +168,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 | | |
 |---|---|
 | [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
+| [Terminal captions](https://github.com/karanshukla/vinoWhisper/blob/main/docs/terminal.md) | Scrollback, paragraphs, the level meter, and plain output |
 | [Caption overlay](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcut: installing, which desktops it works on, and why it is Rust |
 | [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |

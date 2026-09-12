@@ -12,7 +12,9 @@ times, and the two-cycle commit policy doubles any regression.
 
 Selection is automatic (`--device auto`). An *explicit* `--device NPU` that
 isn't available is refused rather than quietly downgraded, because someone who
-typed it wants to know it didn't happen.
+typed it wants to know it didn't happen. The order itself is not configurable:
+there is no machine where the GPU over the NPU is the right default for this
+workload.
 
 A fallback is never silent. It appears in the server's journal, in `/health`,
 in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
@@ -46,7 +48,9 @@ have the device?), its permissions (are you in the `render` group?), the
 `intel_vpu` module, and then the userspace driver package for your distro, with
 [Intel's release page](https://github.com/intel/linux-npu-driver/releases) as
 the authoritative fallback. Those have different fixes and are indistinguishable
-from OpenVINO's device list alone.
+from OpenVINO's device list alone. A missing `intel_vpu` in `/proc/modules` is
+weak evidence on its own, since the driver can be built into the kernel; the
+`/dev/accel` node is the check that decides.
 
 ## When the userspace half is missing
 
@@ -79,7 +83,9 @@ enumerated, because "the NPU is there" is not evidence that either is right:
 ```
 
 Each library carries its own provenance as an embedded string, which is where
-those versions come from. A reverted symlink prints the `ln -sf` that selects
+those versions come from. The search tries `LD_LIBRARY_PATH` first, since a
+toolkit sourced through `setupvars.sh` is how these libraries end up outside
+the system directories. A reverted symlink prints the `ln -sf` that selects
 the newer backend again. A missing compiler prints the extraction steps, which
 work unchanged on an rpm distro because these are plain userspace `.so` files
 with no kernel-module or packaging-system dependency:

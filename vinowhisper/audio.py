@@ -1,34 +1,19 @@
-"""Buffering and level helpers for the capture side.
-
-Split out of recorder.py so the buffer semantics (fixed capacity, newest-last,
-thread-safe, no reallocation) are stated in one place and can be reasoned
-about without the subprocess plumbing in the way.
-"""
-
 import threading
 
 import numpy as np
 
-BYTES_PER_SAMPLE = 4  # f32
+BYTES_PER_SAMPLE = 4
 
 _EMPTY = np.zeros(0, dtype=np.float32)
 
 
 class RingBuffer:
-    """Fixed-capacity float32 buffer holding the most recent samples.
-
-    Preallocated and written in place. The previous implementation did
-    `np.concatenate([buf, chunk])[-cap:]` on every 100ms read, which copies the
-    entire window (~1.9MB at a 29.5s capacity) twice per chunk — ~38MB/s of
-    pointless memcpy competing with the NPU for memory bandwidth.
-    """
-
     def __init__(self, capacity: int) -> None:
         if capacity <= 0:
             raise ValueError(f"capacity must be positive, got {capacity}")
         self._buf = np.zeros(capacity, dtype=np.float32)
         self._capacity = capacity
-        self._written = 0  # total samples ever written, not just retained
+        self._written = 0
         self._lock = threading.Lock()
 
     @property
@@ -37,11 +22,6 @@ class RingBuffer:
 
     @property
     def total_written(self) -> int:
-        """Every sample ever accepted, including ones since overwritten.
-
-        Monotonic, so the caption loop can use it to measure how much *new*
-        audio has arrived since the last cycle.
-        """
         with self._lock:
             return self._written
 
@@ -50,9 +30,6 @@ class RingBuffer:
         if count == 0:
             return
 
-        # A chunk larger than the whole buffer can only happen if capacity is
-        # misconfigured, but handle it rather than corrupting the write index:
-        # keep the newest `capacity` samples and still account for the rest.
         dropped = max(0, count - self._capacity)
         if dropped:
             samples = samples[-self._capacity :]
@@ -69,11 +46,6 @@ class RingBuffer:
             self._written += count
 
     def read_last(self, count: int) -> np.ndarray:
-        """Copy of the newest `count` samples, oldest first.
-
-        Returns fewer than requested if that's all there is; never blocks on
-        the writer beyond the lock.
-        """
         if count <= 0:
             return _EMPTY
         with self._lock:
@@ -91,18 +63,11 @@ class RingBuffer:
 def rms(samples: np.ndarray) -> float:
     if samples.size == 0:
         return 0.0
-    # float64 accumulator: a 29.5s window is ~472k samples, and squaring in
-    # float32 loses precision fast at the ~0.002 levels this gets compared to.
+    # float64: squaring in float32 loses precision at these levels.
     return float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
 
 
 def normalize(samples: np.ndarray, target_rms: float, max_gain: float) -> tuple[np.ndarray, float]:
-    """Boost a quiet window toward `target_rms`. Returns (samples, gain).
-
-    Boost only — loud audio is left alone, since attenuating it doesn't help
-    Whisper and clipping-by-gain would hurt. The caller has already rejected
-    silence, so there's no risk of amplifying pure noise floor by 20x here.
-    """
     level = rms(samples)
     if level <= 0.0:
         return samples, 1.0

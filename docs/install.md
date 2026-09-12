@@ -12,6 +12,14 @@ environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against the paths
 that actually exist. It prints every command before running it and asks first.
+`--yes` answers yes to everything and `--dry-run` no to everything, and piped
+stdin without `--yes` refuses rather than run sudo commands nobody agreed to.
+A step that is already done says so and is skipped. It never invents a package
+command where a distro has none (the NPU userspace driver, on most), and points
+at Intel's releases instead. The `~/.local/bin` entries are symlinks into the
+checkout, so they follow a `git pull`, and bash completion gets one link per
+command, because bash-completion loads a file lazily on the first Tab for a
+command of the same name.
 
 From a checkout, or to see what it would do without doing it:
 
@@ -84,7 +92,9 @@ Exporting downloads ~1GB from Hugging Face and converts it to OpenVINO IR that
 then runs on your hardware. `vinowhisper/model_digests.json` pins the sha256 of
 every file in the export this project has actually run, and both
 `scripts/convert_model.sh` and `vinowhisper-setup` check what came down against
-it. `vinowhisper-doctor` re-checks it on demand, at about 1.2s for 1.5GB.
+it. `vinowhisper-doctor` re-checks it on demand, at about 1.2s for 1.5GB, and
+only for an export that is present and the right shape for its device, since
+"hashes don't match" is noise next to "wrong export entirely".
 
 The pin is on the exported IR, not on the upstream safetensors, because the IR
 is what `WhisperPipeline` loads and the export is not a pure function of the
@@ -115,6 +125,20 @@ files, including both decoder `.bin` weights. `openvino_encoder_model.bin` came
 out identical across both. That is why drift is reported separately from a
 real mismatch, and the versions are read out of the export's own `rt_info`
 block rather than from whatever happens to be installed.
+
+That block is read from every `.xml` in the export and merged, and any version
+two files disagree on makes the answer unknown, never fine: reading just one
+file would let a single edited graph buy the softer `drift` verdict. The
+digest covers every file, not just the weights, because `generation_config.json`
+decides how decoding behaves and `tokenizer.json` decides the text. A missing
+or truncated pin file downgrades to `unpinned` rather than breaking every
+export. Verification is deliberately not part of loading the model, since
+hashing takes about 1.2s and would land on the socket-activated cold start.
+
+`known_bad` entries come in two shapes: an exact combination measured broken,
+or a floor (`at_least`, as for transformers 5.4.0). A version the export does
+not report never satisfies a floor, and `update_digests.py` rewrites the
+hashes without touching the list.
 
 ## transformers 5.4.0 breaks the NPU export
 

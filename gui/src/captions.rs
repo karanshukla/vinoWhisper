@@ -1,50 +1,26 @@
-//! What the overlay shows, as plain data: no Wayland, no fonts, no threads.
-//!
-//! Follows the Rich status bar's rules (vinowhisper/ui.py) wherever they
-//! apply to a two-line box: confirmed words at full brightness, pending words
-//! dimmed after them, and a paragraph break that a real pause *schedules* but
-//! only the next word *spends*, so a break never opens onto nothing.
-//!
-//! Pending words matter more here than in the terminal. The commit policy
-//! needs two cycles to agree before a word is confirmed, and in a box that
-//! only holds two lines, showing nothing until then reads as a frozen caption
-//! rather than as one still being decided.
-
 use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::protocol::Event;
 
-/// Same as `ui._PARAGRAPH_SILENCE_S`: a pause this long is a boundary, not a
-/// breath.
 const PARAGRAPH_SILENCE_S: f64 = 2.5;
 
-/// Two lines on screen need far fewer than this. The rest is headroom for
-/// the small text size, where two lines hold the most words.
 const KEEP_WORDS: usize = 160;
 
-/// Cycles averaged for the lag estimate.
 const LAG_HISTORY: usize = 8;
 
-/// A second or two of quiet between sentences is ordinary speech and not
-/// worth turning the status dot red over.
 const NO_SIGNAL_AFTER_S: f64 = 3.0;
 
-/// The status line is one line of small text; a device warning longer than
-/// this is in the server journal and in vinowhisper-doctor in full.
 const STATUS_CHARS: usize = 72;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
-    /// The process is up and waiting on the server, possibly through a cold
-    /// NPU model load.
     Starting,
     Live,
     Stopped,
     Failed(String),
 }
 
-/// A colour role, resolved to an actual colour by the painter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Caption,
@@ -112,7 +88,6 @@ impl Captions {
         }
     }
 
-    /// A new session. Whatever the last one said is not this one's to show.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
@@ -127,6 +102,10 @@ impl Captions {
 
     pub fn degraded(&self) -> bool {
         self.degraded
+    }
+
+    pub fn frame(&self) -> ((Tone, Vec<Span>), Vec<Span>, bool) {
+        (self.status(), self.caption_spans(), self.degraded)
     }
 
     pub fn apply(&mut self, event: Event) {
@@ -158,8 +137,7 @@ impl Captions {
             Event::Silence { elapsed_s, .. } => {
                 self.silent_for = Some(elapsed_s);
                 if elapsed_s >= PARAGRAPH_SILENCE_S {
-                    // Scheduled, not applied: Silence repeats every cycle it
-                    // stays quiet. add_words spends it on the next real word.
+                    // Scheduled, not applied: add_words spends it on the next real word.
                     self.break_pending = true;
                 }
             }
@@ -177,17 +155,12 @@ impl Captions {
         self.phase = Phase::Failed(message.into());
     }
 
-    /// The process is gone. Anything already on screen stays; a failure
-    /// already recorded is the better explanation, so it is kept.
     pub fn ended(&mut self) {
         if !matches!(self.phase, Phase::Failed(_)) {
             self.phase = Phase::Stopped;
         }
     }
 
-    /// The same estimate the terminal shows: the commit policy needs two
-    /// cycles to agree and the hop is whatever the last cycle took, so this
-    /// is the floor on how far behind the audio a caption lands.
     pub fn lag_s(&self) -> Option<f64> {
         if self.cycles.is_empty() {
             return None;
@@ -212,8 +185,6 @@ impl Captions {
         }
     }
 
-    /// The caption body: confirmed words, then pending ones, or a
-    /// placeholder saying why there are neither.
     pub fn caption_spans(&self) -> Vec<Span> {
         let mut text = String::new();
         for token in &self.tokens {
@@ -269,7 +240,6 @@ impl Captions {
         }
     }
 
-    /// The status dot's colour, then the line of small text beside it.
     pub fn status(&self) -> (Tone, Vec<Span>) {
         let silent = self.silent_for.filter(|s| *s >= NO_SIGNAL_AFTER_S);
         let (dot, label) = match (&self.phase, silent) {
@@ -283,8 +253,6 @@ impl Captions {
         let mut spans = vec![Span::new(label, Tone::Dim)];
         if let Some(device) = &self.device {
             spans.push(Span::new(" · ", Tone::Dim));
-            // A device below the NPU is never silent (see events.Ready):
-            // here it is coloured, and the painter also borders the box.
             let tone = if self.degraded { Tone::Warn } else { Tone::Dim };
             spans.push(Span::new(device.clone(), tone));
         }
@@ -301,8 +269,6 @@ impl Captions {
                 Tone::Warn,
             ));
         }
-        // With words still on screen the body keeps them, so the reason the
-        // session ended has to go here instead.
         if let Phase::Failed(message) = &self.phase
             && !self.tokens.is_empty()
         {
@@ -507,6 +473,18 @@ mod tests {
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Good);
         assert!(!status.iter().any(|s| s.tone == Tone::Warn));
+    }
+
+    #[test]
+    fn silence_that_changes_nothing_on_screen_leaves_the_frame_alone() {
+        let mut captions = Captions::new();
+        captions.apply(cycle(&["hello"], &["there"]));
+        captions.apply(silence(0.5));
+        let quiet = captions.frame();
+        captions.apply(silence(1.0));
+        assert_eq!(captions.frame(), quiet, "a breath redraws nothing");
+        captions.apply(silence(NO_SIGNAL_AFTER_S + 1.0));
+        assert_ne!(captions.frame(), quiet, "no signal does");
     }
 
     #[test]

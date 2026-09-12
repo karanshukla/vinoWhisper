@@ -1,28 +1,3 @@
-"""`vinowhisper-setup` — the guided install.
-
-Everything this tool needs beyond `uv sync` used to be a numbered list in the
-README that only worked on one machine: install these packages (Fedora names),
-export the model with these flags, copy these systemd units (with a hardcoded
-`%h/Development/vinoWhisper` path in them), symlink four binaries. This walks
-the same list, but it checks each step first, phrases the fix in the local
-distro's package names, and generates the unit files against the paths that
-actually exist here.
-
-Three rules it sticks to:
-
-1. **Nothing runs without a yes.** Every command is printed before it is run,
-   including — especially — the ones with `sudo` in them. `--yes` answers yes
-   to all of it, `--dry-run` answers no to all of it and just shows the plan.
-2. **A step that is already done says so and is skipped.** Re-running this
-   after fixing one thing must not re-do the other five.
-3. **It never pretends.** Where a distro has no package for something (the NPU
-   userspace driver, on most of them), it says so and points at Intel's
-   releases rather than inventing a command that will fail.
-
-The wizard is not required: every step is a shell command you can run yourself,
-and `--dry-run` prints all of them in order for exactly that reason.
-"""
-
 import argparse
 import os
 import subprocess
@@ -38,16 +13,12 @@ UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
 COMMANDS = ("caption", "server", "replay", "doctor", "setup")
 
-# Kept in step with scripts/convert_model.sh, which is the same export as a
-# standalone shell command for people who never run the wizard. If you change
-# the flags in one, change them in the other.
+# Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"
 
 
 @dataclass
 class Outcome:
-    """What a step decided. `ok=None` means 'left for the user to do'."""
-
     ok: bool | None
     summary: str
 
@@ -61,8 +32,6 @@ class Wizard:
         self.failed: list[str] = []
         self.skipped: list[str] = []
 
-    # --- plumbing --------------------------------------------------------
-
     def say(self, text: str = "") -> None:
         print(text, flush=True)
 
@@ -72,8 +41,6 @@ class Wizard:
         if self.assume_yes:
             return True
         if not sys.stdin.isatty():
-            # Piped input with no --yes: proceeding would be running unattended
-            # sudo commands nobody agreed to.
             self.say("  (not a terminal, and no --yes — skipping)")
             return False
         try:
@@ -83,7 +50,6 @@ class Wizard:
         return answer in ("y", "yes")
 
     def run(self, argv: list[str], why: str) -> bool:
-        """Print a command, ask, run it. Returns whether it ran successfully."""
         self.say(f"  $ {' '.join(argv)}")
         if not self.confirm(why):
             return False
@@ -105,19 +71,12 @@ class Wizard:
         if outcome.ok is False:
             self.failed.append(title)
         elif outcome.ok is None and not optional:
-            # An optional step left undone is a choice, not unfinished setup,
-            # so it does not earn a "re-run this" at the end.
             self.skipped.append(title)
-
-    # --- steps -----------------------------------------------------------
 
     def check_python(self) -> Outcome:
         version = sys.version_info
         text = f"{version.major}.{version.minor}.{version.micro}"
         if version[:2] == (3, 14):
-            # Version-independent root cause, not a package-pairing issue:
-            # 3.14 made functools.partial a descriptor, which breaks optimum's
-            # `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)` idiom.
             return Outcome(False, f"Python {text} cannot export the model; use 3.13 or older")
         return Outcome(True, f"Python {text} at {sys.executable}")
 
@@ -153,8 +112,6 @@ class Wizard:
         if not selection.degraded:
             return Outcome(True, f"will run on {selection.device}")
 
-        # The NPU is the whole point of the tool, so a fallback gets the full
-        # kernel-node/permissions/driver walk rather than a one-line warning.
         for warning in selection.warnings:
             self.say(f"  ⚠ {warning}")
         if not any(device.kind == "NPU" for device in inventory):
@@ -186,12 +143,6 @@ class Wizard:
         return Outcome(None, f"run {config.export_command(variant)} when ready")
 
     def check_digests(self, variant: str, directory: Path, summary: str) -> Outcome:
-        """Compare what is on disk against the pinned digests.
-
-        Runs on an export that was already there as well as one this wizard
-        just produced, because the interesting question is what is about to be
-        loaded onto your hardware, not who downloaded it. ~1.2s for 1.5GB.
-        """
         result = integrity.verify(directory, variant)
         if result.status == integrity.VERIFIED:
             return Outcome(True, f"{summary}, digests verified")
@@ -199,9 +150,6 @@ class Wizard:
             self.say(f"  {line.strip()}")
         if result.severe:
             return Outcome(False, f"{summary}, but {result.summary()}")
-        # UNPINNED and DRIFT both warn and continue: an export nobody has
-        # pinned is the normal state for --model anything, and a toolchain bump
-        # legitimately changes the bytes. Neither is a reason to block setup.
         return Outcome(True, f"{summary} ({result.status})")
 
     def install_units(self) -> Outcome:
@@ -222,9 +170,7 @@ class Wizard:
         (UNIT_DIR / "vinowhisper-server.service").write_text(service, encoding="utf-8")
         (UNIT_DIR / "vinowhisper-server.socket").write_text(socket, encoding="utf-8")
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
-        # The socket, never the service: the service has no [Install] section
-        # because it is only ever meant to be started by the socket, and this
-        # is the whole scale-to-zero design (see docs/architecture.md).
+        # The socket, never the service: the service is only ever socket-activated.
         enabled = subprocess.run(
             ["systemctl", "--user", "enable", "--now", "vinowhisper-server.socket"],
             check=False,
@@ -246,9 +192,6 @@ class Wizard:
             return Outcome(True, f"already installed in {BIN_DIR}")
 
         self.say(f"  Symlinking {len(entry_points)} commands into {BIN_DIR}")
-        # Symlinks rather than copies, deliberately: `uv sync` installs the
-        # project editable with an absolute shebang, so these track edits to
-        # the checkout instead of freezing a snapshot.
         if not self.confirm(f"link them into {BIN_DIR}?"):
             return Outcome(None, f"skipped; run with `uv run` or add {bin_dir} to PATH")
 
@@ -272,8 +215,6 @@ class Wizard:
             return Outcome(None, "skipped")
 
         COMPLETION_DIR.mkdir(parents=True, exist_ok=True)
-        # bash-completion loads a file from that directory lazily, on first Tab
-        # against a command of the same name, hence one link per command.
         for name in COMMANDS:
             link = COMPLETION_DIR / f"vinowhisper-{name}"
             if link.is_symlink() or link.exists():
@@ -282,13 +223,6 @@ class Wizard:
         return Outcome(True, f"completion installed for {len(COMMANDS)} commands")
 
     def install_overlay(self) -> Outcome:
-        """The optional caption overlay, vinowhisper-gui, a Rust binary.
-
-        Never from PyPI. Already installed, then the release binary checked
-        against the sha256 pinned in this package, then a cargo build from a
-        checkout (see overlay.py for why that order, and why no pin means no
-        download).
-        """
         path = overlay.installed(BIN_DIR)
         if path is not None:
             self.say(f"  Found {path}")
@@ -298,9 +232,6 @@ class Wizard:
                 return got
             path = got
 
-        # A distro package ships its own launcher in /usr/share; a copy in the
-        # home directory needs one written, and not only for the menu: the
-        # desktop's shortcut portal will not grant a shortcut without it.
         if path.is_relative_to(Path.home()):
             self.run([str(path), "--install"], "add a launcher entry for it?")
         self.run([str(path), "--autostart"], "start it in the tray at login?")
@@ -325,8 +256,6 @@ class Wizard:
 
         return Outcome(None, available)
 
-    # --- driver ----------------------------------------------------------
-
     def run_all(self) -> int:
         self.say(f"vinowhisper-setup {__version__}")
         self.say(f"  distro:  {self.distro}")
@@ -341,8 +270,6 @@ class Wizard:
         self.step("Systemd units", self.install_units)
         self.step("Commands on PATH", self.link_binaries)
         self.step("Bash completion", self.install_completion)
-        # Only offered where it could run: a headless box or an X11 session has
-        # no use for a Wayland overlay. `--gui` asks regardless.
         if os.environ.get("WAYLAND_DISPLAY"):
             self.step("Caption overlay (optional)", self.install_overlay, optional=True)
 
@@ -359,7 +286,6 @@ class Wizard:
         return 0
 
     def run_overlay(self) -> int:
-        """`vinowhisper-setup --gui`: the overlay step and nothing else."""
         self.say(f"vinowhisper-setup {__version__}: the caption overlay")
         if self.dry_run:
             self.say("\n  --dry-run: nothing will be changed; every command is printed.")
@@ -368,14 +294,6 @@ class Wizard:
 
 
 def export_argv(variant: str, directory: Path | None = None) -> list[str]:
-    """The optimum-cli export for one device class.
-
-    --disable-stateful is required for NPU: its static pipeline needs the
-    separate KV-cache `decoder_with_past` submodel that the default stateful
-    export doesn't produce (self_attn_nodes assertion otherwise — see
-    openvinotoolkit/openvino.genai#1728). That same export then cannot run on
-    CPU at all, which is why there are two of them.
-    """
     if variant not in ("npu", "stateful"):
         raise ValueError(f"variant must be 'npu' or 'stateful', got {variant!r}")
     out = directory or (config.MODEL_DIR if variant == "npu" else config.STATEFUL_MODEL_DIR)
@@ -403,12 +321,6 @@ def _has_systemd() -> bool:
 
 
 def _exec_start(device: str = "auto") -> str:
-    """Prefer the installed console script; fall back to `python -m`.
-
-    Either way it is an absolute path into the environment this wizard is
-    running from, which is the bug the old checked-in unit file had: it
-    hardcoded ~/Development/vinoWhisper and worked on exactly one machine.
-    """
     script = Path(sys.executable).with_name("vinowhisper-server")
     if script.exists():
         return f"{script} --device {device}"
@@ -416,7 +328,6 @@ def _exec_start(device: str = "auto") -> str:
 
 
 def unit_files(device: str = "auto") -> tuple[str, str]:
-    """(service, socket) unit text, generated against this machine's paths."""
     service = f"""\
 [Unit]
 Description=vinoWhisper transcription server

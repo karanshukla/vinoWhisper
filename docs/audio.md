@@ -15,7 +15,9 @@ Audio capture works two ways, picked automatically:
 
 `pactl` is used for the default sink and mute state where present (on PipeWire
 too, via `pipewire-pulse`); without it, PipeWire's own `default.audio.sink`
-metadata answers the same question.
+metadata answers the same question. On a machine running both stacks where the
+automatic pick is wrong, `VINOWHISPER_CAPTURE_BACKEND=pipewire` or
+`=pulseaudio` forces it.
 
 Package names per family live in one table in
 [`vinowhisper/distro.py`](../vinowhisper/distro.py), so `vinowhisper-doctor` and
@@ -34,6 +36,13 @@ the wizard both speak your distro:
 **If a package name is wrong for your distro, that is expected, and it is the
 fastest thing here to fix.** See [CONTRIBUTING.md](../CONTRIBUTING.md) or the
 distro-support issue template.
+
+That is also why the wizard and the doctor print these commands rather than
+run them unasked. They carry `-y` or `--needed` so they work exactly as
+printed, and every NPU entry points at the upstream release as the
+authoritative fallback. The family is matched on `ID` in `/etc/os-release`
+first, and on `ID_LIKE` only when the `ID` is unknown, since `ID_LIKE` is often
+missing or unhelpful.
 
 ## "Captions stop when you mute the system"
 
@@ -80,3 +89,16 @@ toward a speech-like level (`config.TARGET_RMS`, up to 20x) before it reaches
 the model, since Whisper's accuracy degrades on quiet input. Ordinary web
 video lands around 0.014 rms, so this earns its place on source material
 alone, independent of the volume question above.
+
+## Silence
+
+True digital silence on a sink monitor measures about 0.0 to 0.004 rms, from
+dither and the EQ chain's noise. The 0.002 gate (`config.SILENCE_RMS_THRESHOLD`)
+only saves NPU cycles on dead air. It is not the defence against
+hallucinations; that is the two-cycle commit policy plus `collapse_repeats`.
+Raise it and quiet speech, which really does sit near the noise floor, gets
+dropped.
+
+Some silence is normal, so the terminal only prints its "no signal" notice
+after 45 seconds of it. That much, while someone expects captions, is a
+symptom, and the notice points at the causes above.

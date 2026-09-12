@@ -1,10 +1,3 @@
-//! Laying out and drawing one frame of the overlay.
-//!
-//! Software rendering into shared memory, with no GPU context. The box
-//! redraws a couple of times a second at most and holds a few dozen glyphs, so
-//! a GL or Vulkan stack would buy startup time and a dependency on the
-//! graphics driver in exchange for nothing visible.
-
 use cosmic_text::{
     Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap, fontdb,
 };
@@ -13,16 +6,11 @@ use crate::captions::{Captions, Span, Tone};
 use crate::raster::{Canvas, Rect, Rgba};
 use crate::settings::TextSize;
 
-/// Caption lines on screen at once. Two is where live-caption interfaces
-/// settle: enough to finish a sentence as the next begins, too few to turn
-/// into a transcript window, which is what the terminal is for.
 pub const LINES: usize = 2;
 
-/// Dark and mostly opaque. Captions sit over arbitrary video, and legibility
-/// on a white frame matters more than seeing the frame through the box.
-const BACKGROUND: Rgba = Rgba(14, 14, 16, 214);
+pub const BACKGROUND: Rgba = Rgba(14, 14, 16, 214);
 
-fn tone_rgba(tone: Tone) -> Rgba {
+pub fn tone_rgba(tone: Tone) -> Rgba {
     match tone {
         Tone::Caption => Rgba(250, 250, 250, 255),
         Tone::Pending => Rgba(160, 164, 172, 255),
@@ -38,7 +26,6 @@ fn tone_color(tone: Tone) -> Color {
     Color::rgba(r, g, b, a)
 }
 
-/// Everything sized off the caption font, in physical pixels.
 #[derive(Debug, Clone, Copy)]
 struct Geometry {
     caption_px: f32,
@@ -65,8 +52,6 @@ impl Geometry {
             pad_y: (px * 0.45).round() * scale,
             gap: (px * 0.2).round() * scale,
             radius: (px * 0.5).round() * scale,
-            // About 70 characters a line: a comfortable reading measure, and
-            // narrow enough that the eye does not travel across a wide screen.
             max_width: px * 36.0 * scale,
         }
     }
@@ -76,7 +61,6 @@ impl Geometry {
     }
 }
 
-/// The surface height to ask the compositor for, in logical pixels.
 pub fn logical_height(size: TextSize) -> u32 {
     Geometry::new(size, 1.0).height().ceil() as u32
 }
@@ -120,9 +104,6 @@ impl Painter {
         };
         canvas.fill_rounded(frame, g.radius, BACKGROUND);
         if captions.degraded() {
-            // The terminal's rule, carried over: a device below the NPU is a
-            // property of the whole session, so it colours the frame rather
-            // than blinking in a corner.
             canvas.stroke_rounded(
                 frame,
                 g.radius,
@@ -190,8 +171,6 @@ impl Painter {
         );
         buffer.shape_until_scroll(&mut self.fonts, false);
 
-        // The newest lines, bottom-aligned, so the box scrolls the way a
-        // caption box does: older text leaves at the top.
         let runs: Vec<_> = buffer.layout_runs().collect();
         let skip = runs.len().saturating_sub(block.lines);
         let Some(first) = runs.get(skip) else {
@@ -223,9 +202,7 @@ impl Painter {
     }
 }
 
-/// Keep fontconfig's choice of sans-serif unless it names a font that is not
-/// actually installed, which fontconfig allows and which would otherwise
-/// leave every glyph to the fallback chain.
+/// fontconfig can name a sans that is not installed; fall back to one that is.
 fn prefer_an_installed_sans(db: &mut fontdb::Database) {
     const PREFERRED: [&str; 6] = [
         "Inter",

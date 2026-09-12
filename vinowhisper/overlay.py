@@ -1,25 +1,3 @@
-"""Finding, fetching and verifying the optional caption overlay.
-
-`vinowhisper-gui` is a Rust binary (gui/), and it deliberately does not ship
-on PyPI: a Rust GUI has no business inside a Python wheel, and the terminal
-tool must stay installable without it. So `vinowhisper-setup --gui` gets it
-from one of three places, in this order:
-
-1. **Already installed.** A distro package in /usr/bin, or an earlier run of
-   this into ~/.local/bin.
-2. **The GitHub release matching this package's version**, checked against
-   the sha256 the release workflow wrote into this wheel (gui_release.json)
-   before building it. The wheel on PyPI and the binary on GitHub come out of
-   one workflow run, so the pin is exactly as trustworthy as the wheel.
-3. **A cargo build**, when this is a git checkout and cargo is installed.
-
-A download that does not match its pin installs nothing. A wheel with no pin
-(a source checkout, or one built outside the release workflow) never
-downloads at all: an unverified binary installed by a setup tool is exactly
-what the pin exists to rule out, the same line model_digests.json draws for
-the model export.
-"""
-
 import hashlib
 import json
 import os
@@ -37,7 +15,6 @@ PIN_FILE = Path(__file__).resolve().parent / "gui_release.json"
 RELEASES_URL = "https://github.com/karanshukla/vinoWhisper/releases/download"
 GUI_MANIFEST = Path(__file__).resolve().parent.parent / "gui" / "Cargo.toml"
 
-# About 6MB, over whatever connection someone happens to be running setup on.
 DOWNLOAD_TIMEOUT_S = 120.0
 
 _BUILD_INSTEAD = "build it from a checkout with cargo instead (docs/gui.md)"
@@ -48,10 +25,6 @@ class OverlayError(Exception):
 
 
 def asset_name(arch: str) -> str:
-    """The release asset for one architecture. release.yml uploads it under
-    the same name, and tests/test_packaging.py holds the two together, since
-    drift here is a 404 discovered by a user rather than by CI.
-    """
     return f"{BINARY}-{arch}-linux"
 
 
@@ -79,7 +52,6 @@ def sha256_of(path: Path) -> str:
 
 
 def pin_record(binary: Path, version: str, arch: str) -> dict[str, Any]:
-    """What scripts/pin_gui_release.py writes into gui_release.json."""
     return {
         "version": version,
         "assets": {arch: {"name": asset_name(arch), "sha256": sha256_of(binary)}},
@@ -89,9 +61,6 @@ def pin_record(binary: Path, version: str, arch: str) -> dict[str, Any]:
 def availability(
     pin_file: Path = PIN_FILE, machine: str | None = None, version: str = __version__
 ) -> Pin | str:
-    """The pinned download for this machine, or a sentence saying why there
-    is none and what to do instead.
-    """
     arch = machine or platform.machine()
     try:
         record = json.loads(pin_file.read_text(encoding="utf-8"))
@@ -115,7 +84,6 @@ def availability(
 
 
 def installed(bin_dir: Path) -> Path | None:
-    """An overlay already on this machine: on PATH, or where setup puts it."""
     found = shutil.which(BINARY)
     if found:
         return Path(found)
@@ -138,7 +106,6 @@ def built_binary() -> Path:
 
 
 def install_binary(source: Path, dest: Path) -> Path:
-    """Copy a local build into place."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_name(dest.name + ".part")
     shutil.copyfile(source, partial)
@@ -146,10 +113,8 @@ def install_binary(source: Path, dest: Path) -> Path:
 
 
 def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
-    """Download the pinned release binary to `dest`, or install nothing."""
     if get is None:
-        # Here rather than at the top, so scripts/pin_gui_release.py can use
-        # this module on a bare release runner with the standard library alone.
+        # Lazy, so scripts/pin_gui_release.py runs on the standard library alone.
         import requests
 
         get = requests.get
@@ -184,10 +149,7 @@ def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
 
 
 def _commit(partial: Path, dest: Path) -> Path:
-    """Into place by rename. Writing over the old file instead would fail with
-    "Text file busy" whenever the overlay is running, and at login it
-    usually is.
-    """
     partial.chmod(0o755)  # nosec B103 - a program has to be executable
+    # Rename, not overwrite: writing over a running binary fails with "Text file busy".
     os.replace(partial, dest)
     return dest

@@ -61,20 +61,37 @@ A distro package is not available yet. Fedora cannot package the Python side:
 its openvino is 2025.1.0, older than the 2026.3.1 floor, and openvino-genai
 and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
 is planned. `vinowhisper-gui --export-desktop DIR` writes the launcher and
-icon for a packager, and `vinowhisper-setup --gui` already recognises a copy in
-/usr/bin.
+icons for a packager, with the launcher naming the `vinowhisper-gui` command
+rather than a path, since a buildroot path would be wrong once installed.
+`vinowhisper-setup --gui` already recognises a copy in /usr/bin.
 
 It needs `vinowhisper-caption` from the Python package. It looks for it on
 `PATH`, then in `~/.local/bin` (where `vinowhisper-setup` links it), then next
 to its own binary. `--caption PATH` or `$VINOWHISPER_CAPTION` override the
 search.
 
+**The launcher and autostart.** The first run writes a launcher only if there
+is none: `--install` may have baked a `--caption` path into one, and a
+packaged launcher must not be shadowed by a copy in the home directory. The
+icons are the exception, rewritten whenever they differ, since they hold
+nothing of yours. The autostart entry runs `--hidden`, so it starts in the
+tray without touching the NPU until asked. Re-running `--install` without
+`--autostart` is how autostart gets turned off.
+
 ## Using it
 
 Launch it from the app menu or run `vinowhisper-gui`. The box appears at the
 bottom of the screen with a status line (device, lag, silence) above two lines
 of captions. Words still waiting on a second cycle to confirm them are shown
-dimmed, the same rule the terminal uses.
+dimmed, the same rule the terminal uses. They matter more here: with only two
+lines, showing nothing until two cycles agree reads as a frozen caption rather
+than one still being decided.
+
+The box is dark and mostly opaque, because legibility over a white video frame
+matters more than seeing the frame through it, and about 70 characters wide, a
+comfortable reading measure. The newest lines sit at the bottom and older text
+leaves at the top. On a device below the NPU the whole frame gets a red
+border, the terminal's rule carried over.
 
 The box ignores the mouse completely: clicks go straight through to whatever
 is underneath, so it never blocks the video controls it sits over. It is
@@ -83,7 +100,7 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions |
-| **Tray icon** | Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Change shortcut… and Quit |
+| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Change shortcut… and Quit |
 | **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
@@ -92,7 +109,10 @@ and scale-to-zero is why the server is socket-activated at all
 ([architecture.md](architecture.md)). Showing it again starts a fresh
 session, which also retries after an error.
 
-Tray choices are remembered in `~/.config/vinowhisper/gui.json`.
+Tray choices are remembered in `~/.config/vinowhisper/gui.json`. An
+unreadable one is reported and ignored, and every field has a default, so a
+bad settings file never stops captions from starting. The top position is for
+video that burns its own subtitles into the bottom of the frame.
 
 ### The shortcut
 
@@ -115,6 +135,10 @@ the first run writes the launcher itself if `--install` never did. With no
 portal at all, bind `vinowhisper-gui toggle` in your desktop's keyboard
 settings; it reaches the running instance the same way.
 
+**Change shortcut…** needs version 2 of the shortcut portal, where
+ConfigureShortcuts first appears. On version 1 the binding is still an
+ordinary desktop shortcut, so change it in System Settings instead.
+
 ## Where it works
 
 The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what
@@ -132,10 +156,13 @@ On a compositor without layer-shell it exits with a message that says so,
 rather than falling back to a normal window that cannot stay on top.
 `vinowhisper-caption` in a terminal works everywhere.
 
-It renders at the display's fractional scale (`wp_fractional_scale_v1`), so
-text stays sharp at 125% or 150%. It lands on whichever output the compositor
-picks, usually the focused one. It cannot be dragged; Position is top or
-bottom only.
+It renders at the display's fractional scale (`wp_fractional_scale_v1` with
+viewporter), so text stays sharp at 125% or 150%. A compositor missing either
+gets the next whole-number scale shrunk down, which shows as slightly soft
+text. It lands on whichever output the compositor picks, usually the focused
+one, keeps clear of panels rather than sliding under them, and is recreated if
+the compositor withdraws it (usually because its output went away). It cannot
+be dragged; Position is top or bottom only.
 
 ## How it fits together
 
@@ -154,6 +181,23 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
   `tests/test_caption.py` names every field `gui/src/protocol.rs` reads, so
   renaming one fails a Python test rather than leaving the overlay silently
   blank.
+- **Only the fields it draws are read.** Extra fields are ignored, and an
+  unknown record or a stray line on stdout costs that one line rather than
+  the session, so the Python events can grow without a new GUI release. The
+  fixtures in `protocol.rs` were captured from `JsonRenderer`, not written by
+  hand, so they pin the real wire format.
+- **The surface spans the whole output width** and the box is centred in it.
+  Being click-through makes the empty sides free, and no output size has to be
+  known before the compositor picks an output.
+- **Redraws follow what is on screen, not events.** The caption process sends
+  an event every half second even in silence, and one that changes nothing
+  visible draws nothing, since every frame also makes the compositor repaint.
+  The once-a-second timer runs only while "Starting… Ns" is showing, so a
+  hidden overlay has no timer at all. The tray is updated only when its menu
+  or tooltip actually changed, since each update is a D-Bus round trip.
+- **The tray decides nothing.** Each choice goes to the main loop as a command,
+  and the main loop answers with a fresh view. Registration is assumed rather
+  than checked, since at login the overlay can start before Plasma's tray.
 - **Stopping is Ctrl+C.** The GUI sends SIGINT, so the Python side flushes its
   last pending words and stops `pw-record` exactly as it would in a terminal.
   It gets 4s before SIGKILL. The child also carries a parent-death signal, so
@@ -161,7 +205,10 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
   watching.
 - **One instance per session.** A second launch sends its command to the
   first over the socket and exits, which is how `vinowhisper-gui toggle`
-  works from any keybinding tool.
+  works from any keybinding tool, and why a double-clicked launcher never
+  starts two. A socket file left by a killed instance is detected by trying to
+  connect, and `--hidden` only pings, so an autostart that finds an instance
+  running leaves it alone.
 
 ## Why Rust
 
@@ -171,7 +218,26 @@ two wheels, but measured 232MB installed. System PyGObject cannot be imported
 from the project's Python 3.13 venv (Fedora 44's is built for 3.14). Tkinter
 has neither a tray nor Wayland. The Rust binary is 5.6MB, links only libc,
 and draws its own text with no GPU context, since it redraws a couple of times
-a second at most.
+a second at most. The shapes are hand-drawn too: antialiased rounded
+rectangles and circles from a signed-distance function, into Wayland's
+premultiplied ARGB8888 buffer. That is all a caption box and a tray icon need,
+not enough to justify a 2D graphics library.
+
+## The icon
+
+The mark is the overlay itself: three voice bars in the listening dot's green
+become a word, above a confirmed line that ends in a pending one, in the box's
+own colour. It is drawn as data in `gui/src/icon.rs`. The launcher SVG, the
+tray's fallback pixmaps and the copies in `docs/assets/` all come from it;
+`VINOWHISPER_BLESS_ICONS=1 cargo test` regenerates the assets, and a test fails
+when they are stale.
+
+The tray version is the same composition redrawn on Breeze's 16px grid in
+one-pixel lines, so it sits with the panel's other icons. Its outline and text
+follow the panel's text colour through KDE's `current-color-scheme`
+stylesheet, while the voice bars stay green so the tray matches the start
+menu. The outline is the box minus its inset under the even-odd rule rather
+than a stroke, so it lands on whole pixels.
 
 ## Troubleshooting
 
@@ -185,3 +251,6 @@ prefixed `[caption]`.
 | Box says "not reachable" | The server, not the GUI: `vinowhisper-doctor` |
 | No tray icon | No StatusNotifierItem host (GNOME without the AppIndicator extension). The shortcut and commands still work |
 | "does not offer wlr-layer-shell" | GNOME or X11. See the table above |
+| Box shows raw error text | The caption process exited without an `Error` record, so the box shows its last stderr lines. Run `vinowhisper-caption` in a terminal for the rest |
+| Text in an unexpected font | fontconfig names a sans-serif that is not installed. It falls back to the first installed of Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans and Liberation Sans |
+| Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

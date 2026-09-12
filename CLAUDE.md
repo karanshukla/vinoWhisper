@@ -153,7 +153,11 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   because this laptop runs at 1.5x.
 - **Hidden means stopped.** Hiding sends SIGINT to the caption process, so the
   server still idles out. A hidden overlay that kept transcribing would defeat
-  scale-to-zero.
+  scale-to-zero. Measured 2026-09-12: hidden, the GUI and the server make no
+  wakeups and the speaker sink suspends. The NPU runtime-suspends 100ms after
+  the last inference whether or not a model is loaded, so the resident server
+  costs RAM, not NPU power. A visible overlay's real cost is the capture
+  holding the sink awake. Table in `docs/architecture.md`.
 - **The shortcut needs a desktop file. Measured 2026-09-12 on Plasma 6.7:**
   without `io.github.karanshukla.vinowhisper.desktop`, the portal registry
   refuses the app id ("App info not found") and GlobalShortcuts refuses the
@@ -181,6 +185,19 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   (characterization test), and a mismatch installs nothing and fails setup.
   This is why the whole repo has one version, held by `bump-my-version` and
   `tests/test_packaging.py`: the download URL is the Python package's version.
+- **The icon is drawn as data** (`gui/src/icon.rs`, 2026-09-12). Tray
+  pixmaps, the launcher SVG and `docs/assets/vinowhisper.svg` (the README
+  logo) come from one list of shapes coloured from `paint.rs`'s palette, so
+  the icon looks like the overlay. The symbolic tray SVG is the same
+  composition redrawn on Breeze's 16px grid in one-pixel lines, voice bars in
+  the launcher's green (not `ColorScheme-Accent`, which Plasma paints blue and
+  which split the tray from the start menu): the first cut shrank the 64-unit shapes to a solid
+  block, and the user saw it clash with the panel's outline icons. The assets are
+  generated: `VINOWHISPER_BLESS_ICONS=1 cargo test` rewrites them, and a test
+  fails when they are stale. The tray asks for `<APP_ID>-symbolic` by name,
+  which resolves only once `install` has written it, so the first-run check
+  also rewrites per-user icons that differ (they hold nothing of the user's,
+  unlike the launcher).
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
   portal. They draw into memory and bind scratch sockets. The `gui` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.
@@ -628,6 +645,12 @@ Ordered by what would most change the design.
   command that resolves it, and on anything environmental it prints the
   command *for the local distro* (`distro.remediation`). An exception that only
   says what went wrong is half-finished.
+- **Comments are minimal, at the user's request (2026-09-12).** No module,
+  class or function docstrings in `vinowhisper/`, no `//!` or item docs in
+  `gui/src/`. A comment stays only where the code would invite a wrong "fix"
+  without it, and then it is one line. Rationale, measurements and gotchas go
+  in the matching `docs/` page instead. `tests/` is exempt, since the
+  `characterization:` docstrings there are the rule below.
 - Measured claims carry a date. This file and the README both previously
   asserted the opposite of the truth about the sink monitor in seven places;
   the dates are what made that recoverable.

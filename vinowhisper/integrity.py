@@ -1,42 +1,3 @@
-"""Digest verification for the model export, against a pinned set of hashes.
-
-`scripts/convert_model.sh` and `vinowhisper-setup` download ~1GB from Hugging
-Face and hand the result to a pipeline that runs on your hardware. Until this
-module there was nothing between "the network returned some bytes" and that.
-Prior art is OpenWhispr's `whisperVulkanManager.js`, which pins the digests of
-the binaries it fetches so untested future ones never auto-ship; the same
-argument applies to weights, plus the integrity one.
-
-Three decisions worth stating, because each has an obvious-looking alternative:
-
-**The exported IR is what gets digested, not the upstream safetensors.** The
-IR is what `WhisperPipeline` actually loads, and the export is not a pure
-function of the weights: optimum-intel, transformers, torch and OpenVINO all
-leave fingerprints in it. Digesting upstream would verify a file this program
-never opens. The cost is that the pin has to be regenerated whenever the
-export toolchain moves, which is why `scripts/update_digests.py` exists rather
-than a paragraph in CONTRIBUTING telling someone to paste hashes by hand.
-
-**Toolchain drift is reported differently from a real mismatch, and the
-export tells us which it is.** Every OpenVINO IR carries an `rt_info` block
-naming the runtime and the optimum/transformers/torch versions that produced
-it, so a differing export can be compared against the toolchain the pin was
-made with. Same toolchain and different bytes is the alarming case. Different
-toolchain and different bytes is Tuesday. Without that split, the first
-optimum release after a pin would train everybody to ignore the warning.
-
-**An unpinned export warns and continues.** A hard failure on an unrecognised
-(model, variant) would make `--model openai/whisper-base.en` unusable the
-first time anyone tried it, and this project ships exactly one pinned export.
-Verification is a check on the pinned path, not a gate on every path.
-
-Deliberately not wired into `transcriber.load()`. Hashing 1.5GB costs ~1.2s,
-which is small against a 10-30s NPU model load but sits on the socket-
-activated cold-start path, which is the one latency figure this project
-actually defends. Verification runs where the bytes arrive (the wizard, the
-convert script) and on demand (`vinowhisper-doctor`).
-"""
-
 import argparse
 import hashlib
 import json
@@ -48,9 +9,6 @@ from typing import Any
 
 from . import config
 
-# Where the generated pins live. JSON rather than a Python literal so the
-# regeneration script writes data instead of rewriting source, and so a diff
-# on it reads as a diff on hashes.
 PINS_PATH = Path(__file__).resolve().parent / "model_digests.json"
 
 SCHEMA = 1
@@ -62,22 +20,15 @@ MISMATCH = "mismatch"
 INCOMPLETE = "incomplete"
 KNOWN_BAD = "known_bad"
 
-# Statuses that mean "stop and look at this". The other three are informational:
-# UNPINNED is the documented default for an export nobody has pinned, and DRIFT
-# is what a toolchain upgrade looks like.
 SEVERE = (MISMATCH, INCOMPLETE, KNOWN_BAD)
 
 _CHUNK = 1 << 20
 
-# rt_info sits at the end of the .xml, after the whole graph. Pulled with a
-# regex rather than an XML parse for two reasons: the decoder graph is 600KB of
-# XML to reach five attributes, and ElementTree expands entities, which is a
-# needless thing to do to a file whose provenance this module exists to doubt.
+# Regex, not ElementTree: 600KB of XML to reach five attributes, and no entity expansion on an untrusted file.
 _RT_INFO = re.compile(r"<rt_info>(.*?)</rt_info>", re.DOTALL)
 _INFO_VALUE = re.compile(r'<info name="([^"]+)" value="([^"]*)"')
 _TAG_VALUE = re.compile(r"<(\w+) value=\"([^\"]*)\" */>")
 
-# Read far enough back to catch rt_info without loading the whole graph.
 _TAIL_BYTES = 16 << 10
 
 
@@ -90,14 +41,6 @@ def sha256_file(path: Path) -> str:
 
 
 def digest_export(directory: Path) -> dict[str, str]:
-    """Every file in an export directory, name -> sha256, sorted by name.
-
-    Flat and non-recursive because optimum's export is: one directory of
-    .xml/.bin pairs plus the tokenizer and config JSON. All of it is loaded,
-    so all of it is digested. `generation_config.json` decides how decoding
-    behaves and `tokenizer.json` decides what the text comes out as, so
-    "just the weights" would be a smaller claim than it sounds.
-    """
     return {
         path.name: sha256_file(path)
         for path in sorted(directory.iterdir(), key=lambda item: item.name)
@@ -106,28 +49,6 @@ def digest_export(directory: Path) -> dict[str, str]:
 
 
 def read_toolchain(directory: Path) -> dict[str, str]:
-    """The versions that produced this export, merged from every graph's rt_info.
-
-    Every `.xml` is read, not just the first one, and any key two files
-    disagree on makes the whole answer empty. Two reasons, one of them a hole
-    this had while it read a single file:
-
-    - The blocks are complementary rather than duplicated. optimum writes
-      `optimum_intel_version` and `pytorch_version` into the model graphs;
-      openvino-tokenizers writes `openvino_tokenizers_version` and
-      `tokenizers_version` into the tokenizer pair. The tokenizer `.bin` files
-      are pinned like anything else, so the versions that produced them belong
-      in the record too. `OpenVINO Runtime` and `transformers_version` appear
-      in both and agreed across all five files here, measured 2026-09-04.
-    - Reading one file meant editing one file could relabel the export.
-      `drift` is a softer verdict than `mismatch`, and rt_info is just text
-      sitting next to the weights, so a single edited graph could have bought
-      the softer one. Now it costs a consistent lie across every file, and an
-      inconsistent one reads as unknown, which excuses nothing.
-
-    Empty is also what an export with no readable IR returns. Callers treat
-    unknown as "cannot be compared", never as "assume it is fine".
-    """
     merged: dict[str, str] = {}
     for path in sorted(directory.glob("*.xml")):
         for key, value in _rt_info(path).items():
@@ -150,8 +71,6 @@ def _rt_info(path: Path) -> dict[str, str]:
         return {}
     body = block.group(1)
     found = dict(_INFO_VALUE.findall(body))
-    # The <optimum> child names its versions as tags rather than as info
-    # elements: <optimum_version value="2.2.0" />. Same data, different shape.
     found.update(
         {
             name: value
@@ -159,30 +78,19 @@ def _rt_info(path: Path) -> dict[str, str]:
             if name.endswith("_version") and name not in found
         }
     )
-    # <Runtime_version> repeats <info name="OpenVINO Runtime"> verbatim, and it
-    # matches the *_version tag pattern above, so it has to be dropped after
-    # that merge rather than before it. Carrying both doubles the length of
-    # every drift message for no information.
+    # After the tag merge: it also matches the *_version pattern.
     found.pop("Runtime_version", None)
     return found
 
 
 @dataclass(frozen=True)
 class Pin:
-    """One pinned export. `files` empty means present-but-unpinned."""
-
     model_id: str
     variant: str
     recorded: str = ""
     note: str = ""
     toolchain: dict[str, str] = field(default_factory=dict)
     files: dict[str, str] = field(default_factory=dict)
-    # Export toolchains measured to produce a *broken* export, as
-    # [{"match": {version key: value, ...}, "reason": "..."}]. Not an integrity
-    # concern and kept here anyway, because this file is already the record of
-    # which toolchain the pinned export came from, and a second file saying
-    # which ones not to use would drift away from it. Regeneration preserves
-    # these: scripts/update_digests.py writes hashes, never this list.
     known_bad: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -190,20 +98,6 @@ class Pin:
         return bool(self.files)
 
     def bad_toolchain(self, toolchain: dict[str, str]) -> str:
-        """The reason this toolchain is known bad, or "" if it is not listed.
-
-        An entry can pin exact versions (`match`) or an open-ended floor
-        (`at_least`), and every key in both has to hold. Two clauses because
-        the two shapes of finding are different: "this exact combination was
-        measured broken" and "everything from this release on is broken", and
-        the transformers 5.4.0 regression is the second kind. A key the export
-        does not report never satisfies a floor, so an export whose rt_info is
-        unreadable is not accused of anything.
-
-        Conservative on purpose. A false alarm here is worse than a missed
-        one, because the digest comparison reports the difference either way
-        and only the severity is at stake.
-        """
         for entry in self.known_bad:
             match = entry.get("match") or {}
             floors = entry.get("at_least") or {}
@@ -248,7 +142,6 @@ class Verification:
         return self.status in SEVERE
 
     def summary(self) -> str:
-        """One line, which is all the doctor and the wizard have room for."""
         if self.status == VERIFIED:
             return f"{len(self.matched)} files match the pin recorded {self.recorded or 'earlier'}"
         if self.status == UNPINNED:
@@ -274,7 +167,6 @@ class Verification:
         )
 
     def lines(self) -> list[str]:
-        """The longer form, for the convert script and `--verify` on its own."""
         out = [f"{self.status}: {self.directory}", f"  {self.summary()}"]
         if self.status == MISMATCH:
             out += [
@@ -331,15 +223,8 @@ class Verification:
         return "; ".join(deltas[:2]) or "unknown versions"
 
 
+# Not packaging.version: the wizard imports this before anything else is installed.
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """`5.4.0` -> (5, 4, 0). Stops at the first component that is not a number.
-
-    These strings come out of rt_info, where they range from a clean `5.4.0`
-    to `2026.3.1-22476-759c5a6ab8c-releases/2026/3`, so the build suffix has to
-    be dropped rather than parsed. Deliberately not `packaging.version`: this
-    module is stdlib-only and is imported by the wizard on a machine that may
-    have nothing else installed yet.
-    """
     parts: list[int] = []
     for piece in _short(version).split("."):
         if not piece.isdigit():
@@ -349,18 +234,12 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 
 
 def _at_least(version: str | None, floor: str) -> bool:
-    """Whether `version` is at or above `floor`. Unknown is never at least."""
     if not version:
         return False
     return _version_tuple(version) >= _version_tuple(floor)
 
 
 def _short(version: str | None) -> str:
-    """`2026.3.1-22476-759c5a6ab8c-releases/2026/3` -> `2026.3.1`, for messages.
-
-    The build hash stays in the pin file, where it is evidence. It just has no
-    business in a one-line summary next to five other versions.
-    """
     return (version or "?").split("-", 1)[0]
 
 
@@ -369,11 +248,6 @@ def _key(model_id: str, variant: str) -> str:
 
 
 def load_pins(path: Path | None = None) -> dict[str, Pin]:
-    """Read the pin file. A missing or unreadable one means "nothing pinned".
-
-    Never raises. A wheel built without the data file, or a truncated one,
-    should downgrade verification to UNPINNED rather than break every export.
-    """
     source = path or PINS_PATH
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
@@ -403,7 +277,6 @@ def verify(
     model_id: str = config.MODEL_ID,
     pins: dict[str, Pin] | None = None,
 ) -> Verification:
-    """Compare an export directory against its pin."""
     table = load_pins() if pins is None else pins
     pin = table.get(_key(model_id, variant))
     local_toolchain = read_toolchain(directory)
@@ -437,10 +310,6 @@ def verify(
     elif not differing:
         status = VERIFIED
     elif reason:
-        # Checked ahead of DRIFT, not ahead of MISMATCH: "these are the bytes a
-        # broken toolchain makes" is the more useful answer than "your versions
-        # moved", but "the pinned toolchain made different bytes" is still the
-        # more alarming one and keeps priority.
         status = KNOWN_BAD
     elif local_toolchain and pin.toolchain and local_toolchain != pin.toolchain:
         status = DRIFT
@@ -471,12 +340,6 @@ def record(
     note: str = "",
     pins: dict[str, Pin] | None = None,
 ) -> Pin:
-    """Build a pin from an export that is already on disk.
-
-    Carries the existing entry's known-bad toolchain list forward. That list is
-    hand-written from measurement and regenerating hashes is not a reason to
-    lose it, which it silently would be if this built a Pin from scratch.
-    """
     table = load_pins() if pins is None else pins
     existing = table.get(_key(model_id, variant))
     return Pin(
@@ -491,7 +354,6 @@ def record(
 
 
 def write_pin(pin: Pin, path: Path | None = None) -> Path:
-    """Merge one pin into the pin file, leaving the other entries alone."""
     target = path or PINS_PATH
     try:
         raw = json.loads(target.read_text(encoding="utf-8"))
