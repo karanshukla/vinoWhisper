@@ -24,10 +24,11 @@
 # before running anything. This script deliberately does not install system
 # packages itself — it does not know what you have, and the wizard does.
 #
-# Why pipx/pip are not the install path: `pip install vinowhisper` cannot see
-# [tool.uv.sources], so it resolves openvino from PyPI, where the versions the
-# NPU static Whisper pipeline needs do not exist yet. That is a real constraint
-# of the current OpenVINO release cadence, not a packaging preference.
+# `pip install vinowhisper` also works, and has since 2026-08-31, when stable
+# OpenVINO 2026.3.1 could finally build the NPU static Whisper pipeline and the
+# nightly pin came out (docs/install.md). This script is for everyone who would
+# rather not assemble the rest by hand: a pip install gets the commands, not a
+# model export, an NPU driver or systemd units.
 set -euo pipefail
 
 REPO_URL="${VINOWHISPER_REPO:-https://github.com/karanshukla/vinoWhisper}"
