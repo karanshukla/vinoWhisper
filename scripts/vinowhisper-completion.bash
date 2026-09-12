@@ -76,7 +76,7 @@ _vinowhisper() {
             esac
             mapfile -t COMPREPLY < <(compgen -W "
                 --source --target --list-targets --window --record
-                --plain --debug --version --help" -- "$cur")
+                --plain --debug --json --version --help" -- "$cur")
             ;;
         vinowhisper-replay)
             case "$prev" in

@@ -6,7 +6,28 @@ messages. That is not a consolation prize — the silence notice is the single
 piece of prose in this project that was wrong for a month.
 """
 
+import json
+
 from vinowhisper import caption, events
+
+_EVERY_EVENT = [
+    events.Ready(device="CPU", device_full="Intel(R) Core(TM)", degraded=True, warnings=["no NPU"]),
+    events.Cycle(
+        index=1,
+        captured_s=4.0,
+        window_s=4.0,
+        hop_s=1.0,
+        rms=0.02,
+        gain=2.5,
+        first_piece_s=0.2,
+        total_s=1.1,
+        transcript="don’t stop",
+        confirmed=["don’t"],
+        pending=["stop"],
+    ),
+    events.Silence(elapsed_s=46.0, rms=0.0, sink_muted=True),
+    events.Stopped(flushed=["stop"]),
+]
 
 
 def test_characterization_the_silence_notice_does_not_blame_mute_or_volume():
@@ -96,3 +117,48 @@ def test_a_cycle_rearms_the_silence_notice(capsys):
 
     renderer.handle(events.Silence(elapsed_s=60.0, rms=0.0, sink_muted=False))
     assert "no signal on the capture target" in capsys.readouterr().err
+
+
+def test_json_mode_writes_one_ascii_object_per_line(capsys):
+    """--json is read line by line from a pipe by vinowhisper-gui. Whisper's
+    curly quotes must survive as escapes, so a reader under LANG=C (a login
+    autostart) never sees a multi-byte character at all.
+    """
+    renderer = caption.JsonRenderer()
+    for event in _EVERY_EVENT:
+        renderer.handle(event)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == len(_EVERY_EVENT)
+    assert all(line.isascii() for line in lines)
+    assert json.loads(lines[1])["confirmed"] == ["don’t"]
+
+
+def test_the_fields_the_gui_reads_are_on_the_wire(capsys):
+    """gui/src/protocol.rs parses these by name, in another language, in
+    another process. So each record is `events.to_dict` verbatim, and the
+    fields the overlay depends on are named here: renaming one fails this
+    test instead of leaving the overlay drawing nothing. If it does go red
+    because a field was renamed, protocol.rs needs the same rename.
+    """
+    reads = {
+        "Ready": {"device", "degraded", "warnings"},
+        "Cycle": {"confirmed", "pending", "total_s"},
+        "Silence": {"elapsed_s", "sink_muted"},
+        "Stopped": {"flushed"},
+    }
+    renderer = caption.JsonRenderer()
+    for event in _EVERY_EVENT:
+        renderer.handle(event)
+        record = json.loads(capsys.readouterr().out)
+        assert record == events.to_dict(event)
+        assert reads[record["event"]] <= record.keys()
+
+
+def test_an_error_record_carries_the_reason(capsys):
+    """A GUI has no terminal to show stderr on, so the reason travels too."""
+    caption.JsonRenderer().error("Capture failed: pw-record exited with status 1")
+    assert json.loads(capsys.readouterr().out) == {
+        "event": "Error",
+        "message": "Capture failed: pw-record exited with status 1",
+    }
