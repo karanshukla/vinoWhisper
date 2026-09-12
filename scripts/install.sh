@@ -16,15 +16,19 @@
 #   4. hands over to `vinowhisper-setup`, which does the parts that need to
 #      look at your actual hardware: capture tool, NPU driver, model export,
 #      systemd units, PATH symlinks
+#   5. with --gui only: builds the caption overlay (gui/, Rust) and installs
+#      it into ~/.local/bin with a launcher and a login autostart. Optional
+#      on purpose; the terminal captions need none of it.
 #
 # Step 4 is where every distro-specific decision happens, and it prompts
 # before running anything. This script deliberately does not install system
 # packages itself — it does not know what you have, and the wizard does.
 #
-# Why pipx/pip are not the install path: `pip install vinowhisper` cannot see
-# [tool.uv.sources], so it resolves openvino from PyPI, where the versions the
-# NPU static Whisper pipeline needs do not exist yet. That is a real constraint
-# of the current OpenVINO release cadence, not a packaging preference.
+# `pip install vinowhisper` also works, and has since 2026-08-31, when stable
+# OpenVINO 2026.3.1 could finally build the NPU static Whisper pipeline and the
+# nightly pin came out (docs/install.md). This script is for everyone who would
+# rather not assemble the rest by hand: a pip install gets the commands, not a
+# model export, an NPU driver or systemd units.
 set -euo pipefail
 
 REPO_URL="${VINOWHISPER_REPO:-https://github.com/karanshukla/vinoWhisper}"
@@ -54,12 +58,15 @@ vinoWhisper installer.
   --yes         pass --yes to vinowhisper-setup: no prompts, sudo included
   --dry-run     print what would happen, change nothing
   --no-setup    stop after `uv sync`, do not run the setup wizard
+  --gui         also build the caption overlay and tray icon (needs cargo)
 EOF
 }
 
 RUN_SETUP=1
+GUI=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --gui)      GUI=1; shift ;;
         --dir)      INSTALL_DIR="${2:?--dir needs a path}"; shift 2 ;;
         --ref)      REF="${2:?--ref needs a branch or tag}"; shift 2 ;;
         --yes|-y)   SETUP_ARGS+=(--yes); shift ;;
@@ -122,6 +129,23 @@ fi
 say "Building the environment (uv sync)"
 say "  This pulls the OpenVINO wheels; expect a few GB and a few minutes."
 run uv sync --project "$INSTALL_DIR"
+
+# --- caption overlay (optional) --------------------------------------------
+
+if [[ $GUI -eq 1 ]]; then
+    if command -v cargo >/dev/null 2>&1; then
+        say "Building the caption overlay (a few minutes the first time)"
+        run cargo build --release --locked --manifest-path "$INSTALL_DIR/gui/Cargo.toml"
+        run install -Dm755 "$INSTALL_DIR/gui/target/release/vinowhisper-gui" \
+            "$HOME/.local/bin/vinowhisper-gui"
+        # Launcher, icon and login autostart. The launcher is also what the
+        # desktop's shortcut portal needs before it will grant a shortcut.
+        run "$HOME/.local/bin/vinowhisper-gui" --install --autostart
+    else
+        warn "--gui needs a Rust toolchain (cargo), which is not installed:"
+        warn "  https://rustup.rs, or your distro's rust/cargo package, then re-run with --gui"
+    fi
+fi
 
 # --- hardware-specific setup ---------------------------------------------
 

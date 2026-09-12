@@ -8,7 +8,8 @@ NPU-accelerated local **live captioning** for a Fedora/KDE Plasma 6 (Wayland)
 laptop with an Intel NPU (Wildcat Lake/Panther Lake, 16 TOPS). Uses OpenVINO
 GenAI's `WhisperPipeline` running on-device (`device="NPU"`). Captures system
 audio (or the mic) continuously, transcribes overlapping windows, and prints
-captions to the terminal.
+captions to the terminal, or, optionally, draws them in a floating Wayland
+overlay (`gui/`, Rust, added 2026-09-12).
 
 Originally scoped as toggle-mode voice typing (record, transcribe, inject text
 via `ydotool`), pivoted 2026-08-03 to live captioning. The toggle-mode code is
@@ -46,7 +47,10 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 | Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
-Not built: the KDE `Meta+H` shortcut still points at Ghostty's `new-window`.
+The global shortcut exists as of 2026-09-12, and it is the overlay's, not
+Meta+H: `vinowhisper-gui` asks the portal for Meta+Alt+C, the user confirmed
+it in Plasma's dialog, and toggling worked. Meta+H stays Ghostty's
+`new-window`, which it was already bound to.
 
 **2026-08-13: distribution and the "other" aspects.** The tool now assumes
 less about the machine it runs on: automatic NPU>GPU>CPU selection with loud
@@ -115,10 +119,76 @@ consumers, that switch is a swap, not a rewrite.
   only picked up on the auto-refresh thread's next tick, so any redraw in
   between (notably the one Live does when the transcript scrolls) paints stale
   numbers. This was a real bug, caught in rendering tests, not theory.
-- **Pinning is a KWin window rule**, not an app concern. Do not go looking for
-  a layer-shell surface unless this becomes a real GUI overlay.
+- **Pinning the terminal is a KWin window rule**, not an app concern. It did
+  become a real GUI overlay, and that one *is* a layer-shell surface; see the
+  next section. The terminal UI is unchanged by it.
 - **`--debug` and `--plain` fall back to `TerminalRenderer`**, and so does a
   non-TTY stdout, so piping to a file still works.
+
+## The GUI overlay (`gui/`, Rust), added 2026-09-12
+
+Asked for by the user: a GUI that floats above other applications, a tray
+icon to bring it up, a keyboard shortcut (customisable), simple to install,
+"not 100 deps", optional so the TUI installs without it, and, mid-build,
+"preferably native code, like rust, wayland compatible." Full write-up in
+`docs/gui.md`. The load-bearing facts:
+
+- **It is a fourth event consumer, in another process.** It spawns
+  `vinowhisper-caption --json` and draws what comes back; `caption.JsonRenderer`
+  writes `events.to_dict` verbatim, one ASCII-escaped line each, plus an
+  `Error` record. Nothing about capture or stitching is reimplemented, and the
+  Python package gained zero dependencies. `tests/test_caption.py` names every
+  field `gui/src/protocol.rs` reads; rename one and a Python test fails.
+- **Why Rust, measured rather than guessed.** PySide6-Essentials is two wheels
+  but 232MB installed. Fedora's PyGObject is built for Python 3.14, which this
+  project's venv cannot be. The Rust release binary is 5.6MB and links only
+  libc/libm/libgcc_s (every crate is pure Rust: SCTK without libwayland or
+  xkbcommon, cosmic-text parsing fontconfig's files, ksni and ashpd over zbus).
+  135 crates, but only at build time.
+- **Floating above everything is wlr-layer-shell's overlay layer**, above
+  fullscreen windows, with no window rule. The input region is empty, so it is
+  click-through and never blocks the video controls under it. GNOME has no
+  layer-shell, so it exits with a message there instead of faking it with a
+  normal window. Fractional scale (`wp_fractional_scale_v1` + viewporter),
+  because this laptop runs at 1.5x.
+- **Hidden means stopped.** Hiding sends SIGINT to the caption process, so the
+  server still idles out. A hidden overlay that kept transcribing would defeat
+  scale-to-zero.
+- **The shortcut needs a desktop file. Measured 2026-09-12 on Plasma 6.7:**
+  without `io.github.karanshukla.vinowhisper.desktop`, the portal registry
+  refuses the app id ("App info not found") and GlobalShortcuts refuses the
+  shortcut ("An app id is required"). So `install::ensure_launcher` writes it
+  on first run. Customising is the desktop's job: the tray's "Change shortcut…"
+  calls the portal's ConfigureShortcuts, which opens System Settings.
+- **The child cannot outlive the GUI**: `PR_SET_PDEATHSIG` in `pre_exec`. Linux
+  fires it when the *spawning thread* exits, so sessions are only ever started
+  from the main thread.
+- **One instance per session** via `$XDG_RUNTIME_DIR/vinowhisper-gui.sock`, so
+  `vinowhisper-gui toggle` works from any keybinding tool.
+- **Distribution: a GitHub release asset, installed by the wizard. Not PyPI,
+  not (yet) COPR.** Both were user decisions on 2026-09-12. A Rust binary
+  inside a Python wheel was rejected outright. COPR is deferred, not refused:
+  Fedora 44 cannot carry the Python side at all (openvino 2025.1.0 against a
+  2026.3.1 floor, and no openvino-genai, openvino-tokenizers or optimum), and
+  its Rust crates are too old (smithay-client-toolkit 0.19, no cosmic-text or
+  ksni), so it would be an overlay-only package with vendored crates.
+  `--export-desktop` and the wizard's /usr/bin handling are the hooks left for
+  it.
+- **How the wizard trusts the download** (`vinowhisper/overlay.py`):
+  release.yml builds the musl binary, `scripts/pin_gui_release.py` writes its
+  sha256 into `vinowhisper/gui_release.json`, and only then is the wheel built,
+  so PyPI's wheel pins GitHub's binary. **No pin means no download**
+  (characterization test), and a mismatch installs nothing and fails setup.
+  This is why the whole repo has one version, held by `bump-my-version` and
+  `tests/test_packaging.py`: the download URL is the Python package's version.
+- **Rust tests follow the same rule as `tests/`**: no compositor, tray or
+  portal. They draw into memory and bind scratch sockets. The `gui` CI job runs
+  fmt, `clippy -D warnings` and `cargo test --locked`.
+
+Verified on hardware 2026-09-12: the overlay drew correctly at 1.5x, `quit`
+over the socket stopped both processes mid cold start, the portal dialog
+bound Meta+Alt+C, and the user toggled it. **Not yet seen with real speech on
+screen**, and never run on any other compositor.
 
 ## Architecture
 
@@ -142,6 +212,11 @@ vinowhisper/
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install
+gui/              vinowhisper-gui, the Rust overlay/tray/shortcut; cargo, not uv
+  src/app.rs      event loop, layer-shell surface, the caption child's lifecycle
+  src/captions.rs what the box shows, as plain data (the testable part)
+  src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
+  src/protocol.rs the --json wire format
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports),
@@ -497,6 +572,9 @@ Ordered by what would most change the design.
 8. **Does the same break exist on the stateful (CPU/GPU) path?** The failure is
    in the NPU static pipeline specifically, and nobody has produced a stateful
    export at all, so it is unknown whether transformers 5.4.0 matters there.
+9. **Does the overlay work anywhere but Plasma?** Sway, Hyprland, niri and
+   COSMIC all offer layer-shell; none has been tried. And should releases
+   attach a prebuilt `vinowhisper-gui`, so installing it stops needing cargo?
 
 ## Conventions
 

@@ -76,7 +76,7 @@ _vinowhisper() {
             esac
             mapfile -t COMPREPLY < <(compgen -W "
                 --source --target --list-targets --window --record
-                --plain --debug --version --help" -- "$cur")
+                --plain --debug --json --version --help" -- "$cur")
             ;;
         vinowhisper-replay)
             case "$prev" in
@@ -103,7 +103,7 @@ _vinowhisper() {
             fi
             if [[ $cmd == vinowhisper-setup ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "
-                    --yes --dry-run --device --print-units --version --help" -- "$cur")
+                    --yes --dry-run --device --print-units --gui --version --help" -- "$cur")
             else
                 mapfile -t COMPREPLY < <(compgen -W "--device --version --help" -- "$cur")
             fi

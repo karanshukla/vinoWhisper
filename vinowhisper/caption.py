@@ -10,11 +10,15 @@ latency: the commit policy needs two cycles to agree before anything prints
 (see stitch.py), so captions trail the audio by roughly twice it.
 
 `caption_events` yields events rather than printing (see events.py). The
-terminal renderer below is one consumer, the session recorder is another, and
-an on-top TUI would be a third.
+terminal renderer below is one consumer, the session recorder is another, the
+Rich status bar a third, and `--json` hands the same stream to anything outside
+this process — which is how vinowhisper-gui (gui/, in Rust) gets its captions
+without a second implementation of any of this.
 """
 
 import argparse
+import json
+import os
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -204,6 +208,46 @@ class TerminalRenderer:
         )
 
 
+class JsonRenderer:
+    """One JSON object per event on stdout, for vinowhisper-gui or anything
+    else that wants the event stream rather than the text.
+
+    The records are `events.to_dict`, unchanged, so a field added to an event
+    reaches every consumer at once. The one addition is `Error`, which the CLI
+    writes when it gives up: a GUI has no terminal to show stderr on, and "the
+    process exited 1" is not something anyone can act on.
+
+    ASCII-escaped on purpose. Whisper emits curly quotes and em dashes
+    routinely, and a reader on the other end of a pipe (a desktop autostart, a
+    systemd unit under LANG=C) should never have to care what the encoding is;
+    a split multi-byte character is exactly the crash the 2026-08-06 review
+    found in the HTTP client.
+    """
+
+    def __init__(self) -> None:
+        # Resolved now rather than at import, so a redirected stdout (pytest's
+        # capsys among them) is the one written to.
+        self._stream = sys.stdout
+
+    def __enter__(self) -> "JsonRenderer":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def handle(self, event: events.Event) -> None:
+        self._write(events.to_dict(event))
+
+    def error(self, message: str) -> None:
+        self._write({"event": "Error", "message": message})
+
+    def _write(self, record: dict) -> None:
+        # Flushed per line: the reader is waiting on each one, and a block
+        # buffer would hold a whole cycle's captions back until it filled.
+        self._stream.write(json.dumps(record) + "\n")
+        self._stream.flush()
+
+
 def _renderer(plain: bool, debug: bool):
     """The status bar when there's a terminal to draw it on, plain text
     otherwise. Both consume the same events; neither knows about the loop.
@@ -262,6 +306,12 @@ def _parse_args() -> argparse.Namespace:
         "apart Whisper re-decoding the same audio differently, a slow cycle, "
         "and a bug in the stitching. Implies --plain.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="One JSON object per event on stdout instead of text: what "
+        "vinowhisper-gui reads. Human-readable messages stay on stderr.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     return parser.parse_args()
 
@@ -315,6 +365,7 @@ def main() -> int:
     # The status bar redraws, so it and the raw per-cycle dump would fight over
     # the same screen. --debug is for reading numbers, not watching captions.
     plain = args.plain or args.debug or not sys.stdout.isatty()
+    json_out = JsonRenderer() if args.json else None
     writer = session.SessionWriter(args.record) if args.record else None
     try:
         stream = caption_events(
@@ -323,13 +374,15 @@ def main() -> int:
             window_s=args.window,
             tap=writer.audio_chunk if writer else None,
         )
-        with _renderer(plain, debug=args.debug) as renderer:
+        with json_out or _renderer(plain, debug=args.debug) as renderer:
             for event in stream:
                 if writer is not None:
                     writer.event(event)
                 renderer.handle(event)
     except CaptureError as exc:
         print(f"\n[vinowhisper] capture failed: {exc}", file=sys.stderr)
+        if json_out is not None:
+            json_out.error(f"Capture failed: {exc}")
         return 1
     except requests.RequestException as exc:
         print(
@@ -339,9 +392,20 @@ def main() -> int:
             "  vinowhisper-setup         # install the units if they were never installed",
             file=sys.stderr,
         )
+        if json_out is not None:
+            json_out.error(
+                f"The transcription server is not reachable at {config.SERVER_URL}. "
+                "Run vinowhisper-doctor to see what is missing."
+            )
         return 1
+    except BrokenPipeError:
+        # The reader went away: vinowhisper-gui quit, or `| head` had enough.
+        # Point stdout at /dev/null so the interpreter's own flush on the way
+        # out does not raise the same error a second time.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
     except KeyboardInterrupt:
-        print(flush=True)
+        print(file=sys.stderr if json_out else sys.stdout, flush=True)
     finally:
         if writer is not None:
             writer.close()

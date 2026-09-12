@@ -31,7 +31,26 @@ on:
 permissions: {}
 
 jobs:
+  gui:
+    # The caption overlay, built once and used twice: `build` pins its sha256
+    # into the wheel, and `github-release` attaches the binary itself, which
+    # `vinowhisper-setup --gui` downloads and checks against that pin. It never
+    # goes to PyPI. musl, so the one binary is fully static and runs on any
+    # distro's libc (static-pie, 6.0MB, measured 2026-09-12).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl
+      - run: rustup default stable
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path gui/Cargo.toml
+      - run: cp gui/target/x86_64-unknown-linux-musl/release/vinowhisper-gui vinowhisper-gui-x86_64-linux
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gui
+          path: vinowhisper-gui-x86_64-linux
+
   build:
+    needs: gui
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -53,8 +72,28 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gui
+
+      - name: Pin the overlay binary into the package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        # Before `uv build`, so the wheel on PyPI carries the digest of the
+        # exact binary this run attaches to the GitHub Release.
+        run: python3 scripts/pin_gui_release.py vinowhisper-gui-x86_64-linux --version "$VERSION" --arch x86_64
+
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Check the wheel carries the overlay pin
+        # Without it `vinowhisper-setup --gui` refuses to download, by design,
+        # so a wheel that lost it would ship an overlay nobody can install.
+        run: |
+          if ! unzip -l dist/*.whl | grep -q 'vinowhisper/gui_release.json'; then
+            echo "::error::the wheel has no vinowhisper/gui_release.json"
+            exit 1
+          fi
 
       - name: Check the metadata renders on PyPI
         # A README that renders on GitHub can still be rejected by PyPI, and a
@@ -92,6 +131,13 @@ jobs:
             echo
             echo '```'
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VERSION}/scripts/install.sh | bash"
+            echo '```'
+            echo
+            echo 'The optional caption overlay (`vinowhisper-gui-x86_64-linux` below) is'
+            echo 'installed and checked against the digest pinned in the wheel by:'
+            echo
+            echo '```'
+            echo 'vinowhisper-setup --gui'
             echo '```'
           } >> RELEASE_NOTES.md
 
@@ -135,6 +181,13 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
+
+      # The overlay binary goes here and nowhere else: dist/ is what the pypi
+      # job uploads, and a Rust binary has no place on PyPI.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gui
+          path: dist
 
       - name: Checksums
         run: |

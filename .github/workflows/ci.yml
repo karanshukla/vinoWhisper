@@ -55,3 +55,21 @@ jobs:
         run: shellcheck scripts/install.sh scripts/convert_model.sh
       - name: bash -n the completion script
         run: bash -n scripts/vinowhisper-completion.bash
+
+  gui:
+    # The caption overlay (gui/) is Rust and separate from the Python package.
+    # Every crate in it is pure Rust, so a stock runner builds it with nothing
+    # installed beyond the toolchain. None of its tests needs a compositor, a
+    # tray or a portal: they draw into memory, bind scratch sockets and write
+    # into temp dirs, the same bargain tests/ makes about the NPU.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - run: rustup default stable
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked

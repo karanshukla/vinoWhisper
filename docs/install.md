@@ -160,9 +160,18 @@ Until upstream fixes it, the pin's `known_bad` entry carries a floor at
 transformers 5.4.0, so `vinowhisper-setup` and `convert_model.sh` report a
 `known_bad` export rather than handing over a model that fails later.
 
-## Pinning it on top
+## The caption overlay (optional)
 
-The status bar is Rich in an ordinary terminal, so keeping it above other
+`vinowhisper-setup --gui` installs `vinowhisper-gui`, a floating caption box
+with a tray icon and a global shortcut. It downloads the binary from the
+GitHub release and checks it against the sha256 pinned in the Python package,
+so no Rust toolchain is needed. It is never on PyPI; from a checkout it can be
+built with cargo instead (`./scripts/install.sh --gui`). See [gui.md](gui.md).
+
+## Pinning the terminal on top
+
+The overlay above stays on top by itself. For the terminal UI instead: the
+status bar is Rich in an ordinary terminal, so keeping it above other
 windows is a window-manager job, not the app's. On KWin: System Settings >
 Window Management > Window Rules, match the terminal window, set Keep Above
 Other Windows to Force/Yes, plus Skip Taskbar and Skip Pager if you want it out

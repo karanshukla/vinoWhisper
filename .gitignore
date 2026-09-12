@@ -12,6 +12,9 @@ coverage.lcov
 htmlcov/
 dist/
 build/
+gui/target/
+# written by release.yml just before `uv build`; a checkout must not have one
+vinowhisper/gui_release.json
 
 # recorded sessions (vinowhisper-caption --record), ~2MB per minute
 *.wav
