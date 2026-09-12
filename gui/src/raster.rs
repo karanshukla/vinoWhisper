@@ -122,7 +122,7 @@ impl<'a> Canvas<'a> {
     /// StatusNotifierItem pixmap is.
     pub fn to_argb32_be(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.pixels.len());
-        for pixel in self.pixels.chunks_exact(4) {
+        for pixel in self.pixels.as_chunks::<4>().0 {
             let alpha = pixel[3];
             let straight = |premultiplied: u8| {
                 if alpha == 0 {
