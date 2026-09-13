@@ -58,9 +58,47 @@ warnings anywhere below NPU, a PulseAudio capture fallback, a distro table
 covering eight package families, `vinowhisper-setup` (guided install,
 generated systemd units — the checked-in unit used to hardcode
 `~/Development/vinoWhisper`), `scripts/install.sh`, a test suite, and CI.
-**None of the new hardware paths have run on hardware**: the GPU and CPU
-fallbacks, the stateful export, and every non-Fedora package name are
-unverified. Treat them as best-effort until someone reports otherwise.
+**Most of the new hardware paths have still not run on hardware.** The CPU
+fallback and the stateful export have, as of 2026-09-12 (2.30s per 12s
+window). The GPU path, the PulseAudio backend and every non-Fedora package
+name are unverified; treat them as best-effort until someone reports
+otherwise.
+
+**2026-09-12: beyond the Intel NPU.** Asked for by the user: GPU support, AMD
+NPU support, and a survey of what stands between this and "complete". What it
+found, in the order it matters:
+
+- **OpenVINO's device list cannot tell "no GPU" from "an Intel GPU with no
+  compute runtime".** This laptop was in the second case (Xe3 iGPU
+  `8086:fd80`, no `/etc/OpenCL/vendors`), and the doctor had three NPU checks
+  and no GPU check. `devices.hardware()` reads the PCI bus from sysfs so the
+  doctor and wizard can name it. `distro.GPU_RUNTIME` had package names for
+  seven families and nothing read it.
+- **AMD NPUs report PCI class `0x1180`**, which Intel reuses for thermal and
+  telemetry devices (two sit on this bus), so they are matched by the
+  `amdxdna` driver or its ID table, never by class.
+- **Both Fedora install lines named `level-zero`**, which Fedora has no
+  package or Provides for (the loader is `oneapi-level-zero`), so `dnf install
+  -y` failed outright. This was the one family the table called confirmed.
+- **AMD NPU: nothing to ship.** OpenVINO has no AMD NPU plugin, and the only
+  Linux runtime running Whisper on one is FastFlowLM, XDNA2-only and
+  large-v3-turbo-only, with proprietary kernels and XRT built from source on
+  Fedora. It is detected and reported as present and unusable.
+- **Non-Intel GPUs: whisper.cpp over Vulkan is the candidate**, one engine for
+  AMD, NVIDIA and Intel with no ROCm or CUDA. Its PyPI wheels are CPU-only, so
+  it would ship as a pinned release asset like the overlay. On CPU it takes
+  4.79s per 12s window against OpenVINO's 2.30s (v1.9.4, 6 threads,
+  2026-09-12), so its case rests entirely on Vulkan. Needs a backend seam in
+  `transcriber.py`, which is OpenVINO end to end.
+- **Intel iGPU through OpenVINO: not yet measured**, blocked on installing
+  `intel-compute-runtime` (26.22 in Fedora 44, which is the first release
+  listing Wildcat Lake as production).
+
+`convert_model.sh` takes `--out`, not an `OUT_DIR` environment variable; it
+initialises `OUT_DIR=""` itself. Setting the variable exports into the real
+model directory, which is how the NPU export on this laptop was overwritten on
+2026-09-12 by a transformers 5.3.0 export (it decodes at 0.75s per 12s window,
+but reports drift against the 2026.2.1 pin).
 
 ## The UI, and why it is Rich and not Textual
 
@@ -215,7 +253,8 @@ vinowhisper/
   audio.py        RingBuffer (fixed capacity, thread-safe), rms(), normalize()
   capture.py      which audio backend exists (pw-record/parec), argv, node enumeration
   recorder.py     Recorder, the capture subprocess feeding the ring buffer
-  devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight
+  devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight,
+                  the PCI bus (what is present, as against what OpenVINO enumerates)
   distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP client
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
@@ -461,13 +500,17 @@ emitting that name. Patching `num_hidden_layers` back into 5.4.0's config.json
 (the other visible config change) does not help, which is how that hypothesis
 was ruled out.
 
-Not fixed here: `pyproject.toml` does not pin `transformers<5.4`. It would
-hold a package back for everyone, and it is a dependency-policy call rather
-than a bug fix. The verified-working combination is optimum-intel 2.1.0 +
-optimum 2.3.0 + transformers 5.3.0, so the pin is narrow if it is wanted.
-Meanwhile the `known_bad` entry in `model_digests.json` carries a floor at
-transformers 5.4.0, so `vinowhisper-setup` fails that step rather than handing
-over a model that dies at the first transcription.
+Fixed 2026-09-12, by the user's choice of an export extra over a global pin:
+optimum moved out of the runtime dependencies into `vinowhisper[export]`,
+which holds `transformers<5.4`. The runtime never imported transformers, so
+nothing else is held back, and the default install drops optimum and torch.
+Verified with a fresh `uv sync --extra export`: 5.3.0 resolves, the NPU export
+completes and decodes at 0.75s per 12s window. The `known_bad` floor in
+`model_digests.json` stays, for exports made some other way. The wizard finds
+`optimum-cli` beside the interpreter before PATH and offers the extra when it
+is missing (`uv sync --extra export` in a checkout, since pip installing from
+PyPI would replace the editable install). The stateful export is unaffected:
+it builds and decodes under 5.5.4.
 
 ## Known gotchas
 
@@ -608,31 +651,35 @@ Ordered by what would most change the design.
 3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical
    terminal. Column budgets at narrow widths are the likely rough edge.
-4. **Does the CPU/GPU fallback actually run?** The stateful export has never
-   been produced, let alone loaded. The plumbing is there and the failure
-   modes are handled; whether `WhisperPipeline` on CPU with that export is
-   usable at 12s windows is unknown. Cheapest check:
-   `./scripts/convert_model.sh --variant stateful` then
-   `vinowhisper-server --device CPU`.
+4. **Answered 2026-09-12 for the CPU: it runs, at 2.30s mean / 2.68s p90 per
+   12s window** on the Core 5 320 (stateful export, 43s to produce, 930MB), so
+   lag lands near 4.6s. The GPU half is open: OpenVINO did not enumerate the
+   Xe3 iGPU because the compute runtime was not installed. Cheapest check is
+   `sudo dnf install intel-compute-runtime`, then the doctor.
 5. **Are the non-Fedora package names right?** Eight families in `distro.py`,
    one of them confirmed by use. Each wrong name is a one-line fix and there is
    an issue template pointed at exactly this.
 6. **Does the PulseAudio backend capture anything?** `parec` argv is unit-
    tested; it has never run against a PulseAudio server.
-7. **Should `pyproject.toml` pin `transformers<5.4`?** Answered as far as the
-   measurement goes: it is transformers, the pin is narrow, and
-   optimum-intel 2.1.0 + optimum 2.3.0 + transformers 5.3.0 is verified working
-   on the NPU. What is left is the policy call, holding a package back for
-   everyone against shipping a tool whose first export fails. Only the export
-   needs the old transformers; the runtime does not use it at all, which is an
-   argument for a separate export extra rather than a hard dependency pin.
-8. **Does the same break exist on the stateful (CPU/GPU) path?** The failure is
-   in the NPU static pipeline specifically, and nobody has produced a stateful
-   export at all, so it is unknown whether transformers 5.4.0 matters there.
+7. **Answered 2026-09-12: neither a global pin nor nothing, an export extra.**
+   See the transformers section above.
+8. **Answered 2026-09-12: no, for the export.** The stateful export builds
+   under transformers 5.5.4 and decodes on the CPU. The break is in the NPU
+   static pipeline's tensor lookup only.
 9. **Does the overlay work anywhere but Plasma?** Sway, Hyprland, niri and
    COSMIC all offer layer-shell; none has been tried. (Releases attach a
    prebuilt static `vinowhisper-gui` from 0.4.0 on, installed and verified by
    `vinowhisper-setup --gui`, so installing it no longer needs cargo.)
+10. **Is whisper.cpp over Vulkan fast enough, and does its wording drift break
+    the stitcher?** It is the path to AMD and NVIDIA GPUs, and half
+    OpenVINO's speed on CPU. Nobody has published small.en timings on an iGPU,
+    and the stitcher is tuned against OpenVINO's drift across overlapping
+    windows. This laptop can answer both once `glslc` is installed for the
+    Vulkan build.
+11. **When does an AMD NPU become worth supporting?** When FastFlowLM or Ryzen
+    AI Software runs Whisper small or small.en on Linux. Until then an opt-in
+    backend pointing at FastFlowLM's OpenAI-compatible endpoint is the most it
+    is worth, and only if someone with XDNA2 hardware asks.
 
 ## Conventions
 

@@ -24,6 +24,23 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   three measured on real NPU decodes of recorded speech, the first such
   recordings this project has had; one is now a test fixture. See
   `docs/latency.md`.
+- **A fresh install gets past the model step.** The dependency set resolved
+  transformers 5.5.4, whose NPU export builds and then fails at `generate()`,
+  so `vinowhisper-setup` stopped at the model step on every new machine. The
+  export tooling is now its own extra, `vinowhisper[export]`, holding
+  `transformers<5.4`, and the wizard offers it when it needs to export. The
+  default install no longer carries optimum or torch, which only the one-time
+  export ever used. See `docs/install.md`.
+- **The GPU fallback can be diagnosed, and hardware OpenVINO cannot drive is
+  named.** OpenVINO's device list cannot tell "no GPU" from "an Intel GPU with
+  no compute runtime", and this laptop sat in the second case with nothing
+  saying so. The doctor and the wizard now read the PCI bus, name a missing
+  OpenCL runtime with the install command for your distro, report AMD NPUs and
+  AMD or NVIDIA GPUs as present but unusable, and stop offering an Intel NPU
+  driver to machines without an Intel NPU. See `docs/hardware.md`.
+- **Fedora's install lines named a package that does not exist.** The NPU
+  driver and GPU runtime lines both included `level-zero`, which Fedora has no
+  package for, so `dnf install -y` failed outright. Each is one package now.
 
 ### 🎨 Styling
 
