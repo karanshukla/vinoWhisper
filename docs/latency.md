@@ -27,6 +27,23 @@ speech (28 words a window), 0.70s mean and 0.85s p90 on a LibriVox reading
 (32 words a window, 806 cycles over ten minutes, no drift in either number
 across the session). So the hop sits at 0.7s and the lag floor at about 1.5s.
 
+The same reading at three window sizes, same day, each a full ten-minute pass
+at the loop's own pacing, scored against the Gutenberg text (n=1, one voice,
+one laptop):
+
+| window | cycles | decode mean | p90 | hop | lag floor | wrong or extra words | dropped |
+|---|---|---|---|---|---|---|---|
+| 8s | 1044 | 0.53s | 0.61s | 0.57s | ~1.1s | 102 | ~28 |
+| 12s | 806 | 0.70s | 0.85s | 0.74s | ~1.4s | 93 | ~38 |
+| 16s | 665 | 0.87s | 1.06s | 0.90s | ~1.7s | 93 | ~24 |
+
+Decode time tracks the window because the decoder is autoregressive, but the
+encoder's fixed cost keeps the spread to a third of a second across the whole
+range. Accuracy is flat from 12s up and about 10% worse at 8s, which is the
+edge effect: a shorter window has more cycles where a phrase is cut
+mid-sentence. 12s stays the default; 8s is a fair trade if 0.3s matters more
+than a handful of words an hour, and 16s buys nothing measurable.
+
 `--debug` prints the numbers to tune against: window length, hop, RMS, gain
 applied, time to first streamed piece, total cycle time, and how many words
 each cycle confirmed versus held pending.

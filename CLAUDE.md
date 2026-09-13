@@ -594,8 +594,10 @@ over a model that dies at the first transcription.
 
 Ordered by what would most change the design.
 
-1. **Answered 2026-09-12: 0.70s mean, 0.85s p90 at 12s on real speech.** The
-   lag floor is therefore ~1.5s and the window is not the lever any more. The
+1. **Answered 2026-09-12: 0.70s mean, 0.85s p90 at 12s on real speech**, and
+   0.53s at 8s, 0.87s at 16s, with accuracy flat from 12s up and ~10% worse
+   at 8s (table in `docs/latency.md`). The lag floor is therefore ~1.5s and
+   the window is not the lever any more. The
    next one is trimming confirmed audio out of the buffer, which needs
    `return_timestamps`, and nobody has checked whether the NPU static pipeline
    supports it.
