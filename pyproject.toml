@@ -44,7 +44,6 @@ dependencies = [
     # NPU pipeline hard-depends on it, and a transitive-only dependency is one
     # upstream packaging change away from disappearing silently.
     "openvino-tokenizers>=2026.3.1.0",
-    "optimum[openvino]",
     "flask",
     "werkzeug",
     "requests",
@@ -53,6 +52,16 @@ dependencies = [
     # append-only (see stitch.py), so it belongs in the terminal's own
     # scrollback and only the status line needs to redraw.
     "rich",
+]
+
+[project.optional-dependencies]
+# Only the one-time model export uses these, and optimum brings torch with it,
+# so they stay out of the default install. transformers 5.4.0 stopped emitting
+# the cache_position tensor the NPU static pipeline resolves by name, so an
+# export under it builds and then fails at generate() (docs/install.md).
+export = [
+    "optimum[openvino]",
+    "transformers<5.4",
 ]
 
 [project.urls]

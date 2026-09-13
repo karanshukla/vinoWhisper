@@ -70,7 +70,7 @@ if [[ -n "$OUT_DIR" && "$VARIANT" == "both" ]]; then
 fi
 
 if ! command -v optimum-cli >/dev/null 2>&1; then
-    echo "optimum-cli not found. Run 'uv sync' first, or 'uv run $0 $*'." >&2
+    echo "optimum-cli not found. It is the optional export extra: run 'uv sync --extra export' first." >&2
     exit 1
 fi
 

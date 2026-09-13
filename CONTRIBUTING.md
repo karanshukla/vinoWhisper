@@ -24,7 +24,7 @@ NPU. Most of what would make it good for anyone else is knowledge about
 ```bash
 git clone https://github.com/karanshukla/vinoWhisper
 cd vinoWhisper
-uv sync                 # the real environment: OpenVINO, Python <3.14
+uv sync --extra export  # the real environment: OpenVINO, the export tooling, Python <3.14
 uv run vinowhisper-setup --dry-run   # see what a full install would do
 ```
 

@@ -42,8 +42,8 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 
 | Problem | Status |
 |---|---|
-| Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
-| Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
+| Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Measured 2026-09-12: 0.70s mean decode at 12s on real speech, hop 0.74s, lag floor ~1.5s. |
+| Incorrect captions | Two real stitching bugs fixed 2026-08-06, and three more 2026-09-12 (see Bugs found below). Wording drift across cycles is inherent; what it used to do to the stitcher is not. |
 | Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
@@ -58,9 +58,51 @@ warnings anywhere below NPU, a PulseAudio capture fallback, a distro table
 covering eight package families, `vinowhisper-setup` (guided install,
 generated systemd units — the checked-in unit used to hardcode
 `~/Development/vinoWhisper`), `scripts/install.sh`, a test suite, and CI.
-**None of the new hardware paths have run on hardware**: the GPU and CPU
-fallbacks, the stateful export, and every non-Fedora package name are
-unverified. Treat them as best-effort until someone reports otherwise.
+**Most of the new hardware paths have still not run on hardware.** The CPU
+and Intel GPU fallbacks and the stateful export have, as of 2026-09-12 (2.30s
+and 0.95s per 12s window). The PulseAudio backend and every non-Fedora
+package name are unverified; treat them as best-effort until someone reports
+otherwise.
+
+**2026-09-12: beyond the Intel NPU.** Asked for by the user: GPU support, AMD
+NPU support, and a survey of what stands between this and "complete". What it
+found, in the order it matters:
+
+- **OpenVINO's device list cannot tell "no GPU" from "an Intel GPU with no
+  compute runtime".** This laptop was in the second case (Xe3 iGPU
+  `8086:fd80`, no `/etc/OpenCL/vendors`), and the doctor had three NPU checks
+  and no GPU check. `devices.hardware()` reads the PCI bus from sysfs so the
+  doctor and wizard can name it. `distro.GPU_RUNTIME` had package names for
+  seven families and nothing read it.
+- **AMD NPUs report PCI class `0x1180`**, which Intel reuses for thermal and
+  telemetry devices (two sit on this bus), so they are matched by the
+  `amdxdna` driver or its ID table, never by class.
+- **Both Fedora install lines named `level-zero`**, which Fedora has no
+  package or Provides for (the loader is `oneapi-level-zero`), so `dnf install
+  -y` failed outright. This was the one family the table called confirmed.
+- **AMD NPU: nothing to ship.** OpenVINO has no AMD NPU plugin, and the only
+  Linux runtime running Whisper on one is FastFlowLM, XDNA2-only and
+  large-v3-turbo-only, with proprietary kernels and XRT built from source on
+  Fedora. It is detected and reported as present and unusable.
+- **Non-Intel GPUs: whisper.cpp over Vulkan is the candidate**, one engine for
+  AMD, NVIDIA and Intel with no ROCm or CUDA. Its PyPI wheels are CPU-only, so
+  it would ship as a pinned release asset like the overlay. On CPU it takes
+  4.79s per 12s window against OpenVINO's 2.30s (v1.9.4, 6 threads,
+  2026-09-12), so its case rests entirely on Vulkan. Needs a backend seam in
+  `transcriber.py`, which is OpenVINO end to end.
+- **Intel iGPU through OpenVINO: 0.95s per 12s window** (p90 1.15-1.31s)
+  once `intel-compute-runtime` 26.22 was installed, which is the first release
+  listing Wildcat Lake as production. That is about 35% behind the NPU's 0.70s
+  and well ahead of the CPU. Two of fifteen loads segfaulted inside the GPU
+  plugin's `compile_model` (a null read in
+  `IStreamsExecutor::Config::update_executor_config`); decoding never failed,
+  and ten further load-and-decode runs did not reproduce it. Cause unknown.
+
+`convert_model.sh` takes `--out`, not an `OUT_DIR` environment variable; it
+initialises `OUT_DIR=""` itself. Setting the variable exports into the real
+model directory, which is how the NPU export on this laptop was overwritten on
+2026-09-12 by a transformers 5.3.0 export (it decodes at 0.75s per 12s window,
+but reports drift against the 2026.2.1 pin).
 
 ## The UI, and why it is Rich and not Textual
 
@@ -215,7 +257,8 @@ vinowhisper/
   audio.py        RingBuffer (fixed capacity, thread-safe), rms(), normalize()
   capture.py      which audio backend exists (pw-record/parec), argv, node enumeration
   recorder.py     Recorder, the capture subprocess feeding the ring buffer
-  devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight
+  devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight,
+                  the PCI bus (what is present, as against what OpenVINO enumerates)
   distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP client
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
@@ -391,6 +434,44 @@ check that runs only when the internal `SequenceMatcher` search comes back
 empty. Reproduced and verified against a stubbed stitcher, not yet re-run on
 hardware.
 
+## Bugs found 2026-09-12, from the first recorded sessions
+
+Reported as "words being duplicated" and captions that "crumble" over a
+session. No recording existed, so one was made: a harness that slides a 12s
+window over a WAV at the loop's own pacing, posting each window to the live
+server and pushing the text through the stitcher. Two sessions, both against a
+known text: 55s of espeak-ng reading `docs/` prose (now
+`tests/fixtures/espeak_12s_session.jsonl`) and ten minutes of a LibriVox
+reading of Pride and Prejudice (806 cycles). Every finding below is from
+those, and none has been seen on the user's own content yet.
+
+1. **A confirmed word re-decoded differently printed twice.** The real
+   hop is 0.7s (journal and harness agree), so the freshest confirmed word is
+   a second from the window's edge and two near-identical windows agree on it
+   while Whisper is still flipping ("Whiskers"/"Whispers"/"Whisper's" over
+   five cycles). When the decode settles on another form the anchor cannot
+   match it, the cut lands a word early, and the settled form prints as new.
+   Fixed with `_redecode_len`: confirmed words past the anchor match are
+   compared as joined strings against the head of the new text and skipped on
+   resemblance. Insertions 60 to 43 on the LibriVox session, 8 to 3 on espeak;
+   what remains is not reprints.
+2. **The 2026-09-01 boundary check only worked for the first minute.** It
+   compared `confirmed[-len(curr):]` against `curr` position for position, so
+   it matched only while the whole transcript fit in one window. The test
+   that pinned it had a two-word transcript. Now checks every overlap length.
+3. **A long stall was permanent.** Once the confirmed tail rolled out of the
+   window nothing put pending and the new text back in step, so the loop sat
+   until a spurious match and then dropped everything before it. Now
+   `_realign` lines pending up inside the new text. Forced with four-cycle
+   agreement: 75 of 141 words lost before, 28 after.
+
+Also measured and rejected: three cycles of agreement (15 fewer insertions,
+31 more dropped words, double the pending). The per-minute error rate on the
+ten-minute session is flat, and the user's own nine-minute session at 17:14
+held a steady request rate in the journal, so the NPU does not slow down
+over a session; the "crumbling" is the three bugs accumulating on a screen
+that keeps the last 160 words.
+
 ## transformers 5.4.0 breaks the NPU export, bisected 2026-09-04
 
 **Export with `transformers<5.4`.** Found while generating digest pins for
@@ -423,13 +504,17 @@ emitting that name. Patching `num_hidden_layers` back into 5.4.0's config.json
 (the other visible config change) does not help, which is how that hypothesis
 was ruled out.
 
-Not fixed here: `pyproject.toml` does not pin `transformers<5.4`. It would
-hold a package back for everyone, and it is a dependency-policy call rather
-than a bug fix. The verified-working combination is optimum-intel 2.1.0 +
-optimum 2.3.0 + transformers 5.3.0, so the pin is narrow if it is wanted.
-Meanwhile the `known_bad` entry in `model_digests.json` carries a floor at
-transformers 5.4.0, so `vinowhisper-setup` fails that step rather than handing
-over a model that dies at the first transcription.
+Fixed 2026-09-12, by the user's choice of an export extra over a global pin:
+optimum moved out of the runtime dependencies into `vinowhisper[export]`,
+which holds `transformers<5.4`. The runtime never imported transformers, so
+nothing else is held back, and the default install drops optimum and torch.
+Verified with a fresh `uv sync --extra export`: 5.3.0 resolves, the NPU export
+completes and decodes at 0.75s per 12s window. The `known_bad` floor in
+`model_digests.json` stays, for exports made some other way. The wizard finds
+`optimum-cli` beside the interpreter before PATH and offers the extra when it
+is missing (`uv sync --extra export` in a checkout, since pip installing from
+PyPI would replace the editable install). The stateful export is unaffected:
+it builds and decodes under 5.5.4.
 
 ## Known gotchas
 
@@ -498,6 +583,16 @@ over a model that dies at the first transcription.
   one toolchain, `integrity.py` reads the versions out of the export's own
   `rt_info` block to tell drift from tampering, and `scripts/update_digests.py`
   exists so re-pinning is a command rather than a paste.
+
+  **Not reproduced 2026-09-12, weeks later.** Re-exporting with every package
+  the pin records (OpenVINO 2026.2.1, optimum-intel 2.0.0, optimum 2.2.0,
+  transformers 5.0.0, torch 2.13.0, tokenizers 0.22.2) gave 6 decoder files
+  that differ from the pin, which `integrity.py` calls a mismatch on the same
+  toolchain. Unchecked suspects: packages the pin does not record (nncf,
+  numpy) and the model revision on Hugging Face. Until one is ruled in, read
+  "bit-reproducible" as "within a session's environment", and a same-toolchain
+  mismatch as possibly drift in something unrecorded before calling it
+  tampering.
 - **Model size is settled: whisper-small.en.** base.en (2.6x faster) and
   tiny.en (3.8x faster) both introduce real transcription errors. INT8 on
   small.en is free accuracy-wise but only buys ~10%, since the bottleneck is
@@ -556,43 +651,51 @@ over a model that dies at the first transcription.
 
 Ordered by what would most change the design.
 
-1. **What is the real per-cycle time at a 12s window on dense speech?** Record
-   a session, then `vinowhisper-replay --sweep 8,12,16,20`. If 12s is still
-   multiple seconds, the next lever is trimming confirmed audio out of the
-   buffer rather than shrinking the window further. That needs
+1. **Answered 2026-09-12: 0.70s mean, 0.85s p90 at 12s on real speech**, and
+   0.53s at 8s, 0.87s at 16s, with accuracy flat from 12s up and ~10% worse
+   at 8s (table in `docs/latency.md`). The lag floor is therefore ~1.5s and
+   the window is not the lever any more. The
+   next one is trimming confirmed audio out of the buffer, which needs
    `return_timestamps`, and nobody has checked whether the NPU static pipeline
    supports it.
-2. **Does the pipeline stay healthy under sustained continuous use?** Every
-   number so far comes from one-shot benchmarks. A long `--record` session is
+2. **Does the pipeline stay healthy under sustained continuous use?** Ten
+   minutes and 806 back-to-back decodes on 2026-09-12 showed no drift in
+   decode time. Longer is untested. A long `--record` session is
    the cheapest way to find out, since it leaves evidence either way.
 3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical
    terminal. Column budgets at narrow widths are the likely rough edge.
-4. **Does the CPU/GPU fallback actually run?** The stateful export has never
-   been produced, let alone loaded. The plumbing is there and the failure
-   modes are handled; whether `WhisperPipeline` on CPU with that export is
-   usable at 12s windows is unknown. Cheapest check:
-   `./scripts/convert_model.sh --variant stateful` then
-   `vinowhisper-server --device CPU`.
+4. **Answered 2026-09-12: both run.** CPU 2.30s mean / 2.68s p90 per 12s
+   window on the Core 5 320 (stateful export, 43s to produce, 930MB), so lag
+   lands near 4.6s. Xe3 iGPU 0.95s mean / 1.15-1.31s p90, loading in 2.0s warm
+   and 8.0s cold. What is left is the intermittent segfault in the GPU plugin's
+   `compile_model` (2 of 15 loads): does it recur under the socket-activated
+   server, and does `Restart=on-failure` recover it cleanly (issue #7)?
 5. **Are the non-Fedora package names right?** Eight families in `distro.py`,
    one of them confirmed by use. Each wrong name is a one-line fix and there is
    an issue template pointed at exactly this.
 6. **Does the PulseAudio backend capture anything?** `parec` argv is unit-
    tested; it has never run against a PulseAudio server.
-7. **Should `pyproject.toml` pin `transformers<5.4`?** Answered as far as the
-   measurement goes: it is transformers, the pin is narrow, and
-   optimum-intel 2.1.0 + optimum 2.3.0 + transformers 5.3.0 is verified working
-   on the NPU. What is left is the policy call, holding a package back for
-   everyone against shipping a tool whose first export fails. Only the export
-   needs the old transformers; the runtime does not use it at all, which is an
-   argument for a separate export extra rather than a hard dependency pin.
-8. **Does the same break exist on the stateful (CPU/GPU) path?** The failure is
-   in the NPU static pipeline specifically, and nobody has produced a stateful
-   export at all, so it is unknown whether transformers 5.4.0 matters there.
+7. **Answered 2026-09-12: neither a global pin nor nothing, an export extra.**
+   See the transformers section above.
+8. **Answered 2026-09-12: no, for the export.** The stateful export builds
+   under transformers 5.5.4 and decodes on the CPU. The break is in the NPU
+   static pipeline's tensor lookup only.
 9. **Does the overlay work anywhere but Plasma?** Sway, Hyprland, niri and
    COSMIC all offer layer-shell; none has been tried. (Releases attach a
    prebuilt static `vinowhisper-gui` from 0.4.0 on, installed and verified by
    `vinowhisper-setup --gui`, so installing it no longer needs cargo.)
+10. **Is whisper.cpp over Vulkan fast enough, and does its wording drift break
+    the stitcher?** It is the path to AMD and NVIDIA GPUs, and half
+    OpenVINO's speed on CPU. Nobody has published small.en timings on an iGPU,
+    and the stitcher is tuned against OpenVINO's drift across overlapping
+    windows. This laptop can answer both once `spirv-headers-devel` is
+    installed for the Vulkan build (glslc already is). Mesa 26.1.8 exposes the
+    iGPU as a conformant Vulkan 1.4 device.
+11. **When does an AMD NPU become worth supporting?** When FastFlowLM or Ryzen
+    AI Software runs Whisper small or small.en on Linux. Until then an opt-in
+    backend pointing at FastFlowLM's OpenAI-compatible endpoint is the most it
+    is worth, and only if someone with XDNA2 hardware asks.
 
 ## Conventions
 

@@ -19,6 +19,16 @@ That turns "it was laggy while I watched a video" into a fixture:
   recorded audio at a fixed hop, so every window size sees the same decodes
   over the same audio.
 
+`tests/fixtures/espeak_12s_session.jsonl` is 77 real NPU decodes of a 12s
+window sliding over espeak-ng reading `espeak_12s_session.txt`, at the live
+loop's pacing (2026-09-12). `test_a_real_session_prints_no_phrase_twice`
+restitches it, so a stitcher change is checked against model output that
+actually drifts, not against fixtures written to drift the way the author
+expected. The method, for a longer recording: a script that reads a 16kHz WAV,
+takes the last 12s up to a position, posts it to the running server, pushes
+the text through a `Stitcher`, writes a `Cycle` event, and advances the
+position by the measured decode time, which is what the loop does.
+
 `vinowhisper-doctor` checks the environmental things: OpenVINO's device list,
 which device would be selected, whether each model export matches the device
 that needs it, server reachability, the capture backend, default sink, mute

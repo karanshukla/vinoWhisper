@@ -24,6 +24,14 @@ def fake_version(major: int, minor: int, micro: int = 0) -> _Version:
     return _Version(major, minor, micro, "final", 0)
 
 
+@pytest.fixture(autouse=True)
+def no_real_hardware(monkeypatch, tmp_path_factory):
+    """The PCI bus and OpenCL ICDs of whatever machine runs the suite are not fixtures."""
+    empty = tmp_path_factory.mktemp("sys")
+    monkeypatch.setattr(devices, "PCI_DIR", empty / "pci")
+    monkeypatch.setattr(devices, "OPENCL_VENDORS_DIR", empty / "icd")
+
+
 @pytest.fixture
 def fake_os_release(tmp_path):
     """Write an /etc/os-release and hand back its path."""

@@ -21,6 +21,29 @@ vinowhisper-caption --window 8      # snappier, less context, more wording drift
 vinowhisper-caption --window 20     # steadier wording, noticeably laggier
 ```
 
+Measured 2026-09-12 by sliding a 12s window over recorded speech at the
+loop's own pacing, against the live server: 0.66s mean decode on synthetic
+speech (28 words a window), 0.70s mean and 0.85s p90 on a LibriVox reading
+(32 words a window, 806 cycles over ten minutes, no drift in either number
+across the session). So the hop sits at 0.7s and the lag floor at about 1.5s.
+
+The same reading at three window sizes, same day, each a full ten-minute pass
+at the loop's own pacing, scored against the Gutenberg text (n=1, one voice,
+one laptop):
+
+| window | cycles | decode mean | p90 | hop | lag floor | wrong or extra words | dropped |
+|---|---|---|---|---|---|---|---|
+| 8s | 1044 | 0.53s | 0.61s | 0.57s | ~1.1s | 102 | ~28 |
+| 12s | 806 | 0.70s | 0.85s | 0.74s | ~1.4s | 93 | ~38 |
+| 16s | 665 | 0.87s | 1.06s | 0.90s | ~1.7s | 93 | ~24 |
+
+Decode time tracks the window because the decoder is autoregressive, but the
+encoder's fixed cost keeps the spread to a third of a second across the whole
+range. Accuracy is flat from 12s up and about 10% worse at 8s, which is the
+edge effect: a shorter window has more cycles where a phrase is cut
+mid-sentence. 12s stays the default; 8s is a fair trade if 0.3s matters more
+than a handful of words an hour, and 16s buys nothing measurable.
+
 `--debug` prints the numbers to tune against: window length, hop, RMS, gain
 applied, time to first streamed piece, total cycle time, and how many words
 each cycle confirmed versus held pending.
@@ -80,6 +103,35 @@ matching words, and each rule below came from a real failure:
 - **The minimum match shrinks for short decodes.** A flat three words cannot be
   met by a one-word transcript, which let a repeated hallucination ("you" 26
   times on quiet audio) reprint every cycle.
+- **Confirmed words that the new decode spells differently are skipped, not
+  reprinted.** With a 0.7s hop the freshest confirmed word is about a second
+  from the window's edge, where Whisper is still making its mind up. Measured
+  2026-09-12: the trailing words flipped between "Whiskers", "Whispers" and
+  "Whisper's" for five cycles, two near-identical windows agreed on
+  "Whispers", it printed, and later decodes settled on "Whisper's". The anchor
+  could not match the settled form against the printed one, so the cut landed
+  a word early and the settled form printed again ("Whispers Whisper's
+  encoder"). Now the confirmed words past the anchor match are compared
+  against the head of the new text as joined strings, and a resemblance
+  (`_REDECODE_RATIO`) skips them. Joined, so "auto-aggressive. One" against
+  "auto regressive one" skips three words for two. On a ten-minute LibriVox
+  reading this took insertions from 60 to 43 and left no reprints, only
+  words the reader or the model added; on synthetic speech, from 8 to 3.
+- **The boundary check compares the confirmed tail against the head of the
+  new text at every overlap length**, longest first. The 2026-09-01 version
+  compared position for position from one window's worth back, which only
+  matched while the whole transcript still fit in one window: it worked for
+  the first minute of a session and silently stopped.
+- **A lost anchor realigns on the pending words instead of stalling.** When
+  a stall runs long enough for the confirmed tail to roll out of the window,
+  the prefix comparison between pending and the new text has nothing to line
+  them up, and the old code stayed stuck until a spurious match, then dropped
+  everything before it. Measured 2026-09-12 by forcing long stalls (four
+  cycles of agreement): 75 of 141 words lost without the realignment, 28
+  with it. Live, the same stalls come from music, noise and speaker changes.
+- **Two cycles of agreement stays.** Three was tried on the same recording:
+  15 fewer insertions, 31 more dropped words, and pending words held twice
+  as long. Not worth it.
 - **Repeats collapse in units of at most about five words**, the longest loop
   seen being "do things that make you" (2026-09-01). It errs short, because a
   false positive deletes words that can never be restored.
