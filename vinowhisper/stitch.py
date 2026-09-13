@@ -11,6 +11,10 @@ _MAX_REPEAT_UNIT_WORDS = 6
 
 _MAX_CONFIRMED_WORDS = 200
 
+_REDECODE_RATIO = 0.6
+
+_MIN_REALIGN_WORDS = 2
+
 _COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
 
 
@@ -72,18 +76,29 @@ def collapse_word_repeats(words: list[str]) -> list[str]:
     return out
 
 
-def _strip_confirmed_prefix(confirmed: list[str], curr: list[str]) -> list[str]:
-    limit = min(len(confirmed), len(curr))
-    tail = confirmed[-limit:] if limit else []
-    n = 0
-    while n < limit and _norm(tail[n]) == _norm(curr[n]):
-        n += 1
-    return curr[n:]
+def _confirmed_prefix_len(confirmed: list[str], curr: list[str]) -> int:
+    for k in range(min(len(confirmed), len(curr)), 0, -1):
+        if all(_norm(a) == _norm(b) for a, b in zip(confirmed[-k:], curr[:k], strict=True)):
+            return k
+    return 0
 
 
-def _candidate_tail(confirmed: list[str], curr: list[str]) -> list[str]:
+def _redecode_len(residual: list[str], curr: list[str]) -> int:
+    if not residual or not curr:
+        return 0
+    target = " ".join(_norm(w) for w in residual)
+    best_k, best = 0, _REDECODE_RATIO
+    for k in range(1, min(len(curr), len(residual) + 2) + 1):
+        probe = " ".join(_norm(w) for w in curr[:k])
+        ratio = SequenceMatcher(None, target, probe, autojunk=False).ratio()
+        if ratio >= best:
+            best_k, best = k, ratio
+    return best_k
+
+
+def _cut(confirmed: list[str], curr: list[str]) -> int:
     if not confirmed:
-        return curr
+        return 0
 
     anchor = confirmed[-_ANCHOR_WORDS:]
 
@@ -99,10 +114,25 @@ def _candidate_tail(confirmed: list[str], curr: list[str]) -> list[str]:
     # Filter by size before taking the furthest reach; the reverse lets one stray word reprint everything.
     blocks = [b for b in matcher.get_matching_blocks() if b.size >= min_match]
     if not blocks:
-        return _strip_confirmed_prefix(confirmed, curr)
+        return _confirmed_prefix_len(confirmed, curr)
 
     match = max(blocks, key=lambda b: b.b + b.size)
-    return curr[match.b + match.size :]
+    end = match.b + match.size
+    # Confirmed words past the match are on screen already; their re-decode must not print again.
+    return end + _redecode_len(anchor[match.a + match.size :], curr[end:])
+
+
+def _realign(pending: list[str], curr: list[str]) -> tuple[int, int]:
+    matcher = SequenceMatcher(
+        None, [_norm(w) for w in pending], [_norm(w) for w in curr], autojunk=False
+    )
+    floor = min(_MIN_REALIGN_WORDS, len(pending))
+    blocks = [b for b in matcher.get_matching_blocks() if b.size >= floor]
+    if not blocks:
+        return 0, 0
+    best = max(blocks, key=lambda b: b.size)
+    offset = best.b - best.a
+    return max(offset, 0), max(-offset, 0)
 
 
 class Stitcher:
@@ -120,7 +150,12 @@ class Stitcher:
         if not curr:
             return []
 
-        candidate = _candidate_tail(self._confirmed, curr)
+        cut = _cut(self._confirmed, curr)
+        if cut == 0 and self._confirmed and self._pending:
+            # The confirmed tail left the window; the pending words are the only anchor left.
+            cut, drop = _realign(self._pending, curr)
+            del self._pending[:drop]
+        candidate = curr[cut:]
 
         agree_len = 0
         # Different lengths by design: this cycle's words against the last one's.

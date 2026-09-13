@@ -42,8 +42,8 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 
 | Problem | Status |
 |---|---|
-| Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Not yet measured on hardware. |
-| Incorrect captions | Two real stitching bugs fixed (see Bugs found below). Wording drift across cycles is inherent and only partly fixable. |
+| Laggy captions | Root-caused to window size driving decode length. Default window cut 29.5s to 12s, plus a minimum-hop guard. Measured 2026-09-12: 0.70s mean decode at 12s on real speech, hop 0.74s, lag floor ~1.5s. |
+| Incorrect captions | Two real stitching bugs fixed 2026-08-06, and three more 2026-09-12 (see Bugs found below). Wording drift across cycles is inherent; what it used to do to the stitcher is not. |
 | Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
@@ -391,6 +391,44 @@ check that runs only when the internal `SequenceMatcher` search comes back
 empty. Reproduced and verified against a stubbed stitcher, not yet re-run on
 hardware.
 
+## Bugs found 2026-09-12, from the first recorded sessions
+
+Reported as "words being duplicated" and captions that "crumble" over a
+session. No recording existed, so one was made: a harness that slides a 12s
+window over a WAV at the loop's own pacing, posting each window to the live
+server and pushing the text through the stitcher. Two sessions, both against a
+known text: 55s of espeak-ng reading `docs/` prose (now
+`tests/fixtures/espeak_12s_session.jsonl`) and ten minutes of a LibriVox
+reading of Pride and Prejudice (806 cycles). Every finding below is from
+those, and none has been seen on the user's own content yet.
+
+1. **A confirmed word re-decoded differently printed twice.** The real
+   hop is 0.7s (journal and harness agree), so the freshest confirmed word is
+   a second from the window's edge and two near-identical windows agree on it
+   while Whisper is still flipping ("Whiskers"/"Whispers"/"Whisper's" over
+   five cycles). When the decode settles on another form the anchor cannot
+   match it, the cut lands a word early, and the settled form prints as new.
+   Fixed with `_redecode_len`: confirmed words past the anchor match are
+   compared as joined strings against the head of the new text and skipped on
+   resemblance. Insertions 60 to 43 on the LibriVox session, 8 to 3 on espeak;
+   what remains is not reprints.
+2. **The 2026-09-01 boundary check only worked for the first minute.** It
+   compared `confirmed[-len(curr):]` against `curr` position for position, so
+   it matched only while the whole transcript fit in one window. The test
+   that pinned it had a two-word transcript. Now checks every overlap length.
+3. **A long stall was permanent.** Once the confirmed tail rolled out of the
+   window nothing put pending and the new text back in step, so the loop sat
+   until a spurious match and then dropped everything before it. Now
+   `_realign` lines pending up inside the new text. Forced with four-cycle
+   agreement: 75 of 141 words lost before, 28 after.
+
+Also measured and rejected: three cycles of agreement (15 fewer insertions,
+31 more dropped words, double the pending). The per-minute error rate on the
+ten-minute session is flat, and the user's own nine-minute session at 17:14
+held a steady request rate in the journal, so the NPU does not slow down
+over a session; the "crumbling" is the three bugs accumulating on a screen
+that keeps the last 160 words.
+
 ## transformers 5.4.0 breaks the NPU export, bisected 2026-09-04
 
 **Export with `transformers<5.4`.** Found while generating digest pins for
@@ -556,14 +594,14 @@ over a model that dies at the first transcription.
 
 Ordered by what would most change the design.
 
-1. **What is the real per-cycle time at a 12s window on dense speech?** Record
-   a session, then `vinowhisper-replay --sweep 8,12,16,20`. If 12s is still
-   multiple seconds, the next lever is trimming confirmed audio out of the
-   buffer rather than shrinking the window further. That needs
+1. **Answered 2026-09-12: 0.70s mean, 0.85s p90 at 12s on real speech.** The
+   lag floor is therefore ~1.5s and the window is not the lever any more. The
+   next one is trimming confirmed audio out of the buffer, which needs
    `return_timestamps`, and nobody has checked whether the NPU static pipeline
    supports it.
-2. **Does the pipeline stay healthy under sustained continuous use?** Every
-   number so far comes from one-shot benchmarks. A long `--record` session is
+2. **Does the pipeline stay healthy under sustained continuous use?** Ten
+   minutes and 806 back-to-back decodes on 2026-09-12 showed no drift in
+   decode time. Longer is untested. A long `--record` session is
    the cheapest way to find out, since it leaves evidence either way.
 3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical

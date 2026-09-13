@@ -5,7 +5,15 @@ as a fixture. The 2026-08-06 and 2026-08-07 reviews found all of them with
 throwaway scripts against a stubbed pipeline; this is those scripts, kept.
 """
 
-from vinowhisper.stitch import Stitcher, _norm, collapse_repeats, collapse_word_repeats
+from vinowhisper.stitch import (
+    Stitcher,
+    _cut,
+    _norm,
+    _realign,
+    _redecode_len,
+    collapse_repeats,
+    collapse_word_repeats,
+)
 
 
 def push_all(stitcher: Stitcher, *transcripts: str) -> list[str]:
@@ -289,3 +297,144 @@ def test_a_drifting_loop_never_reaches_the_confirmed_transcript():
 
 def test_collapse_word_repeats_of_nothing_is_nothing():
     assert collapse_word_repeats([]) == []
+
+
+def test_short_boundary_overlap_still_works_once_the_transcript_is_long():
+    """The 2026-09-12 bug: the 2026-09-01 boundary check compared the wrong
+    words once the confirmed transcript outgrew one window, so it only ever
+    worked in the first minute of a session. Same fixture as above, after
+    fifty words of earlier speech.
+    """
+    stitcher = Stitcher()
+    for index in range(25):
+        push_all(stitcher, f"w{index} x{index}", f"w{index} x{index}")
+    assert push_all(stitcher, "do things", "do things") == ["do", "things"]
+    printed = push_all(
+        stitcher,
+        "do things that make you",
+        "do things that make you",
+    )
+    assert printed == ["that", "make", "you"]
+
+
+def test_a_re_decoded_confirmed_word_does_not_print_twice():
+    """Measured 2026-09-12 with a 0.7s hop: the trailing words of a window flip
+    for several cycles ("Whiskers" / "Whispers" / "Whisper's"), two near-
+    identical windows agree on one form, it prints, and the decode then
+    settles on another. The anchor cannot match the settled form against the
+    printed one, so the cut used to land a word early and the settled form
+    printed again: "Whispers Whisper's encoder cost is fixed".
+    """
+    stitcher = Stitcher()
+    push_all(
+        stitcher,
+        "cycle time is the only real lever. Whispers",
+        "cycle time is the only real lever. Whispers",
+    )
+    printed = push_all(
+        stitcher,
+        "cycle time is the only real lever. Whisper's encoder cost is fixed",
+        "cycle time is the only real lever. Whisper's encoder cost is fixed",
+    )
+    assert printed == ["encoder", "cost", "is", "fixed"]
+
+
+def test_a_re_decode_that_splits_a_word_is_skipped_as_a_unit():
+    """ "auto-aggressive. One" printed, then decoded as "auto regressive one":
+    two words became three. The skip is judged on the joined text, so the
+    word count changing does not leave one of them behind to print.
+    """
+    stitcher = Stitcher()
+    push_all(
+        stitcher,
+        "no matter what, but decoding is auto-aggressive. One",
+        "no matter what, but decoding is auto-aggressive. One",
+    )
+    printed = push_all(
+        stitcher,
+        "no matter what, but decoding is auto regressive one forward pass per token",
+        "no matter what, but decoding is auto regressive one forward pass per token",
+    )
+    assert printed == ["forward", "pass", "per", "token"]
+
+
+def test_characterization_the_redecode_skip_is_bounded_and_needs_a_resemblance():
+    """characterization: `_redecode_len` may skip at most two words more than
+    the residual holds, and nothing at all when the new words do not resemble
+    it. A residual word that the new decode simply dropped must not cost a
+    real new word, and a long residual must never swallow a sentence.
+    """
+    assert _redecode_len(["really"], ["important", "thing", "is"]) == 0
+    assert _redecode_len(["Whispers"], ["Whisper's", "encoder"]) == 1
+    assert _redecode_len(["auto-aggressive.", "One"], ["auto", "regressive", "one", "forward"]) == 3
+    assert _redecode_len(["a", "b"], ["a", "b", "c", "d", "e", "f"]) <= 4
+    assert _redecode_len([], ["anything"]) == 0
+
+
+def test_cut_falls_back_to_the_boundary_check_below_the_anchor_floor():
+    confirmed = [f"w{i}" for i in range(60)] + ["do", "things"]
+    assert _cut(confirmed, ["do", "things", "that", "make", "you"]) == 2
+    assert _cut(confirmed, ["that", "make", "you"]) == 0
+
+
+def test_a_lost_anchor_realigns_on_the_pending_words_instead_of_stalling():
+    """Measured 2026-09-12: a stall long enough for the confirmed tail to roll
+    out of the window used to be permanent, because the prefix comparison
+    needs pending and candidate to start at the same word and nothing put
+    them back in step. Requiring four cycles of agreement on real speech
+    dropped 75 of 141 words this way.
+    """
+    stitcher = Stitcher()
+    push_all(stitcher, "the quick brown fox", "the quick brown fox")
+    # A decode that no longer contains the confirmed words, whose pending
+    # tail then reappears one word further in.
+    stitcher.push("jumps over the lazy dog")
+    assert stitcher.pending == ["jumps", "over", "the", "lazy", "dog"]
+    printed = stitcher.push("it jumps over the lazy dog tonight")
+    assert printed == ["jumps", "over", "the", "lazy", "dog"]
+    assert stitcher.pending == ["tonight"]
+
+
+def test_a_pending_word_the_new_decode_dropped_is_let_go():
+    stitcher = Stitcher()
+    push_all(stitcher, "the quick brown fox", "the quick brown fox")
+    stitcher.push("um jumps over the lazy dog")
+    printed = stitcher.push("jumps over the lazy dog tonight")
+    assert printed == ["jumps", "over", "the", "lazy", "dog"]
+    assert _realign(["um", "jumps", "over"], ["jumps", "over", "x"]) == (0, 1)
+    assert _realign(["jumps", "over"], ["it", "jumps", "over"]) == (1, 0)
+    assert _realign(["jumps", "over"], ["nothing", "alike"]) == (0, 0)
+
+
+def _fixture_session() -> tuple[list[str], list[str]]:
+    import json
+    import re
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures"
+    transcripts = [
+        json.loads(line)["transcript"]
+        for line in (fixtures / "espeak_12s_session.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    reference = (fixtures / "espeak_12s_session.txt").read_text()
+    words = (re.sub(r"[^a-z0-9']", "", token.lower()) for token in reference.split())
+    return transcripts, [w for w in words if w]
+
+
+def test_a_real_session_prints_no_phrase_twice():
+    """77 real whisper-small.en decodes off the NPU, 2026-09-12: a 12s window
+    sliding over 55s of espeak-ng reading a known text at the live loop's own
+    pacing (0.66s mean decode, 0.70s hop). Before the fix the stitcher printed
+    148 words for a 141-word text, among them "Whispers Whisper's encoder" and
+    "out 12s rather 12's rather than". After it, 143: the two extra are Whisper
+    hearing "short-form" and "threshold-lowering" as two words each.
+    """
+    transcripts, reference = _fixture_session()
+    stitcher = Stitcher()
+    printed = push_all(stitcher, *transcripts) + stitcher.flush()
+    text = " ".join(printed)
+
+    assert "Whispers Whisper's" not in text
+    assert "rather 12's rather" not in text
+    assert len(printed) <= len(reference) + 2

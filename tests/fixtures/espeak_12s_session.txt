@@ -1,0 +1,5 @@
+The caption loop is synchronous, so the hop between windows is just however long the previous cycle took, and the commit policy needs two cycles to agree before printing anything. Captions therefore trail the audio by roughly twice the cycle time. Cycle time is the only real lever.
+
+Whisper's encoder cost is fixed (it pads to 30s no matter what), but decoding is autoregressive, one forward pass per token. A window packed with 29.5s of dense speech emits roughly 2.5x the tokens of a 12s one and takes correspondingly longer. That is why the default window is now 12s rather than the full 29.5s short-form limit:
+
+So the original diagnosis was wrong, and so was every mitigation built on it. Lowering the volume costs nothing. Muting the system costs nothing. The earlier threshold-lowering work was chasing a mechanism that isn't there.

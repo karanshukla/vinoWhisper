@@ -10,6 +10,21 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+### 🐛 Bug Fixes
+
+- **Words no longer print twice when the decoder changes its mind about
+  them.** The hop is 0.7s in practice, so the last confirmed word is about a
+  second from the window's edge, and two near-identical windows would agree
+  on a spelling Whisper then abandoned ("Whispers", then "Whisper's"). The
+  stitcher could not match the new spelling against the printed one and
+  printed it again. It now recognises a re-decode of what it already printed
+  and skips it. Two more stitcher bugs went with it: the boundary check from
+  0.3.1 only worked while the transcript fit in one window, and a stall long
+  enough for the confirmed words to leave the window never recovered. All
+  three measured on real NPU decodes of recorded speech, the first such
+  recordings this project has had; one is now a test fixture. See
+  `docs/latency.md`.
+
 ### 🎨 Styling
 
 - **One icon everywhere, and it is the app's own.** The launcher, the tray
