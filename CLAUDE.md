@@ -579,6 +579,16 @@ it builds and decodes under 5.5.4.
   one toolchain, `integrity.py` reads the versions out of the export's own
   `rt_info` block to tell drift from tampering, and `scripts/update_digests.py`
   exists so re-pinning is a command rather than a paste.
+
+  **Not reproduced 2026-09-12, weeks later.** Re-exporting with every package
+  the pin records (OpenVINO 2026.2.1, optimum-intel 2.0.0, optimum 2.2.0,
+  transformers 5.0.0, torch 2.13.0, tokenizers 0.22.2) gave 6 decoder files
+  that differ from the pin, which `integrity.py` calls a mismatch on the same
+  toolchain. Unchecked suspects: packages the pin does not record (nncf,
+  numpy) and the model revision on Hugging Face. Until one is ruled in, read
+  "bit-reproducible" as "within a session's environment", and a same-toolchain
+  mismatch as possibly drift in something unrecorded before calling it
+  tampering.
 - **Model size is settled: whisper-small.en.** base.en (2.6x faster) and
   tiny.en (3.8x faster) both introduce real transcription errors. INT8 on
   small.en is free accuracy-wise but only buys ~10%, since the bottleneck is
