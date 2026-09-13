@@ -7,7 +7,7 @@ times, and the two-cycle commit policy doubles any regression.
 | Device | Selected | Model export | What you get |
 |---|---|---|---|
 | **NPU** (`Intel(R) AI Boost`) | first | `--disable-stateful` | 0.70s per 12s window on LibriVox speech, measured 2026-09-12 (~1.19s per 30s window, 2026-08-03) |
-| **GPU** (Arc / Xe) | second | stateful | Untested here. Works in principle; watch the lag figure |
+| **GPU** (Arc / Xe) | second | stateful | 0.95s per 12s window on the Wildcat Lake Xe3 iGPU (p90 1.15-1.31s) with compute-runtime 26.22, measured 2026-09-12. Loads in 2.0s warm, 8.0s the first time. 2 of 15 loads segfaulted inside the GPU plugin's `compile_model`; decoding never failed |
 | **CPU** | last resort | stateful | 2.30s per 12s window (p90 2.68s) on a Core 5 320, measured 2026-09-12, so lag lands near 4.6s. Competes with everything else on the machine |
 
 Selection is automatic (`--device auto`). An *explicit* `--device NPU` that

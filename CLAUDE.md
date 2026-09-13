@@ -59,9 +59,9 @@ covering eight package families, `vinowhisper-setup` (guided install,
 generated systemd units — the checked-in unit used to hardcode
 `~/Development/vinoWhisper`), `scripts/install.sh`, a test suite, and CI.
 **Most of the new hardware paths have still not run on hardware.** The CPU
-fallback and the stateful export have, as of 2026-09-12 (2.30s per 12s
-window). The GPU path, the PulseAudio backend and every non-Fedora package
-name are unverified; treat them as best-effort until someone reports
+and Intel GPU fallbacks and the stateful export have, as of 2026-09-12 (2.30s
+and 0.95s per 12s window). The PulseAudio backend and every non-Fedora
+package name are unverified; treat them as best-effort until someone reports
 otherwise.
 
 **2026-09-12: beyond the Intel NPU.** Asked for by the user: GPU support, AMD
@@ -90,9 +90,13 @@ found, in the order it matters:
   4.79s per 12s window against OpenVINO's 2.30s (v1.9.4, 6 threads,
   2026-09-12), so its case rests entirely on Vulkan. Needs a backend seam in
   `transcriber.py`, which is OpenVINO end to end.
-- **Intel iGPU through OpenVINO: not yet measured**, blocked on installing
-  `intel-compute-runtime` (26.22 in Fedora 44, which is the first release
-  listing Wildcat Lake as production).
+- **Intel iGPU through OpenVINO: 0.95s per 12s window** (p90 1.15-1.31s)
+  once `intel-compute-runtime` 26.22 was installed, which is the first release
+  listing Wildcat Lake as production. That is about 35% behind the NPU's 0.70s
+  and well ahead of the CPU. Two of fifteen loads segfaulted inside the GPU
+  plugin's `compile_model` (a null read in
+  `IStreamsExecutor::Config::update_executor_config`); decoding never failed,
+  and ten further load-and-decode runs did not reproduce it. Cause unknown.
 
 `convert_model.sh` takes `--out`, not an `OUT_DIR` environment variable; it
 initialises `OUT_DIR=""` itself. Setting the variable exports into the real
@@ -661,11 +665,12 @@ Ordered by what would most change the design.
 3. **Does the status bar read well on a real pinned window?** It has been
    verified by rendering to a fixed-width buffer, never on a physical
    terminal. Column budgets at narrow widths are the likely rough edge.
-4. **Answered 2026-09-12 for the CPU: it runs, at 2.30s mean / 2.68s p90 per
-   12s window** on the Core 5 320 (stateful export, 43s to produce, 930MB), so
-   lag lands near 4.6s. The GPU half is open: OpenVINO did not enumerate the
-   Xe3 iGPU because the compute runtime was not installed. Cheapest check is
-   `sudo dnf install intel-compute-runtime`, then the doctor.
+4. **Answered 2026-09-12: both run.** CPU 2.30s mean / 2.68s p90 per 12s
+   window on the Core 5 320 (stateful export, 43s to produce, 930MB), so lag
+   lands near 4.6s. Xe3 iGPU 0.95s mean / 1.15-1.31s p90, loading in 2.0s warm
+   and 8.0s cold. What is left is the intermittent segfault in the GPU plugin's
+   `compile_model` (2 of 15 loads): does it recur under the socket-activated
+   server, and does `Restart=on-failure` recover it cleanly (issue #7)?
 5. **Are the non-Fedora package names right?** Eight families in `distro.py`,
    one of them confirmed by use. Each wrong name is a one-line fix and there is
    an issue template pointed at exactly this.
@@ -684,8 +689,9 @@ Ordered by what would most change the design.
     the stitcher?** It is the path to AMD and NVIDIA GPUs, and half
     OpenVINO's speed on CPU. Nobody has published small.en timings on an iGPU,
     and the stitcher is tuned against OpenVINO's drift across overlapping
-    windows. This laptop can answer both once `glslc` is installed for the
-    Vulkan build.
+    windows. This laptop can answer both once `spirv-headers-devel` is
+    installed for the Vulkan build (glslc already is). Mesa 26.1.8 exposes the
+    iGPU as a conformant Vulkan 1.4 device.
 11. **When does an AMD NPU become worth supporting?** When FastFlowLM or Ryzen
     AI Software runs Whisper small or small.en on Linux. Until then an opt-in
     backend pointing at FastFlowLM's OpenAI-compatible endpoint is the most it
