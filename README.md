@@ -101,7 +101,7 @@ From a checkout, or to see what it would do without doing it:
 
 ```bash
 git clone https://github.com/karanshukla/vinoWhisper && cd vinoWhisper
-uv sync
+uv sync --extra export               # --extra export: the one-time model export
 uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
 uv run vinowhisper-setup             # for real, one prompt per step
 ```

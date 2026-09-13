@@ -12,7 +12,8 @@
 #   1. finds (or installs) uv, since the Python <3.14 pin and the OpenVINO
 #      floor both live in pyproject.toml and only uv reads them
 #   2. clones or updates the checkout
-#   3. `uv sync`, which builds the environment against those pins
+#   3. `uv sync --extra export`, which builds the environment against those
+#      pins, plus the model-export tooling the wizard needs once
 #   4. hands over to `vinowhisper-setup`, which does the parts that need to
 #      look at your actual hardware: capture tool, NPU driver, model export,
 #      systemd units, PATH symlinks
@@ -128,7 +129,7 @@ fi
 
 say "Building the environment (uv sync)"
 say "  This pulls the OpenVINO wheels; expect a few GB and a few minutes."
-run uv sync --project "$INSTALL_DIR"
+run uv sync --extra export --project "$INSTALL_DIR"
 
 # --- caption overlay (optional) --------------------------------------------
 

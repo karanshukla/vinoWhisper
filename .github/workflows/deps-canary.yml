@@ -42,7 +42,7 @@ jobs:
       # since resolving from scratch is part of what is being tested. A failure
       # at this step is the canary firing.
       - name: uv sync (the full, real dependency set)
-        run: uv sync
+        run: uv sync --extra export
 
       - name: Import the stack that the NPU pipeline needs
         run: |

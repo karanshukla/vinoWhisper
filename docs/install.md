@@ -25,7 +25,7 @@ From a checkout, or to see what it would do without doing it:
 
 ```bash
 git clone https://github.com/karanshukla/vinoWhisper && cd vinoWhisper
-uv sync
+uv sync --extra export               # --extra export: the one-time model export
 uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
 uv run vinowhisper-setup             # for real, one prompt per step
 ```
@@ -45,6 +45,9 @@ failed to load a model, which is worse than not shipping at all. Stable
 What it gets you: the five commands and the Python dependencies. What it cannot
 get you: an NPU driver, a model export, or systemd units. Run
 `vinowhisper-setup` afterwards for those, exactly as the installer script would.
+The export tooling (optimum, and torch with it) is the `export` extra, which
+the wizard offers to install when it gets to the model step;
+`pip install 'vinowhisper[export]'` does it up front.
 
 **Python must be 3.11-3.13.** 3.14 made `functools.partial` a descriptor, which
 breaks `optimum`'s `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)`
@@ -180,9 +183,20 @@ static pipeline is resolving an internal traced tensor by name, and 5.4.0
 stopped emitting that name. The exported input and output signatures are
 otherwise identical between the two.
 
-Until upstream fixes it, the pin's `known_bad` entry carries a floor at
-transformers 5.4.0, so `vinowhisper-setup` and `convert_model.sh` report a
-`known_bad` export rather than handing over a model that fails later.
+Since 2026-09-12 the export's dependencies are their own extra,
+`vinowhisper[export]`, which holds `transformers<5.4`. Before that a fresh
+install resolved 5.5.4 and `vinowhisper-setup` failed at the model step. The
+extra is separate because only the export uses optimum and transformers, and
+optimum brings torch with it, while the runtime imports none of them.
+`vinowhisper-setup` offers to install it when it needs to export, as
+`uv sync --extra export` in a checkout and `pip install 'vinowhisper[export]'`
+otherwise.
+
+The pin's `known_bad` entry still carries a floor at transformers 5.4.0, for
+an export made some other way, so `vinowhisper-setup` and `convert_model.sh`
+report a `known_bad` export rather than handing over a model that fails later.
+The stateful (CPU/GPU) export is unaffected: it builds and decodes under 5.5.4
+(measured 2026-09-12).
 
 ## The caption overlay (optional)
 

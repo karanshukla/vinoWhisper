@@ -1,5 +1,7 @@
 import argparse
+import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -160,8 +162,17 @@ class Wizard:
             )
 
         self.say(f"  No {variant} export at {directory}.")
+        cli = optimum_cli()
+        if cli is None:
+            self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
+            if not self.run(export_extra_argv(), "install it?"):
+                return Outcome(None, "install the export extra, then re-run this")
+            cli = optimum_cli()
+            if cli is None:
+                return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
+
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
-        if self.run(export_argv(variant, directory), "export it now?"):
+        if self.run([cli, *export_argv(variant, directory)[1:]], "export it now?"):
             return self.check_digests(variant, directory, f"exported to {directory}")
         return Outcome(None, f"run {config.export_command(variant)} when ready")
 
@@ -333,6 +344,28 @@ def export_argv(variant: str, directory: Path | None = None) -> list[str]:
         argv.append("--disable-stateful")
     argv.append(str(out))
     return argv
+
+
+def optimum_cli() -> str | None:
+    beside = Path(sys.executable).with_name("optimum-cli")
+    if beside.exists():
+        return str(beside)
+    return shutil.which("optimum-cli")
+
+
+def _has_pip() -> bool:
+    return importlib.util.find_spec("pip") is not None
+
+
+def export_extra_argv() -> list[str]:
+    uv = shutil.which("uv")
+    # A checkout is an editable install; pip installing from PyPI would replace it.
+    if config.CONVERT_SCRIPT.is_file() and uv:
+        return [uv, "sync", "--extra", "export", "--project", str(_repo_root())]
+    requirement = f"vinowhisper[export]=={__version__}"
+    if not _has_pip() and uv:
+        return [uv, "pip", "install", "--python", sys.executable, requirement]
+    return [sys.executable, "-m", "pip", "install", requirement]
 
 
 def _repo_root() -> Path:
