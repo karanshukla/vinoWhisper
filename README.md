@@ -207,9 +207,6 @@ machine:
 
 ## More
 
-- Design doc, benchmarks, and the three export bugs hit getting to a working
-  NPU pipeline:
-  [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md)
 - [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md),
   where the useful contributions are distro corrections and reports from
   hardware that isn't this laptop
