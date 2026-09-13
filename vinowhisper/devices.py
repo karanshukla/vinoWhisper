@@ -133,6 +133,114 @@ def render_nodes() -> list[Path]:
         return []
 
 
+PCI_DIR = Path("/sys/bus/pci/devices")
+OPENCL_VENDORS_DIR = Path("/etc/OpenCL/vendors")
+
+_VENDORS = {"0x8086": "Intel", "0x1002": "AMD", "0x1022": "AMD", "0x10de": "NVIDIA"}
+# amdxdna's modalias table. AMD NPUs report class 0x1180, which Intel reuses for thermal and telemetry.
+AMD_NPU_IDS = frozenset(
+    {"0x1502", "0x17f0", "0x17f1", "0x17f2", "0x17f3", "0x1b0a", "0x1b0b", "0x1b0c"}
+)
+NPU_DRIVERS = frozenset({"intel_vpu", "amdxdna"})
+
+
+@dataclass(frozen=True)
+class Hardware:
+    slot: str
+    kind: str
+    vendor: str
+    pci_id: str
+    driver: str = ""
+
+    def __str__(self) -> str:
+        bound = f"driver {self.driver}" if self.driver else "no driver bound"
+        return f"{self.vendor} {self.kind} [{self.pci_id}] at {self.slot}, {bound}"
+
+
+def _read_attr(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return ""
+
+
+def _hardware_kind(pci_class: str, vendor: str, device: str, driver: str) -> str | None:
+    if pci_class.startswith("0x03"):
+        return "GPU"
+    if pci_class.startswith("0x12") or driver in NPU_DRIVERS:
+        return "NPU"
+    if vendor == "0x1022" and device in AMD_NPU_IDS:
+        return "NPU"
+    return None
+
+
+def hardware(root: Path | None = None) -> list[Hardware]:
+    try:
+        slots = sorted((root or PCI_DIR).iterdir())
+    except OSError:
+        return []
+
+    found = []
+    for slot in slots:
+        vendor = _read_attr(slot / "vendor")
+        device = _read_attr(slot / "device")
+        try:
+            driver = (slot / "driver").resolve(strict=True).name
+        except OSError:
+            driver = ""
+        kind = _hardware_kind(_read_attr(slot / "class"), vendor, device, driver)
+        if kind is None:
+            continue
+        found.append(
+            Hardware(
+                slot=slot.name,
+                kind=kind,
+                vendor=_VENDORS.get(vendor, vendor or "unknown"),
+                pci_id=f"{vendor.removeprefix('0x')}:{device.removeprefix('0x')}",
+                driver=driver,
+            )
+        )
+    return found
+
+
+def opencl_icds() -> list[Path]:
+    try:
+        return sorted(OPENCL_VENDORS_DIR.glob("*.icd"))
+    except OSError:
+        return []
+
+
+def gpu_notes(
+    inventory: list[Device],
+    found: list[Hardware],
+    distro_info: "distro.Distro | None" = None,
+) -> list[Note]:
+    gpus = [hw for hw in found if hw.kind == "GPU"]
+    notes = [
+        Note(None, "gpu", f"{gpu}: OpenVINO only drives Intel GPUs, so this is not a fallback")
+        for gpu in gpus
+        if gpu.vendor != "Intel"
+    ]
+    intel = [gpu for gpu in gpus if gpu.vendor == "Intel"]
+    if not intel:
+        return notes
+
+    if any(device.kind == "GPU" for device in inventory):
+        return notes + [Note(True, "gpu", f"{intel[0]}, visible to OpenVINO")]
+
+    icds = opencl_icds()
+    if not icds:
+        cause = f"there is no OpenCL ICD in {OPENCL_VENDORS_DIR}, so the compute runtime is missing"
+    elif not any("intel" in icd.name for icd in icds):
+        names = ", ".join(icd.name for icd in icds)
+        cause = f"the OpenCL ICDs present ({names}) are not Intel's compute runtime"
+    else:
+        cause = "Intel's OpenCL ICD is present, so the runtime may predate this GPU"
+    remedy = distro.remediation(distro.GPU_RUNTIME, distro_info)
+    detail = f"{intel[0]}, but OpenVINO does not see it: {cause}.\n" + "\n".join(remedy.lines())
+    return notes + [Note(False, "gpu", detail)]
+
+
 def _module_loaded(name: str) -> bool | None:
     try:
         modules = Path("/proc/modules").read_text(encoding="utf-8")

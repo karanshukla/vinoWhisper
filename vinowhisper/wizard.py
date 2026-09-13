@@ -114,13 +114,36 @@ class Wizard:
 
         for warning in selection.warnings:
             self.say(f"  ⚠ {warning}")
+        found = devices.hardware()
+        intel_npu = any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in found)
         if not any(device.kind == "NPU" for device in inventory):
             self.say("")
-            for line in devices.npu_missing_help(self.distro):
+            if found and not intel_npu:
+                for hw in found:
+                    if hw.kind == "NPU":
+                        self.say(f"  {hw}: OpenVINO cannot drive a non-Intel NPU.")
+                if not any(hw.kind == "NPU" for hw in found):
+                    self.say("  No NPU on the PCI bus, so there is no NPU driver to install.")
+            else:
+                for line in devices.npu_missing_help(self.distro):
+                    self.say(f"  {line}")
+                command = distro.install_command(distro.NPU_DRIVER, self.distro)
+                if command and self.run(command.split(), "install the NPU driver?"):
+                    return Outcome(None, "NPU driver installed — reboot, then re-run this")
+
+        for note in devices.gpu_notes(inventory, found, self.distro):
+            if note.ok is True:
+                continue
+            self.say("")
+            for line in note.detail.splitlines():
                 self.say(f"  {line}")
-            command = distro.install_command(distro.NPU_DRIVER, self.distro)
-            if command and self.run(command.split(), "install the NPU driver?"):
-                return Outcome(None, "NPU driver installed — reboot, then re-run this")
+            command = distro.install_command(distro.GPU_RUNTIME, self.distro)
+            if (
+                note.ok is False
+                and command
+                and self.run(command.split(), "install the GPU compute runtime?")
+            ):
+                return Outcome(None, "GPU runtime installed; re-run this to pick it up")
         return Outcome(None, f"falling back to {selection.device.name}")
 
     def check_model(self) -> Outcome:

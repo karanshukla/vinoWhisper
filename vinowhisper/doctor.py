@@ -65,9 +65,18 @@ def _devices() -> list[Result]:
         Result(OK, "devices", ", ".join(str(device) for device in inventory) or "none"),
     ]
 
+    found = devices.hardware()
+    intel_npu = [hw for hw in found if hw.kind == "NPU" and hw.vendor == "Intel"]
+    other_npu = [hw for hw in found if hw.kind == "NPU" and hw.vendor != "Intel"]
+
     npu = [device for device in inventory if device.kind == "NPU"]
     if npu:
         results.append(Result(OK, "npu", str(npu[0])))
+    elif found and not intel_npu:
+        if other_npu:
+            results.append(Result(WARN, "npu", f"{other_npu[0]}, which OpenVINO cannot drive"))
+        else:
+            results.append(Result(UNKNOWN, "npu", "none on the PCI bus, so no driver to install"))
     else:
         results.append(Result(FAIL, "npu", "not enumerated by OpenVINO"))
         for note in devices.npu_preflight():
@@ -78,9 +87,14 @@ def _devices() -> list[Result]:
             Result(WARN, "npu: userspace driver", "\n" + "\n".join(remedy.lines()).lstrip())
         )
 
-    for note in devices.npu_userspace():
-        status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
-        results.append(Result(status, f"npu: {note.label}", note.detail))
+    if npu or intel_npu or not found:
+        for note in devices.npu_userspace():
+            status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
+            results.append(Result(status, f"npu: {note.label}", note.detail))
+
+    for note in devices.gpu_notes(inventory, found):
+        status = OK if note.ok else (UNKNOWN if note.ok is None else WARN)
+        results.append(Result(status, note.label, note.detail))
 
     try:
         selection = devices.select(config.DEFAULT_DEVICE, inventory)

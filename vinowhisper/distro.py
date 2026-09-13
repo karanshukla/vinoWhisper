@@ -75,8 +75,9 @@ _FAMILIES: dict[str, Family] = {
         packages={
             AUDIO_PIPEWIRE: ("pipewire-utils",),
             AUDIO_PULSE: ("pulseaudio-utils",),
-            NPU_DRIVER: ("intel-npu-driver", "level-zero"),
-            GPU_RUNTIME: ("intel-compute-runtime", "level-zero"),
+            # Fedora has no "level-zero"; both of these pull in oneapi-level-zero themselves.
+            NPU_DRIVER: ("intel-npu-driver",),
+            GPU_RUNTIME: ("intel-compute-runtime",),
         },
         notes={
             NPU_DRIVER: (
