@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from vinowhisper import devices
+from vinowhisper import devices, failures
 
 
 def test_kind_strips_the_instance_suffix():
@@ -193,3 +193,52 @@ def test_library_dirs_puts_ld_library_path_first(monkeypatch, tmp_path):
     dirs = devices.library_dirs()
     assert dirs[0] == vendored
     assert all(directory.is_dir() for directory in dirs)
+
+
+# --- Devices marked failed (issue #7) ------------------------------------
+#
+# A device that enumerates and then fails to compile is re-attempted on every
+# socket activation, paying the model load each time, until systemd's start
+# limit takes the socket down. The mark is what stops that.
+
+
+def marked(*names: str) -> dict[str, failures.Failure]:
+    return {
+        name: failures.Failure(name, "2026-09-16T17:00:00+00:00", "compile failed")
+        for name in names
+    }
+
+
+def test_auto_skips_a_marked_device_and_says_so_first(inventory):
+    selection = devices.select("auto", inventory("NPU", "GPU", "CPU"), failed=marked("NPU"))
+    assert selection.device.kind == "GPU"
+    assert selection.degraded
+    # First, because the status bar shows only the first warning.
+    assert selection.warnings[0].startswith("NPU failed on 2026-09-16")
+    assert "vinowhisper-doctor" in selection.warnings[0]
+
+
+def test_an_unmarked_inventory_selects_as_before(inventory):
+    with_marks = devices.select("auto", inventory("NPU", "CPU"), failed={})
+    without = devices.select("auto", inventory("NPU", "CPU"))
+    assert with_marks == without
+
+
+def test_every_device_marked_is_an_error_naming_the_way_out(inventory):
+    with pytest.raises(devices.DeviceError, match="vinowhisper-doctor"):
+        devices.select("auto", inventory("NPU", "CPU"), failed=marked("NPU", "CPU"))
+
+
+def test_an_explicit_device_is_tried_despite_its_mark(inventory):
+    """Refused rather than downgraded still holds: they asked for this one."""
+    selection = devices.select("NPU", inventory("NPU", "CPU"), failed=marked("NPU"))
+    assert selection.device.kind == "NPU"
+    assert "asked for it explicitly" in selection.warnings[0]
+
+
+def test_the_mark_is_keyed_on_the_instance_name(inventory):
+    devices_list = [
+        devices.Device(name="GPU.0", kind="GPU", full_name="Arc"),
+        devices.Device(name="GPU.1", kind="GPU", full_name="Arc"),
+    ]
+    assert devices.select("auto", devices_list, failed=marked("GPU.0")).device.name == "GPU.1"

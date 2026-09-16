@@ -9,7 +9,7 @@ reporting a fact.
 
 import pytest
 
-from vinowhisper import config, devices, doctor, integrity
+from vinowhisper import config, devices, doctor, failures, integrity
 
 
 @pytest.fixture
@@ -78,6 +78,18 @@ def test_devices_check_reports_the_fallback(monkeypatch):
     assert find(results, "npu").status == doctor.FAIL
     assert find(results, "selected device").status == doctor.WARN
     assert "NOT the NPU" in find(results, "selected device").detail
+
+
+def test_a_failed_device_mark_is_reported_and_cleared(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "FAILED_DEVICES_FILE", tmp_path / "failed-devices.json")
+    failures.record("NPU", "Missing upper bound for one or more nodes")
+
+    results = doctor._failed_devices()
+    assert [result.status for result in results] == [doctor.WARN]
+    assert "Missing upper bound" in results[0].detail
+    assert "cleared" in results[0].detail
+    assert failures.load() == {}
+    assert doctor._failed_devices()[0].status == doctor.OK
 
 
 def test_devices_check_survives_openvino_being_absent(monkeypatch):

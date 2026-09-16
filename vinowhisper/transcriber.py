@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, devices
+from . import config, devices, failures
 
 _SENTINEL = object()
 
@@ -19,6 +19,7 @@ class WhisperTranscriber:
         self._requested_device = device
         self._model_dir_override = model_dir
         self.selection: devices.Selection | None = None
+        self.failure: failures.Failure | None = None
         self.model_dir: Path | None = None
         self._pipeline: object | None = None
         self._lock = threading.Lock()
@@ -41,7 +42,9 @@ class WhisperTranscriber:
         }
 
     def select_device(self) -> devices.Selection:
-        self.selection = devices.select(self._requested_device or config.DEFAULT_DEVICE)
+        self.selection = devices.select(
+            self._requested_device or config.DEFAULT_DEVICE, failed=failures.load()
+        )
         return self.selection
 
     def load(self) -> None:
@@ -55,9 +58,15 @@ class WhisperTranscriber:
 
         # STATIC_PIPELINE selects the NPU code path; set anywhere else it breaks.
         kwargs = {"STATIC_PIPELINE": True} if kind == "NPU" else {}
-        self._pipeline = ov_genai.WhisperPipeline(
-            str(self.model_dir), device=selection.device.name, **kwargs
-        )
+        try:
+            self._pipeline = ov_genai.WhisperPipeline(
+                str(self.model_dir), device=selection.device.name, **kwargs
+            )
+        except Exception as exc:
+            # Past _check_export, so this is the device, not the model (issue #7).
+            self.failure = failures.record(selection.device.name, str(exc))
+            raise
+        failures.forget(selection.device.name)
 
     def _check_export(self, kind: str, model_dir: Path) -> None:
         variant = "npu" if kind == "NPU" else "stateful"

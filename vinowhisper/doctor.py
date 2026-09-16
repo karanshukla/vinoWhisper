@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import __version__, audio, capture, config, devices, distro, integrity, recorder
+from . import __version__, audio, capture, config, devices, distro, failures, integrity, recorder
 
 _PROBE_S = 2.0
 
@@ -111,6 +111,21 @@ def _devices() -> list[Result]:
         )
     )
     return results
+
+
+def _failed_devices() -> list[Result]:
+    # Cleared unconditionally: a device that still fails is re-marked after one attempt.
+    cleared = failures.clear()
+    if not cleared:
+        return [Result(OK, "failed devices", "none marked")]
+    return [
+        Result(
+            WARN,
+            "failed devices",
+            f"{failure}. Mark cleared, so the next start tries it again.",
+        )
+        for failure in cleared
+    ]
 
 
 def _models() -> list[Result]:
@@ -360,6 +375,7 @@ def collect(probe: bool = True) -> list[Result]:
     ]
     results += _openvino()
     results += _devices()
+    results += _failed_devices()
     results += _models()
     results += _server()
     results += _audio_tools()
