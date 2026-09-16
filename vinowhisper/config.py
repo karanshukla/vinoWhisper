@@ -6,6 +6,10 @@ def _data_home() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
 
 
+def _config_home() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+
+
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
 
@@ -18,6 +22,10 @@ def model_dir(device_kind: str) -> Path:
 
 
 DEFAULT_DEVICE = "auto"
+
+# Beside the overlay's gui.json. Devices that enumerated and then failed to
+# build a pipeline; see failures.py.
+FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8099

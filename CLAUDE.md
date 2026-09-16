@@ -259,6 +259,7 @@ vinowhisper/
   recorder.py     Recorder, the capture subprocess feeding the ring buffer
   devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight,
                   the PCI bus (what is present, as against what OpenVINO enumerates)
+  failures.py     devices that enumerated and then failed to compile, skipped by auto
   distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP client
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
@@ -322,7 +323,11 @@ inside the pipeline constructor. Device selection is `devices.select()`:
 NPU > GPU > CPU for "auto", an explicit `--device` is refused rather than
 downgraded, and anything below NPU carries warnings that surface in the server
 journal, `/health`, the `Ready` event, the status bar (red border + `⚠`) and
-the doctor.
+the doctor. Since 2026-09-16 (issue #7) a device that enumerates and then
+fails in the pipeline constructor is written to `failed-devices.json` and
+skipped by "auto" until the doctor clears it or a load on it succeeds, so a
+broken driver costs one failed start rather than a systemd start-limit loop.
+See `docs/hardware.md`.
 
 **The NPU has a userspace half that device enumeration does not test.**
 `devices.npu_preflight()` answers the kernel-side question; `npu_userspace()`

@@ -26,6 +26,30 @@ in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
+## When a device enumerates and then fails
+
+OpenVINO's device list says what is present, not what works. The documented
+case is below: a package reinstall rewrites the level-zero symlink, the NPU
+still enumerates, and `compile_model()` fails after the 10-30s model load. Left
+alone, the socket-activated server re-pays that load on every activation and
+fails again, `Restart=on-failure` retries, and systemd's start limit takes the
+socket down with it. The next `vinowhisper-caption` then gets a bare connection
+refused.
+
+So a device that fails to build a pipeline is written to
+`~/.config/vinowhisper/failed-devices.json` with the time and the first line
+of the error, and `--device auto` skips it from the next start on. The skip is
+reported the same way a fallback is: journal, `/health`, the `Ready` event,
+the status bar's `⚠` line, and the doctor. A missing or unreadable file means
+nothing has failed; the NPU is only ever skipped because a load on it said so.
+
+Two things clear the mark. `vinowhisper-doctor` clears every mark it finds,
+whether or not it found the fix, since the doctor is what gets run after a
+repair; if the fault is still there, the next start re-marks it after one
+attempt. And a load that succeeds on a marked device clears its own mark. An
+explicit `--device NPU` still tries the NPU, mark or no mark, with a warning
+saying so, which is the manual way to re-test after a fix.
+
 **The two model exports are not interchangeable.** The NPU needs
 `--disable-stateful`, which produces the separate `decoder_with_past` KV-cache
 submodel its static pipeline requires. That same export cannot run on CPU at

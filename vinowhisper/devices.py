@@ -1,10 +1,11 @@
 import mmap
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import distro
+from . import distro, failures
 
 PREFERENCE = ("NPU", "GPU", "CPU")
 
@@ -75,29 +76,61 @@ def available() -> list[Device]:
     return devices
 
 
-def select(preferred: str | None = None, inventory: list[Device] | None = None) -> Selection:
+def select(
+    preferred: str | None = None,
+    inventory: list[Device] | None = None,
+    failed: Mapping[str, failures.Failure] | None = None,
+) -> Selection:
     devices = inventory if inventory is not None else available()
     if not devices:
         raise DeviceError("OpenVINO enumerated no devices at all")
+    failed = failed or {}
 
     if preferred and preferred.lower() != "auto":
         wanted = preferred.upper()
         for device in devices:
             if device.name.upper() == wanted or device.kind == wanted:
-                return Selection(device=device, requested=preferred, warnings=_warnings(device))
+                # Not downgraded: whoever typed it wants this device tried again.
+                retry = (
+                    (
+                        f"{failed[device.name]}. Trying it anyway because you asked "
+                        "for it explicitly.",
+                    )
+                    if device.name in failed
+                    else ()
+                )
+                return Selection(
+                    device=device, requested=preferred, warnings=retry + _warnings(device)
+                )
         names = ", ".join(device.name for device in devices)
         raise DeviceError(f"requested device {preferred!r} is not available (have: {names})")
 
-    for kind in PREFERENCE:
-        for device in devices:
-            if device.kind == kind:
-                return Selection(device=device, requested=None, warnings=_warnings(device))
+    usable = [device for device in devices if device.name not in failed]
+    skipped = tuple(
+        f"{failed[device.name]}. Skipping it; {failures.CLEAR_HINT}."
+        for device in devices
+        if device.name in failed
+    )
+    if not usable:
+        marks = "; ".join(str(failed[device.name]) for device in devices)
+        raise DeviceError(
+            f"every device OpenVINO enumerated is marked failed ({marks}); {failures.CLEAR_HINT}"
+        )
 
-    device = devices[0]
+    for kind in PREFERENCE:
+        for device in usable:
+            if device.kind == kind:
+                return Selection(
+                    device=device, requested=None, warnings=skipped + _warnings(device)
+                )
+
+    device = usable[0]
     return Selection(
         device=device,
         requested=None,
-        warnings=(f"{device.name} is not a device this has been tested on.",) + _warnings(device),
+        warnings=skipped
+        + (f"{device.name} is not a device this has been tested on.",)
+        + _warnings(device),
     )
 
 

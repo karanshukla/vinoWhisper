@@ -9,7 +9,7 @@ import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import __version__, audio, config, devices
+from . import __version__, audio, config, devices, failures
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
@@ -124,6 +124,14 @@ def main(argv: list[str] | None = None) -> int:
         transcriber.load()
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+        if transcriber.failure is not None:
+            print(
+                f"[vinowhisper-server] {transcriber.failure.device} is marked failed in "
+                f"{config.FAILED_DEVICES_FILE}, so `--device auto` skips it from now on; "
+                f"{failures.CLEAR_HINT}.",
+                file=sys.stderr,
+                flush=True,
+            )
         return 1
 
     threading.Thread(
