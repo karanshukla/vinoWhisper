@@ -549,6 +549,22 @@ transformers version in the untested 5.4.x-5.9.x gap that also passes the
 `generate()` bisection above, or accept the narrowed risk and say so here
 with a date, the way every other tradeoff in this file is recorded.
 
+**2026-09-18: openvino/openvino-genai/openvino-tokenizers bumped to 2026.4.0,
+at the user's explicit request, not hardware-verified.** `pyproject.toml`'s
+floor (`openvino>=2026.3.1`) already allowed it, so `uv lock --upgrade-package
+openvino --upgrade-package openvino-genai --upgrade-package
+openvino-tokenizers` moved the lock forward without a floor change. Checked
+what `deps-canary.yml` checks — `uv sync --extra export` resolves, both
+packages import, `openvino.Core().available_devices` runs — and
+`uv run poe check` (284 tests) passes, but none of that touches the NPU
+static pipeline this project has repeatedly found version-sensitive (see the
+2026.2.1-vs-2026.3.1 pattern-matcher gap and the transformers bisection
+above). Unlike every other OpenVINO version change recorded in this file,
+this one has **not** been run against `WhisperPipeline(...,
+STATIC_PIPELINE=True).generate()` on the actual NPU — there wasn't one in
+the environment that did this bump. Verify captions still run before
+trusting this the way the rest of this file's measured claims are trusted.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
