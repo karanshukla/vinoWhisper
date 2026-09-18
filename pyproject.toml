@@ -61,7 +61,7 @@ dependencies = [
 # export under it builds and then fails at generate() (docs/install.md).
 export = [
     "optimum[openvino]",
-    "transformers<5.4",
+    "transformers<5.11",
 ]
 
 [project.urls]
