@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Bandit scan
         # --exit-zero: findings must not fail the job, or the upload step below
@@ -42,7 +42,7 @@ jobs:
           -c pyproject.toml -r vinowhisper/ -f sarif -o bandit.sarif --exit-zero
 
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        uses: github/codeql-action/upload-sarif@c23de5a82f64bb08c6d9f28844551440ca298e76 # v4.38.1
         with:
           sarif_file: bandit.sarif
           category: bandit

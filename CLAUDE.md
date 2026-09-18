@@ -521,6 +521,34 @@ is missing (`uv sync --extra export` in a checkout, since pip installing from
 PyPI would replace the editable install). The stateful export is unaffected:
 it builds and decodes under 5.5.4.
 
+**2026-09-18: the `transformers<5.4` pin now carries two open CVEs, and
+neither fix is compatible with it.** Found doing routine dependency/CVE
+triage, via PyPI's JSON API (which mirrors OSV): transformers 5.3.0, the
+version this pin resolves to, is flagged for
+[GHSA-fgcw-684q-jj6r](https://github.com/advisories/GHSA-fgcw-684q-jj6r)
+(CVE-2026-5241, a `trust_remote_code` bypass letting a malicious LightGlue
+model repo run code at load time, fixed in 5.5.0) and
+[GHSA-xrqw-3rrv-vx5w](https://github.com/advisories/GHSA-xrqw-3rrv-vx5w)
+(CVE-2026-9856, arbitrary file write via `save_pretrained()` path traversal
+on a crafted `tokenizer_config.json`, fixed in 5.10.0). Both fixed versions
+are past the 5.4 line this project bisected as broken above, so upgrading
+past either CVE is, on current evidence, upgrading back into the
+`cache_position` export failure. Not fixed here: doing so would trade a
+verified-on-hardware regression for an untested one, and there is no NPU in
+this environment to re-bisect with.
+
+The exposure this pin actually carries is narrower than "transformers has a
+CVE" suggests: nothing at runtime imports transformers (see above), the only
+call site is the one-time `optimum-cli export openvino` invocation in
+`scripts/convert_model.sh`, and the model id it exports is a hardcoded,
+trusted `openai/whisper-small.en` unless a user passes their own `--model`.
+Both CVEs need an attacker-controlled Hugging Face repo to be exported, so
+the default flow is not exposed; a user exporting an arbitrary third-party
+`--model` currently is. Whoever picks this up next should either find a
+transformers version in the untested 5.4.x-5.9.x gap that also passes the
+`generate()` bisection above, or accept the narrowed risk and say so here
+with a date, the way every other tradeoff in this file is recorded.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
