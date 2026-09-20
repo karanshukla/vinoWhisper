@@ -55,6 +55,15 @@ jobs:
           print("devices:", openvino.Core().available_devices)
           PY
 
+      # The resolve above can succeed on a toolchain that cannot export at
+      # all: satisfying a raised transformers cap by backtracking optimum to a
+      # pre-5.x release still resolves, and `optimum-cli` then dies on import
+      # (ImportError: cannot import name 'is_tf_available'). Dependabot #24
+      # did exactly that and went green here. `env` is the cheapest subcommand
+      # that imports the full command tree without downloading a model.
+      - name: The export extra can actually run
+        run: uv run optimum-cli env
+
       - name: Re-resolve against today's indexes
         # Separate from the sync above so the two failure modes stay
         # distinguishable: "the lock no longer installs" vs "nothing newer

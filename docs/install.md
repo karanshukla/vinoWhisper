@@ -198,6 +198,17 @@ report a `known_bad` export rather than handing over a model that fails later.
 The stateful (CPU/GPU) export is unaffected: it builds and decodes under 5.5.4
 (measured 2026-09-12).
 
+**Raising the cap does not upgrade anything (2026-09-20).** Every released
+optimum-intel, 2.2.0 included, requires `transformers<5.6,>=4.51`. Ask for
+anything past that and the resolver satisfies it by backtracking optimum to a
+pre-transformers-5.x release instead, at which point `optimum-cli` fails on
+import rather than at export time. Two open transformers advisories,
+GHSA-fgcw-684q-jj6r (fixed in 5.5.0) and GHSA-xrqw-3rrv-vx5w (fixed in
+5.10.0), are unreachable for that reason and the bisection above. Nothing at
+runtime imports transformers; the only call site is the one-time
+`optimum-cli export openvino` in `scripts/convert_model.sh`, against a
+hardcoded `openai/whisper-small.en` unless you pass your own `--model`.
+
 ## The caption overlay (optional)
 
 `vinowhisper-setup --gui` installs `vinowhisper-gui`, a floating caption box
