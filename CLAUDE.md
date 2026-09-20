@@ -549,6 +549,32 @@ transformers version in the untested 5.4.x-5.9.x gap that also passes the
 `generate()` bisection above, or accept the narrowed risk and say so here
 with a date, the way every other tradeoff in this file is recorded.
 
+**2026-09-20: there is no transformers version that closes either CVE, because
+optimum-intel caps it below 5.6.** Dependabot opened
+[#24](https://github.com/karanshukla/vinoWhisper/pull/24) raising the pin to
+`transformers<5.11`. That does not upgrade the export toolchain, it downgrades
+it: every released optimum-intel, 2.2.0 included, requires
+`transformers<5.6,>=4.51`, so 5.10.1 is unsatisfiable next to optimum-intel
+2.1.0 and uv backtracks optimum instead, to optimum 1.17.1 / optimum-intel
+1.15.0. Those predate transformers 5.x, so `optimum-cli` dies on import
+(`cannot import name 'is_tf_available' from 'transformers.utils'`) before it
+parses an argument. Reproduced off the PR's own lock with `uv sync --extra
+export --frozen`. PR closed.
+
+So both advisories are stuck, for different reasons: the 5.5.0 fix for
+CVE-2026-5241 is inside optimum-intel's range but on the broken side of the
+bisection above (5.5.4 verified failing), and the 5.10.0 fix for CVE-2026-9856
+is outside every optimum-intel's range. The pin moves when optimum-intel
+supports >= 5.6 *and* someone re-runs the `generate()` bisection on an NPU,
+not before. The narrowed-exposure argument in the paragraph above still holds.
+
+The `resolve` canary went green on #24, because it only checked that the sync
+resolves and that openvino imports; nothing in CI ran `optimum-cli`.
+`deps-canary.yml` now runs `uv run optimum-cli env`, which is the cheapest
+subcommand that imports the whole command tree. It passes on main and fails on
+#24's lock. What caught #24 as it stood was the characterization test in
+`tests/test_export.py`, which is what that test is for.
+
 **2026-09-18: openvino/openvino-genai/openvino-tokenizers bumped to 2026.4.0,
 at the user's explicit request, not hardware-verified.** `pyproject.toml`'s
 floor (`openvino>=2026.3.1`) already allowed it, so `uv lock --upgrade-package
