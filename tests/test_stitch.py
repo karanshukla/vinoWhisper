@@ -438,3 +438,26 @@ def test_a_real_session_prints_no_phrase_twice():
     assert "Whispers Whisper's" not in text
     assert "rather 12's rather" not in text
     assert len(printed) <= len(reference) + 2
+
+
+def test_a_phrase_that_recurs_in_the_confirmed_text_is_not_an_anchor():
+    """Measured 2026-09-21 on the LibriVox reading time-stretched to 1.75x:
+    after a stall rolled the confirmed tail out of the window, the only
+    3-word match left was "man of large", from "a young man of large fortune"
+    already on screen and "a single man of large fortune" in the new decode.
+    Cutting there threw away the 19 words before it, and with them 47 words
+    Whisper had decoded correctly five times over. A real overlap carries
+    most of the text in front of it; a recurring phrase carries none.
+    """
+    on_screen = (
+        "Mrs. Long says that Netherfield is taken by a young man of large fortune "
+        "from the north of England, that he came down on Monday in a chaise and "
+        "four to see the place, and was so much delighted with it, that"
+    )
+    decoded = (
+        "What is his name? Bingley. Is he married or single? Oh, single, my dear, "
+        "to be sure. A single man of large fortune."
+    )
+    confirmed, curr = on_screen.split(), decoded.split()
+
+    assert _cut(confirmed, curr) == 0

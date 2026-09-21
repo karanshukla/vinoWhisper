@@ -477,6 +477,31 @@ held a steady request rate in the journal, so the NPU does not slow down
 over a session; the "crumbling" is the three bugs accumulating on a screen
 that keeps the last 160 words.
 
+## Fast speech, measured 2026-09-21
+
+Reported as the app "struggling with fast speech": lag, wrong words and
+missing words. Measured with the 2026-09-12 harness on five minutes of the
+LibriVox reading, time-stretched to 1x, 1.25x, 1.5x and 1.75x. Error rate
+6.9 / 6.9 / 9.4 / 19.0%. The table and the mechanisms are in
+`docs/latency.md`. Two fixes:
+
+1. **A recurring phrase was taken for the anchor.** At 1.75x, 75 of 105
+   dropped words had been decoded correctly at least once. `_cut` now refuses
+   a match that carries less than `_MIN_ANCHOR_COVERAGE` of the text before
+   it. 1.75x went from 19.0% to 16.3%, and the other speeds were unchanged
+   word for word.
+2. **Repetition loops ran to the 448-token limit**, six times in about 1,100
+   cycles, each stalling captions for 5.7-8.1s at *any* speed.
+   `config.max_new_tokens` caps a decode at 12 tokens per second of audio
+   plus 16. Verified on the NPU through the server's own streaming call: 2.8s.
+
+Researched first, at the user's request, instead of more patches:
+whisper_streaming's buffer model (arXiv 2307.14743), prototyped with segment
+timestamps. It took 1.75x to 12.8% and cost 1-2 points at 1x and 1.25x, so
+it was not adopted. SimulStreaming/AlignAtt needs step-level decoder control
+that `WhisperPipeline` does not give. Commits based on confidence are out,
+because the static pipeline hard-codes `scores = {1.f}`.
+
 ## transformers 5.4.0 breaks the NPU export, bisected 2026-09-04
 
 **Export with `transformers<5.4`.** Found while generating digest pins for
@@ -730,9 +755,15 @@ Ordered by what would most change the design.
    0.53s at 8s, 0.87s at 16s, with accuracy flat from 12s up and ~10% worse
    at 8s (table in `docs/latency.md`). The lag floor is therefore ~1.5s and
    the window is not the lever any more. The
-   next one is trimming confirmed audio out of the buffer, which needs
-   `return_timestamps`, and nobody has checked whether the NPU static pipeline
-   supports it.
+   next one was trimming confirmed audio out of the buffer. **Checked
+   2026-09-21: the NPU static pipeline supports both `return_timestamps`
+   and `word_timestamps` on the existing export.** Word timestamps are
+   accurate (20ms p90 across windows) but decode 2.8x slower, since the
+   flag goes to the constructor and compiles a 447-input decoder, and the
+   first load took 101s. Segment timestamps cost 0.1-0.5s a decode and
+   turn off token streaming, which nothing on screen depends on. A buffer
+   trimmed at timestamped sentence ends was prototyped and not adopted:
+   see `docs/latency.md`, "Fast speech".
 2. **Does the pipeline stay healthy under sustained continuous use?** Ten
    minutes and 806 back-to-back decodes on 2026-09-12 showed no drift in
    decode time. Longer is untested. A long `--record` session is

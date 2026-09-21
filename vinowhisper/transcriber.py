@@ -104,7 +104,11 @@ class WhisperTranscriber:
         def run() -> None:
             try:
                 with self._lock:
-                    pipeline.generate(samples, streamer=streamer)  # type: ignore[attr-defined]
+                    pipeline.generate(  # type: ignore[attr-defined]
+                        samples,
+                        streamer=streamer,
+                        max_new_tokens=config.max_new_tokens(samples.size / config.SAMPLE_RATE_HZ),
+                    )
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)
             finally:

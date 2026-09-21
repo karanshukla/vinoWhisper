@@ -129,9 +129,75 @@ matching words, and each rule below came from a real failure:
   everything before it. Measured 2026-09-12 by forcing long stalls (four
   cycles of agreement): 75 of 141 words lost without the realignment, 28
   with it. Live, the same stalls come from music, noise and speaker changes.
+- **A match must carry most of the text in front of it.** A phrase that
+  recurs is not an overlap. Measured 2026-09-21 at 1.75x speech: after a
+  stall, the only three-word match left was "man of large", in "a young man
+  of large fortune" on screen and "a single man of large fortune" in the new
+  decode, and cutting there threw away 47 words Whisper had decoded correctly
+  five times. A real overlap matches most of the words before its end; a
+  recurrence matches almost none of them. Blocks below
+  `_MIN_ANCHOR_COVERAGE` (0.4) are refused. Every threshold from 0.3 to 0.5
+  gave the same result; 0.6 started reprinting.
 - **Two cycles of agreement stays.** Three was tried on the same recording:
   15 fewer insertions, 31 more dropped words, and pending words held twice
   as long. Not worth it.
 - **Repeats collapse in units of at most about five words**, the longest loop
   seen being "do things that make you" (2026-09-01). It errs short, because a
   false positive deletes words that can never be restored.
+
+## Fast speech
+
+Measured 2026-09-21: the same five minutes of the LibriVox reading,
+time-stretched with ffmpeg's `atempo` (which keeps the pitch), at the loop's
+own pacing against the live server, scored against the Gutenberg text. A
+stretched reading is a stand-in for fast speech, not the real thing: a fast
+talker runs words together, and a stretched recording does not.
+
+| speed | words/window | decode mean | hop | error rate | dropped (of which Whisper had decoded) |
+|---|---|---|---|---|---|
+| 1x | 32 | 0.67s | 0.70s | 6.9% | 31 (12) |
+| 1.25x | 41 | 0.78s | 0.80s | 6.9% | 22 (7) |
+| 1.5x | 52 | 0.92s | 0.94s | 9.4% | 32 (15) |
+| 1.75x | 55 | 0.95s | 0.97s | 19.0% | 105 (75) |
+
+Three things go wrong as speech gets faster:
+
+- **Lag grows with words per window**, because the decoder is
+  autoregressive. Structural, and fixing it would need a smaller window.
+- **Misheard words about double by 1.5x.** That is the model.
+- **At 1.75x the stitcher threw away words Whisper got right.** Whisper often
+  decodes only the last sentence of a window, or a short hallucination ("Oh,
+  sorry!"), and each such decode breaks the two-in-a-row agreement. Commits
+  stall, the confirmed tail rolls out of the window, and the anchor grabbed a
+  recurring phrase (see "A match must carry…" above). The coverage rule took
+  1.75x from 19.0% to 16.3% and left the other three speeds word for word the
+  same.
+
+**Repetition loops are capped.** Across the four runs, six decodes looped
+("a little bit more than a little bit more…") to the model's 448-token limit,
+stalling captions for 5.7-8.1s at any speed. `config.max_new_tokens` allows
+12 tokens per second of audio plus 16. The densest real window, at 1.75x, was
+8.5 tokens per second. Replaying two of the looping windows on the NPU
+through the server's own call took them from 6.9s and 8.1s to 2.8s, and token
+streaming was unaffected.
+
+**Tried, and not adopted: whisper_streaming's buffer.**
+[whisper_streaming](https://arxiv.org/abs/2307.14743) has no fixed window.
+Its buffer runs from the last committed sentence end and is cut at
+timestamped sentence ends, so every decode starts on a sentence. Prototyped
+2026-09-21 with segment timestamps (`return_timestamps=True`), filtering by
+time before matching text. Word timestamps are precise on the NPU (the same
+word lands within 20ms across windows at p90), but they need a larger
+compiled decoder and made decoding 2.8x slower. With a 14s trim:
+
+| speed | today | buffer model |
+|---|---|---|
+| 1x | 6.9% | 9.1% |
+| 1.25x | 6.9% | 8.0% |
+| 1.5x | 9.4% | 8.6% |
+| 1.75x | 19.0% | 12.8% |
+
+It fixes fast speech and costs one to two points at normal speed. The likely
+cause is context: the buffer averages 8.5s against a fixed 12s, the same
+shortfall that made the 8s window about 10% worse. Worth another look if
+something shows more context closing that gap.
