@@ -4,6 +4,8 @@ _ANCHOR_WORDS = 40
 
 _MIN_MATCH_WORDS = 3
 
+_MIN_ANCHOR_COVERAGE = 0.4
+
 _MAX_CONSECUTIVE_REPEATS = 3
 _MAX_REPEAT_UNIT_CHARS = 50
 
@@ -111,8 +113,18 @@ def _cut(confirmed: list[str], curr: list[str]) -> int:
     )
 
     min_match = min(_MIN_MATCH_WORDS, len(curr))
+    matching = [b for b in matcher.get_matching_blocks() if b.size]
+
+    def covered(end: int) -> int:
+        return sum(min(b.b + b.size, end) - b.b for b in matching if b.b < end)
+
     # Filter by size before taking the furthest reach; the reverse lets one stray word reprint everything.
-    blocks = [b for b in matcher.get_matching_blocks() if b.size >= min_match]
+    # A block must also carry most of the text before it, or it is a phrase that merely recurs.
+    blocks = [
+        b
+        for b in matching
+        if b.size >= min_match and covered(b.b + b.size) >= _MIN_ANCHOR_COVERAGE * (b.b + b.size)
+    ]
     if not blocks:
         return _confirmed_prefix_len(confirmed, curr)
 
