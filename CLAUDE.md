@@ -616,6 +616,11 @@ STATIC_PIPELINE=True).generate()` on the actual NPU — there wasn't one in
 the environment that did this bump. Verify captions still run before
 trusting this the way the rest of this file's measured claims are trusted.
 
+**Verified 2026-09-21:** the fast-speech measurements ran on 2026.4.0 on
+the NPU, about 2,000 static-pipeline decodes at 0.67s per 12s window, the
+same as 2026.3.1. `return_timestamps` and `word_timestamps` also work on it
+(see Remaining questions, 1).
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
