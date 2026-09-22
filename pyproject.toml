@@ -72,6 +72,7 @@ Changelog = "https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md"
 
 [project.scripts]
 vinowhisper-caption = "vinowhisper.caption:main"
+vinowhisper-dictate = "vinowhisper.dictate:main"
 vinowhisper-server = "vinowhisper.server:main"
 vinowhisper-replay = "vinowhisper.replay:main"
 vinowhisper-doctor = "vinowhisper.doctor:main"

@@ -7,13 +7,21 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::APP_ID;
 use crate::app::Command;
 
-/// Renaming this orphans every binding already made.
+/// Renaming either orphans every binding already made.
 const TOGGLE: &str = "toggle-captions";
+const DICTATE: &str = "dictate";
+
+/// The dictation key on laptops that have one sends Meta+H, after Windows' Win+H.
+pub const DICTATE_PREFERRED: &str = "LOGO+h";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
     Pending,
-    Bound { trigger: String, configurable: bool },
+    Bound {
+        trigger: String,
+        dictate: String,
+        configurable: bool,
+    },
     Unavailable(String),
 }
 
@@ -50,7 +58,8 @@ impl Shortcut {
 }
 
 enum Wake {
-    Activated(bool),
+    Activated(String),
+    Deactivated(String),
     Changed(Option<Vec<Bound>>),
     Configure,
     Done,
@@ -69,12 +78,16 @@ async fn run(
     let configurable = portal.version() >= 2;
     let session = portal.create_session(Default::default()).await?;
     let mut activated = portal.receive_activated().await?;
+    let mut deactivated = portal.receive_deactivated().await?;
     let mut changed = portal.receive_shortcuts_changed().await?;
 
-    let request =
-        NewShortcut::new(TOGGLE, "Show or hide live captions").preferred_trigger(preferred);
+    let wanted = [
+        NewShortcut::new(TOGGLE, "Show or hide live captions").preferred_trigger(preferred),
+        NewShortcut::new(DICTATE, "Dictate: hold to talk, or tap to start and stop")
+            .preferred_trigger(DICTATE_PREFERRED),
+    ];
     let bound = portal
-        .bind_shortcuts(&session, &[request], None, Default::default())
+        .bind_shortcuts(&session, &wanted, None, Default::default())
         .await?
         .response()?;
     report(tx, bound.shortcuts(), configurable);
@@ -82,12 +95,20 @@ async fn run(
     loop {
         let wake = future::or(
             future::or(
-                async {
-                    match activated.next().await {
-                        Some(event) => Wake::Activated(event.shortcut_id() == TOGGLE),
-                        None => Wake::Done,
-                    }
-                },
+                future::or(
+                    async {
+                        match activated.next().await {
+                            Some(event) => Wake::Activated(event.shortcut_id().to_owned()),
+                            None => Wake::Done,
+                        }
+                    },
+                    async {
+                        match deactivated.next().await {
+                            Some(event) => Wake::Deactivated(event.shortcut_id().to_owned()),
+                            None => Wake::Done,
+                        }
+                    },
+                ),
                 async {
                     Wake::Changed(changed.next().await.map(|event| event.shortcuts().to_vec()))
                 },
@@ -102,10 +123,16 @@ async fn run(
         .await;
 
         match wake {
-            Wake::Activated(true) => {
+            Wake::Activated(id) if id == TOGGLE => {
                 let _ = tx.send(Command::Toggle);
             }
-            Wake::Activated(false) => {}
+            Wake::Activated(id) if id == DICTATE => {
+                let _ = tx.send(Command::DictateKey { down: true });
+            }
+            Wake::Deactivated(id) if id == DICTATE => {
+                let _ = tx.send(Command::DictateKey { down: false });
+            }
+            Wake::Activated(_) | Wake::Deactivated(_) => {}
             Wake::Changed(Some(shortcuts)) => report(tx, &shortcuts, configurable),
             Wake::Configure if configurable => {
                 if let Err(err) = portal
@@ -122,13 +149,16 @@ async fn run(
 }
 
 fn report(tx: &Sender<Command>, shortcuts: &[Bound], configurable: bool) {
-    let trigger = shortcuts
-        .iter()
-        .find(|shortcut| shortcut.id() == TOGGLE)
-        .map(|shortcut| shortcut.trigger_description().to_owned())
-        .unwrap_or_default();
+    let trigger = |id: &str| {
+        shortcuts
+            .iter()
+            .find(|shortcut| shortcut.id() == id)
+            .map(|shortcut| shortcut.trigger_description().to_owned())
+            .unwrap_or_default()
+    };
     let _ = tx.send(Command::Shortcut(State::Bound {
-        trigger,
+        trigger: trigger(TOGGLE),
+        dictate: trigger(DICTATE),
         configurable,
     }));
 }

@@ -20,6 +20,7 @@ pub struct View {
     pub size: TextSize,
     pub status: String,
     pub shortcut: ShortcutState,
+    pub passive: bool,
 }
 
 pub struct Tray {
@@ -83,10 +84,12 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
         ShortcutState::Bound {
             trigger,
             configurable: true,
+            ..
         } if trigger.is_empty() => ("Set a keyboard shortcut…".into(), true),
         ShortcutState::Bound {
             trigger,
             configurable: true,
+            ..
         } => (format!("Change shortcut ({trigger})…"), true),
         ShortcutState::Bound { trigger, .. } if trigger.is_empty() => (
             "No shortcut bound: set one in System Settings".into(),
@@ -100,6 +103,23 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
             "No global shortcut here: bind “vinowhisper-gui toggle” instead".into(),
             false,
         ),
+    }
+}
+
+fn tray_status(passive: bool) -> ksni::Status {
+    if passive {
+        ksni::Status::Passive
+    } else {
+        ksni::Status::Active
+    }
+}
+
+fn dictate_label(state: &ShortcutState) -> String {
+    match state {
+        ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
+            format!("Dictate ({dictate}): hold to talk, or tap to start and stop")
+        }
+        _ => "Dictate: no key bound (or bind “vinowhisper-gui dictate”)".into(),
     }
 }
 
@@ -149,6 +169,10 @@ impl ksni::Tray for Tray {
 
     fn category(&self) -> Category {
         Category::ApplicationStatus
+    }
+
+    fn status(&self) -> ksni::Status {
+        tray_status(self.view.passive)
     }
 
     fn icon_name(&self) -> String {
@@ -212,6 +236,13 @@ impl ksni::Tray for Tray {
             ),
             MenuItem::Separator,
             StandardItem {
+                label: dictate_label(&self.view.shortcut),
+                enabled: false,
+                icon_name: "audio-input-microphone".into(),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
                 label: shortcut,
                 enabled: can_configure,
                 icon_name: "preferences-desktop-keyboard-shortcuts".into(),
@@ -237,6 +268,7 @@ mod tests {
     fn bound(trigger: &str, configurable: bool) -> ShortcutState {
         ShortcutState::Bound {
             trigger: trigger.into(),
+            dictate: String::new(),
             configurable,
         }
     }
@@ -269,6 +301,23 @@ mod tests {
         let (label, enabled) = shortcut_label(&ShortcutState::Unavailable("no portal".into()));
         assert!(label.contains("vinowhisper-gui toggle"));
         assert!(!enabled);
+    }
+
+    #[test]
+    fn the_dictation_key_is_named_or_the_fallback_command_is() {
+        let bound = ShortcutState::Bound {
+            trigger: "Meta+Alt+C".into(),
+            dictate: "Meta+H".into(),
+            configurable: true,
+        };
+        assert!(dictate_label(&bound).contains("Meta+H"));
+        assert!(dictate_label(&ShortcutState::Pending).contains("vinowhisper-gui dictate"));
+    }
+
+    #[test]
+    fn an_idle_overlay_asks_to_be_tucked_away() {
+        assert_eq!(tray_status(true), ksni::Status::Passive);
+        assert_eq!(tray_status(false), ksni::Status::Active);
     }
 
     #[test]

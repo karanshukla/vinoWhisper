@@ -12,15 +12,17 @@ pub enum Request {
     Show,
     Hide,
     Toggle,
+    Dictate,
     Quit,
     Ping,
 }
 
 impl Request {
-    const ALL: [Request; 5] = [
+    const ALL: [Request; 6] = [
         Request::Show,
         Request::Hide,
         Request::Toggle,
+        Request::Dictate,
         Request::Quit,
         Request::Ping,
     ];
@@ -30,6 +32,7 @@ impl Request {
             Request::Show => "show",
             Request::Hide => "hide",
             Request::Toggle => "toggle",
+            Request::Dictate => "dictate",
             Request::Quit => "quit",
             Request::Ping => "ping",
         }

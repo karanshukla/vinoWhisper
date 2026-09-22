@@ -3,6 +3,7 @@ use cosmic_text::{
 };
 
 use crate::captions::{Captions, Span, Tone};
+use crate::dictation::Pill;
 use crate::raster::{Canvas, Rect, Rgba};
 use crate::settings::TextSize;
 
@@ -63,6 +64,19 @@ impl Geometry {
 
 pub fn logical_height(size: TextSize) -> u32 {
     Geometry::new(size, 1.0).height().ceil() as u32
+}
+
+pub const PILL_WIDTH: u32 = 640;
+pub const PILL_HEIGHT: u32 = 44;
+
+const PILL_TEXT_PX: f32 = 15.0;
+const PILL_PAD: f32 = 16.0;
+const PILL_ICON: f32 = 18.0;
+const PILL_GAP: f32 = 10.0;
+
+// Speech sits around 0.01-0.1 rms; square root so quiet talk still moves the bars.
+fn meter(rms: f32) -> f32 {
+    (rms / 0.08).sqrt().clamp(0.0, 1.0)
 }
 
 struct TextBlock {
@@ -151,6 +165,90 @@ impl Painter {
                 lines: LINES,
             },
         );
+    }
+
+    pub fn paint_pill(&mut self, canvas: &mut Canvas, scale: f32, pill: &Pill) {
+        canvas.clear();
+        let (width, height) = (canvas.width() as f32, canvas.height() as f32);
+        let px = PILL_TEXT_PX * scale;
+        let line = (PILL_TEXT_PX * 1.4).round() * scale;
+        let (pad, icon, gap) = (PILL_PAD * scale, PILL_ICON * scale, PILL_GAP * scale);
+        let spans = [Span {
+            text: pill.text.clone(),
+            tone: Tone::Caption,
+        }];
+        let max_text = (width - pad * 2.0 - icon - gap).max(1.0);
+        let text_width = self.measure(&spans, Metrics::new(px, line), max_text);
+
+        let box_width = (pad * 2.0 + icon + gap + text_width).min(width).ceil();
+        let x0 = ((width - box_width) / 2.0).floor();
+        let frame = Rect {
+            x0,
+            y0: 0.0,
+            x1: x0 + box_width,
+            y1: height,
+        };
+        canvas.fill_rounded(frame, height / 2.0, BACKGROUND);
+
+        let (cx, cy) = (x0 + pad + icon / 2.0, height / 2.0);
+        let color = tone_rgba(pill.tone);
+        match pill.level {
+            Some(rms) => {
+                let level = meter(rms);
+                let bar = icon / 7.0;
+                for (i, weight) in [0.55f32, 1.0, 0.75, 0.45].into_iter().enumerate() {
+                    let tall = icon * (0.25 + 0.75 * (level * weight * 1.4).min(1.0));
+                    let left = x0 + pad + i as f32 * bar * 2.0;
+                    canvas.fill_rounded(
+                        Rect {
+                            x0: left,
+                            y0: cy - tall / 2.0,
+                            x1: left + bar,
+                            y1: cy + tall / 2.0,
+                        },
+                        bar / 2.0,
+                        color,
+                    );
+                }
+            }
+            None => canvas.fill_circle(cx, cy, icon * 0.3, color),
+        }
+
+        let left = x0 + pad + icon + gap;
+        self.draw_text(
+            canvas,
+            &spans,
+            TextBlock {
+                metrics: Metrics::new(px, line),
+                weight: Weight::MEDIUM,
+                wrap: Wrap::None,
+                left,
+                right: (left + text_width + 1.0).min(frame.x1 - pad / 2.0),
+                top: (height - line) / 2.0,
+                lines: 1,
+            },
+        );
+    }
+
+    fn measure(&mut self, spans: &[Span], metrics: Metrics, max_width: f32) -> f32 {
+        let mut buffer = Buffer::new(&mut self.fonts, metrics);
+        buffer.set_wrap(Wrap::None);
+        buffer.set_size(Some(max_width), None);
+        let attrs = Attrs::new()
+            .family(Family::SansSerif)
+            .weight(Weight::MEDIUM);
+        buffer.set_rich_text(
+            spans.iter().map(|span| (span.text.as_str(), attrs.clone())),
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.fonts, false);
+        buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0, f32::max)
+            .min(max_width)
     }
 
     fn draw_text(&mut self, canvas: &mut Canvas, spans: &[Span], block: TextBlock) {
@@ -275,6 +373,30 @@ mod tests {
             0,
             "a wide screen stays clear at the edges"
         );
+    }
+
+    #[test]
+    fn the_pill_is_centred_and_clear_at_the_edges() {
+        let (width, height) = (PILL_WIDTH, PILL_HEIGHT);
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let mut canvas = Canvas::new(&mut pixels, width, height);
+        let pill = Pill {
+            tone: Tone::Good,
+            text: "Listening".into(),
+            level: Some(0.05),
+        };
+        painter_without_fonts().paint_pill(&mut canvas, 1.0, &pill);
+        let alpha = |x: u32, y: u32| pixels[((y * width + x) * 4 + 3) as usize];
+        assert!(alpha(width / 2, height / 2) > 200);
+        assert_eq!(alpha(0, height / 2), 0);
+        assert_eq!(alpha(width - 1, height / 2), 0);
+    }
+
+    #[test]
+    fn the_meter_moves_for_quiet_speech_and_saturates_for_loud() {
+        assert!(meter(0.005) > 0.2);
+        assert_eq!(meter(1.0), 1.0);
+        assert_eq!(meter(0.0), 0.0);
     }
 
     #[test]

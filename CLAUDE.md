@@ -14,6 +14,8 @@ overlay (`gui/`, Rust, added 2026-09-12).
 Originally scoped as toggle-mode voice typing (record, transcribe, inject text
 via `ydotool`), pivoted 2026-08-03 to live captioning. The toggle-mode code is
 gone. Anything still describing `injector.py` or `toggle.py` is stale.
+**Voice typing came back 2026-09-21 as dictation in the overlay** (issue #12),
+built differently: see "Dictation" below.
 
 **Canonical design doc, read this first:**
 [wildcat-lake-linux/input/f5-voice-typing.md](https://github.com/karanshukla/wildcat-lake-linux/blob/main/input/f5-voice-typing.md)
@@ -47,10 +49,9 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 | Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
-The global shortcut exists as of 2026-09-12, and it is the overlay's, not
-Meta+H: `vinowhisper-gui` asks the portal for Meta+Alt+C, the user confirmed
-it in Plasma's dialog, and toggling worked. Meta+H stays Ghostty's
-`new-window`, which it was already bound to.
+The captions shortcut exists as of 2026-09-12: `vinowhisper-gui` asks the portal for Meta+Alt+C, the user confirmed
+it in Plasma's dialog, and toggling worked. Meta+H was Ghostty's
+`new-window` until 2026-09-21, when the user unbound it and dictation took it.
 
 **2026-08-13: distribution and the "other" aspects.** The tool now assumes
 less about the machine it runs on: automatic NPU>GPU>CPU selection with loud
@@ -183,7 +184,7 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   field `gui/src/protocol.rs` reads; rename one and a Python test fails.
 - **Why Rust, measured rather than guessed.** PySide6-Essentials is two wheels
   but 232MB installed. Fedora's PyGObject is built for Python 3.14, which this
-  project's venv cannot be. The Rust release binary is 5.6MB and links only
+  project's venv cannot be. The Rust release binary is 5.6MB (6.3MB with dictation, 2026-09-21) and links only
   libc/libm/libgcc_s (every crate is pure Rust: SCTK without libwayland or
   xkbcommon, cosmic-text parsing fontconfig's files, ksni and ashpd over zbus).
   135 crates, but only at build time.
@@ -249,6 +250,45 @@ over the socket stopped both processes mid cold start, the portal dialog
 bound Meta+Alt+C, and the user toggled it. **Not yet seen with real speech on
 screen**, and never run on any other compositor.
 
+## Dictation (overlay), added 2026-09-21
+
+Asked for by the user, from issue #12: hold the F5 dictation key (it sends
+Meta+H) to talk, release to type; tap to start hands-free, tap again to
+finish. Rust over Python for the desktop half was the user's call. Full
+write-up in `docs/gui.md`, "Dictation". What was measured before building,
+and the traps found building it:
+
+- **The key really holds.** libinput: Meta+H down on press, up on release
+  (2.22s held), a tap is ~55ms. KDE's GlobalShortcuts portal delivers
+  `Deactivated` on release (2.49s hold), and kglobalaccel's repeats do not
+  reach the app. `dictation::TAP` is 350ms.
+- **One utterance, one decode, no stitching.** `vinowhisper-dictate --json`
+  takes start/stop/cancel on stdin, records the mic, posts once. The overlay
+  keeps it running idle because Python imports cost 270ms; `pw-record`
+  delivers 90-290ms after spawn; 250ms of tail is kept past the release. The
+  key press also calls `/health`, so a cold model load overlaps the speech.
+- **Typing is clipboard + Shift+Insert, both selections.** Ghostty binds
+  Shift+Insert to `paste_from_selection` (primary), so the text goes on both,
+  via `ext-data-control-v1` (no wl-copy).
+- **The portal works and was not good enough.** RemoteDesktop with a saved
+  restore token starts silently (0.00s, 3/3, new token each start), but KDE
+  posts "Remote control session started" and a tray icon per session, which
+  is a notification per dictation. So `/dev/uinput` first (a two-key virtual
+  keyboard, made once at startup; writable here via Steam's udev rules),
+  portal as fallback. User's choice.
+- **Keys wait on a `wl_display.sync`.** uinput pasted the *previous*
+  clipboard until the keys were held back for the compositor to confirm the
+  new selection. The portal's D-Bus latency had hidden this.
+- **The clipboard is cleared after the paste reads it**, at the user's
+  request, and the text carries `x-kde-passwordManagerHint: secret` so
+  Klipper never records it; Klipper then restores the previous item.
+- `VINOWHISPER_GUI_TRACE=1` logs every key and state change (not the text).
+  One unreproduced report of a tap doing nothing; a press during
+  Transcribing is ignored by design, which is the likely cause.
+
+Not yet done: `vinowhisper-setup` links `vinowhisper-dictate` only on a fresh
+run; the released overlay binary predates all of this.
+
 ## Architecture
 
 ```
@@ -268,6 +308,7 @@ vinowhisper/
   integrity.py    sha256 pins for the model export, and what a mismatch means
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
+  dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
   ui.py           RichRenderer, the pinned status bar
   session.py      --record writer, and reading a session back
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
@@ -277,7 +318,10 @@ gui/              vinowhisper-gui, the Rust overlay/tray/shortcut; cargo, not uv
   src/app.rs      event loop, layer-shell surface, the caption child's lifecycle
   src/captions.rs what the box shows, as plain data (the testable part)
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
-  src/protocol.rs the --json wire format
+  src/protocol.rs the --json wire formats (captions and dictation)
+  src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
+  src/clipboard.rs ext-data-control: set, sync, clear after the paste reads
+  src/paste.rs    Shift+Insert: uinput.rs first, RemoteDesktop portal fallback
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports),

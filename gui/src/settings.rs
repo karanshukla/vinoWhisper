@@ -63,6 +63,8 @@ impl TextSize {
 
 pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
+pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -70,6 +72,8 @@ pub struct Settings {
     pub position: Position,
     pub size: TextSize,
     pub shortcut: String,
+    /// Minutes unused before the tray icon moves to the hidden icons; 0 keeps it in view.
+    pub tray_idle_minutes: u64,
 }
 
 impl Default for Settings {
@@ -79,6 +83,7 @@ impl Default for Settings {
             position: Position::default(),
             size: TextSize::default(),
             shortcut: DEFAULT_SHORTCUT.to_owned(),
+            tray_idle_minutes: DEFAULT_TRAY_IDLE_MINUTES,
         }
     }
 }
@@ -137,6 +142,10 @@ pub fn data_home() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share")
 }
 
+pub fn state_home() -> PathBuf {
+    xdg_dir("XDG_STATE_HOME", ".local/state")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +167,7 @@ mod tests {
             position: Position::Top,
             size: TextSize::Large,
             shortcut: "CTRL+ALT+K".into(),
+            tray_idle_minutes: 5,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -180,6 +190,15 @@ mod tests {
         assert_eq!(settings.size, TextSize::Small);
         assert_eq!(settings.source, Source::Output);
         assert_eq!(settings.shortcut, DEFAULT_SHORTCUT);
+        assert_eq!(settings.tray_idle_minutes, DEFAULT_TRAY_IDLE_MINUTES);
+    }
+
+    #[test]
+    fn the_tray_idle_time_is_read_from_the_file() {
+        let path = scratch("tray-idle");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"tray_idle_minutes": 0}"#).unwrap();
+        assert_eq!(Settings::load_from(&path).tray_idle_minutes, 0);
     }
 
     #[test]
