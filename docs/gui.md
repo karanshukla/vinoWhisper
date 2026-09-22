@@ -53,7 +53,7 @@ vinowhisper-gui --install --autostart   # launcher, icon, tray at login
 ```
 
 The release asset is a fully static musl build, 6.0MB, so the same file runs
-on any distro's libc. A local `cargo build` is 5.6MB and links only libc
+on any distro's libc. A local `cargo build` is 6.3MB (5.6MB before dictation) and links only libc
 (both measured 2026-09-12). Every dependency is pure Rust and compiled in, and
 the 135 crates it pulls in are a build-time cost only.
 
@@ -282,7 +282,7 @@ Asked for 2026-09-12: something native and fast that installs without a pile
 of dependencies. The first candidate was PySide6. `PySide6-Essentials` is only
 two wheels, but measured 232MB installed. System PyGObject cannot be imported
 from the project's Python 3.13 venv (Fedora 44's is built for 3.14). Tkinter
-has neither a tray nor Wayland. The Rust binary is 5.6MB, links only libc,
+has neither a tray nor Wayland. The Rust binary is 6.3MB, links only libc,
 and draws its own text with no GPU context, since it redraws a couple of times
 a second at most. The shapes are hand-drawn too: antialiased rounded
 rectangles and circles from a signed-distance function, into Wayland's

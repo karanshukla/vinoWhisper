@@ -184,7 +184,7 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   field `gui/src/protocol.rs` reads; rename one and a Python test fails.
 - **Why Rust, measured rather than guessed.** PySide6-Essentials is two wheels
   but 232MB installed. Fedora's PyGObject is built for Python 3.14, which this
-  project's venv cannot be. The Rust release binary is 5.6MB and links only
+  project's venv cannot be. The Rust release binary is 5.6MB (6.3MB with dictation, 2026-09-21) and links only
   libc/libm/libgcc_s (every crate is pure Rust: SCTK without libwayland or
   xkbcommon, cosmic-text parsing fontconfig's files, ksni and ashpd over zbus).
   135 crates, but only at build time.

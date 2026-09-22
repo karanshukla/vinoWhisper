@@ -75,7 +75,7 @@ then CPU, and a fallback is never silent: it shows up in the server journal, in
 **It tells you how to fix it.** Nearly every error path here prints the command
 that resolves it, in your distro's package names, for eight distro families.
 
-**The overlay is optional, and native.** `vinowhisper-gui` is a 5.6MB Rust
+**The overlay is optional, and native.** `vinowhisper-gui` is a 6.3MB Rust
 binary that floats a caption box above every window, fullscreen video
 included, with a tray icon and a global shortcut. It links nothing but libc
 and adds nothing to the Python install. It draws the same event stream as the
