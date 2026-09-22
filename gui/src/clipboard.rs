@@ -52,15 +52,13 @@ impl Clipboard {
     pub fn bind(
         conn: &Connection,
         globals: &GlobalList,
+        seat: &WlSeat,
         qh: &QueueHandle<App>,
     ) -> Result<Clipboard, String> {
         let manager = globals
             .bind::<ExtDataControlManagerV1, _, _>(qh, 1..=1, ())
             .map_err(|_| "this compositor offers no ext-data-control".to_owned())?;
-        let seat = globals
-            .bind::<WlSeat, _, _>(qh, 1..=1, ())
-            .map_err(|err| format!("no seat: {err}"))?;
-        let device = manager.get_data_device(&seat, qh, ());
+        let device = manager.get_data_device(seat, qh, ());
         Ok(Clipboard {
             manager,
             device,

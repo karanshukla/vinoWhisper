@@ -15,6 +15,7 @@ mod settings;
 mod shortcut;
 mod tray;
 mod uinput;
+mod virtual_keyboard;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -39,6 +40,10 @@ Commands go to the running instance, starting one if there is none:
   dictate     start dictating from the microphone, or stop and type what
               was said: the tap half of the dictation key, for desktops
               with no global-shortcuts portal
+  dictate-press, dictate-release
+              the hold half: bound to a key's press and release (sway:
+              bindsym, and bindsym --release), holding it talks and
+              letting go types
   quit        stop everything, tray icon included
 
 Options:
@@ -58,12 +63,13 @@ Options:
 Two global shortcuts are requested from the desktop portal: captions,
 preferring Meta+Alt+C, and dictation, preferring Meta+H (the dictation key
 on laptops that have one). Hold the dictation key to talk and release to
-type, or tap it to start and tap again to finish. The text is typed with
-Shift+Insert through the remote-desktop portal, which asks permission once,
-and stays on the clipboard. Change either shortcut from the tray menu
-(\"Change shortcut…\") or in your desktop's shortcut settings, where they
-are listed under vinoWhisper. Tray
-choices are remembered in $XDG_CONFIG_HOME/vinowhisper/gui.json.";
+type, or tap it to start and tap again to finish. The text goes on the
+clipboard and is pasted with Shift+Insert: from /dev/uinput when that is
+writable, else through the compositor's virtual keyboard, else through the
+remote-desktop portal, which asks permission once. Change either shortcut
+from the tray menu (\"Change shortcut…\") or in your desktop's shortcut
+settings, where they are listed under vinoWhisper. Tray choices are
+remembered in $XDG_CONFIG_HOME/vinowhisper/gui.json.";
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
@@ -165,7 +171,14 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    if matches!(request, Request::Hide | Request::Quit | Request::Dictate) {
+    if matches!(
+        request,
+        Request::Hide
+            | Request::Quit
+            | Request::Dictate
+            | Request::DictatePress
+            | Request::DictateRelease
+    ) {
         eprintln!("vinowhisper-gui is not running");
         return ExitCode::SUCCESS;
     }
@@ -242,6 +255,10 @@ mod tests {
                 .contains("'output' or 'mic'")
         );
         assert!(parse(&["restart"]).unwrap_err().contains("unknown command"));
+        assert_eq!(
+            parse(&["dictate-press"]).unwrap().command,
+            Some(Request::DictatePress)
+        );
         assert!(parse(&["ping"]).is_err(), "ping is internal, not a command");
         assert!(parse(&["show", "hide"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());

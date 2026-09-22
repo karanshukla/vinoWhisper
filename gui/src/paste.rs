@@ -14,6 +14,7 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::app::Command;
 use crate::settings;
 use crate::uinput::{self, Keyboard};
+use crate::virtual_keyboard::VirtualKeyboard;
 
 // A stale portal session can hang a call, so every one is bounded.
 const CALL: Duration = Duration::from_secs(3);
@@ -52,11 +53,11 @@ pub struct Paster {
 }
 
 impl Paster {
-    pub fn spawn(tx: Sender<Command>) -> Paster {
+    pub fn spawn(tx: Sender<Command>, compositor: Option<VirtualKeyboard>) -> Paster {
         let (requests, incoming) = async_channel::unbounded();
         let spawned = thread::Builder::new()
             .name("portal-paste".into())
-            .spawn(move || future::block_on(run(incoming, tx)));
+            .spawn(move || future::block_on(run(incoming, tx, compositor)));
         if let Err(err) = spawned {
             eprintln!("[vinowhisper-gui] dictated text will not be typed: {err}");
         }
@@ -72,14 +73,23 @@ fn token_path() -> PathBuf {
     settings::state_home().join("vinowhisper/remote-desktop.token")
 }
 
-async fn run(requests: async_channel::Receiver<()>, tx: Sender<Command>) {
-    // Preferred: KDE announces every portal session with a notification and a tray icon.
+// uinput first, then the compositor's virtual keyboard, then the portal: the portal is last
+// because KDE announces every session with a notification and a tray icon.
+async fn run(
+    requests: async_channel::Receiver<()>,
+    tx: Sender<Command>,
+    mut compositor: Option<VirtualKeyboard>,
+) {
     let mut keyboard = match Keyboard::open() {
         Ok(keyboard) => Some(keyboard),
         Err(err) => {
+            let instead = if compositor.is_some() {
+                "the compositor's virtual keyboard"
+            } else {
+                "the remote-desktop portal, which the desktop announces each time"
+            };
             eprintln!(
-                "[vinowhisper-gui] /dev/uinput: {err}; dictation will type through the \
-                 remote-desktop portal, which the desktop announces each time"
+                "[vinowhisper-gui] /dev/uinput: {err}; dictation will type through {instead}"
             );
             None
         }
@@ -93,10 +103,20 @@ async fn run(requests: async_channel::Receiver<()>, tx: Sender<Command>) {
                     continue;
                 }
                 Err(err) => {
-                    eprintln!(
-                        "[vinowhisper-gui] /dev/uinput stopped working ({err}); using the portal"
-                    );
+                    eprintln!("[vinowhisper-gui] /dev/uinput stopped working ({err})");
                     keyboard = None;
+                }
+            }
+        }
+        if let Some(virtual_keyboard) = &mut compositor {
+            match virtual_keyboard.shift_insert() {
+                Ok(()) => {
+                    let _ = tx.send(Command::Pasted(Ok(())));
+                    continue;
+                }
+                Err(err) => {
+                    eprintln!("[vinowhisper-gui] the virtual keyboard stopped working ({err})");
+                    compositor = None;
                 }
             }
         }

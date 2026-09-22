@@ -43,6 +43,7 @@ use crate::session::{self, Session};
 use crate::settings::{Position, Settings, Source, TextSize};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
+use crate::virtual_keyboard::VirtualKeyboard;
 
 const SIDE_MARGIN: i32 = 16;
 const EDGE_MARGIN: i32 = 48;
@@ -225,6 +226,8 @@ pub fn run(options: Options) -> Result<(), String> {
                     let _ = tx.send(Command::DictateKey { down: true });
                     Command::DictateKey { down: false }
                 }
+                Request::DictatePress => Command::DictateKey { down: true },
+                Request::DictateRelease => Command::DictateKey { down: false },
                 Request::Ping => return,
             };
             let _ = tx.send(command);
@@ -250,16 +253,24 @@ pub fn run(options: Options) -> Result<(), String> {
         Ok(None) => {}
         Err(err) => eprintln!("[vinowhisper-gui] no launcher, so no global shortcut: {err}"),
     }
-    let clipboard = match Clipboard::bind(&conn, &globals, &qh) {
+    let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=1, ()).ok();
+    let clipboard = match &seat {
+        Some(seat) => Clipboard::bind(&conn, &globals, seat, &qh),
+        None => Err("this compositor offers no seat".to_owned()),
+    };
+    let clipboard = match clipboard {
         Ok(clipboard) => Some(clipboard),
         Err(err) => {
             eprintln!("[vinowhisper-gui] dictation cannot set the clipboard: {err}");
             None
         }
     };
+    let virtual_keyboard = seat
+        .as_ref()
+        .and_then(|seat| VirtualKeyboard::bind(&conn, &globals, seat, &qh));
     let settings = Settings::load();
     let shortcut = Shortcut::spawn(settings.shortcut.clone(), tx.clone());
-    let paster = Paster::spawn(tx.clone());
+    let paster = Paster::spawn(tx.clone(), virtual_keyboard);
     let mut app = App {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
