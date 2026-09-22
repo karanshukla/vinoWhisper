@@ -32,7 +32,7 @@ permissions: {}
 
 jobs:
   gui:
-    # The caption overlay, built once and used twice: `build` pins its sha256
+    # The desktop overlay, built once and used twice: `build` pins its sha256
     # into the wheel, and `github-release` attaches the binary itself, which
     # `vinowhisper-setup --gui` downloads and checks against that pin. It never
     # goes to PyPI. musl, so the one binary is fully static and runs on any
@@ -133,7 +133,7 @@ jobs:
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VERSION}/scripts/install.sh | bash"
             echo '```'
             echo
-            echo 'The optional caption overlay (`vinowhisper-gui-x86_64-linux` below) is'
+            echo 'The optional desktop overlay, captions and dictation (`vinowhisper-gui-x86_64-linux` below), is'
             echo 'installed and checked against the digest pinned in the wheel by:'
             echo
             echo '```'

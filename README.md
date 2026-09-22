@@ -14,8 +14,9 @@
 **Live captions for anything playing on your Linux laptop, running on the NPU
 that came with it.** No cloud, no API key, no account, no audio leaving the
 machine. Point it at whatever is playing and it captions in your terminal, or
-in a floating box above everything else on screen. There is nothing to
-interact with: start it and it goes.
+in a floating box above everything else on screen. The same box does
+dictation too: hold a key, talk, and let go to type what you said. There is
+nothing to configure: start it and it goes.
 
 <img width="1237" height="530" alt="vinoWhisper captioning a video, with the status bar pinned at the bottom" src="https://github.com/user-attachments/assets/f263eabf-f1f4-4ab2-9b68-bc50eaf92ea0" />
 
@@ -100,7 +101,8 @@ environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.
-The caption overlay is one more command once that is done:
+The desktop overlay (floating captions and dictation) is one more command
+once that is done:
 `vinowhisper-setup --gui`, which downloads it from the GitHub release and
 checks it against a digest pinned in the Python package.
 
@@ -188,7 +190,7 @@ vinowhisper-gui --install --autostart     # launcher entry, and the tray at logi
 vinowhisper-setup                         # guided install; re-runnable, idempotent
 vinowhisper-setup --dry-run               # print the plan, change nothing
 vinowhisper-setup --print-units           # the systemd units it would generate
-vinowhisper-setup --gui                   # just the optional caption overlay
+vinowhisper-setup --gui                   # just the optional overlay and dictation
 
 vinowhisper-doctor                        # devices, model, digests, audio, live levels
 vinowhisper-doctor --json                 # the same, for a bug report
@@ -204,7 +206,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 |---|---|
 | [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
 | [Terminal captions](https://github.com/karanshukla/vinoWhisper/blob/main/docs/terminal.md) | Scrollback, paragraphs, the level meter, and plain output |
-| [Caption overlay](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
+| [Overlay and dictation](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
 | [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |

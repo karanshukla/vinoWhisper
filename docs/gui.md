@@ -1,4 +1,4 @@
-# The caption overlay
+# The overlay: captions and dictation
 
 `vinowhisper-gui` puts the captions in a small box that floats above every
 other window, fullscreen video included. It adds a tray icon and a global
@@ -131,7 +131,7 @@ decides. On Plasma a dialog asks you to confirm it the first time. You can
 also pick a different key right there. After that the binding lives in the
 desktop's own settings, like any other shortcut. Change it with
 **Change shortcut…** in the tray menu, which opens that settings page, or in
-System Settings > Shortcuts, where it is listed under *vinoWhisper Captions*.
+System Settings > Shortcuts, where it is listed under *vinoWhisper*.
 
 The preferred trigger only matters the first time. It is `shortcut` in
 `gui.json`, in the XDG shortcuts syntax (`LOGO+ALT+C`). Editing it later does

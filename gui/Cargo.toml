@@ -4,7 +4,7 @@ version = "0.6.0"
 edition = "2024"
 # let-chains, which are 1.88.
 rust-version = "1.88"
-description = "Floating caption overlay, tray icon and global shortcut for vinoWhisper, on Wayland"
+description = "Floating captions, dictation, tray icon and global shortcuts for vinoWhisper, on Wayland"
 license = "MIT"
 repository = "https://github.com/karanshukla/vinoWhisper"
 publish = false

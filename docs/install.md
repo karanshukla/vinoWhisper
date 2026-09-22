@@ -209,10 +209,10 @@ runtime imports transformers; the only call site is the one-time
 `optimum-cli export openvino` in `scripts/convert_model.sh`, against a
 hardcoded `openai/whisper-small.en` unless you pass your own `--model`.
 
-## The caption overlay (optional)
+## The desktop overlay (optional)
 
 `vinowhisper-setup --gui` installs `vinowhisper-gui`, a floating caption box
-with a tray icon and a global shortcut. It downloads the binary from the
+that also does dictation, with a tray icon and global shortcuts. It downloads the binary from the
 GitHub release and checks it against the sha256 pinned in the Python package,
 so no Rust toolchain is needed. It is never on PyPI; from a checkout it can be
 built with cargo instead (`./scripts/install.sh --gui`). See [gui.md](gui.md).

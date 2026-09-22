@@ -208,14 +208,14 @@ fn desktop_entry(exe: &Path, caption: Option<&Path>, autostart: bool) -> String 
     format!(
         "[Desktop Entry]
 Type=Application
-Name=vinoWhisper Captions
-GenericName=Live Captions
-Comment=Live captions for anything playing, transcribed on the NPU
+Name=vinoWhisper
+GenericName=Live Captions and Dictation
+Comment=Live captions for anything playing, and voice typing, transcribed on the NPU
 Exec={launch}
 Icon={APP_ID}
 Terminal=false
 Categories=AudioVideo;Audio;Utility;Accessibility;
-Keywords=captions;subtitles;transcription;speech;whisper;
+Keywords=captions;subtitles;transcription;speech;whisper;dictation;voice;typing;
 StartupNotify=false
 {extra}Actions=toggle;
 

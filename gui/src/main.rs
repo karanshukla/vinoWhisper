@@ -29,8 +29,9 @@ pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
 const USAGE: &str = "\
 Usage: vinowhisper-gui [OPTIONS] [COMMAND]
 
-A floating caption overlay and tray icon for vinoWhisper. Runs
-vinowhisper-caption --json and draws what it says.
+A floating overlay and tray icon for vinoWhisper: live captions, and
+dictation into the focused window. Runs vinowhisper-caption --json and
+vinowhisper-dictate --json and draws what they say.
 
 Commands go to the running instance, starting one if there is none:
   show        show the overlay and start captioning (the default)
