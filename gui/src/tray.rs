@@ -108,7 +108,7 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
 fn dictate_label(state: &ShortcutState) -> String {
     match state {
         ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
-            format!("Dictate: hold {dictate} to talk, or tap it twice")
+            format!("Dictate ({dictate}): hold to talk, or tap to start and stop")
         }
         _ => "Dictate: no key bound (or bind “vinowhisper-gui dictate”)".into(),
     }

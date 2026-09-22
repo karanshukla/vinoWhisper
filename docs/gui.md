@@ -154,6 +154,11 @@ typed. It sits above the caption box when that is showing, and works with the
 captions hidden. Without a shortcuts portal, bind `vinowhisper-gui dictate` to a
 key: it behaves as a tap.
 
+Rebinding works like the captions shortcut: **Change shortcut…** or System
+Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
+Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
+"Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.
+
 One utterance is one decode, so none of the caption stitching applies: 29.5s
 at most (it stops and types by itself there), about 0.5-0.8s from release to
 text on the NPU, measured 2026-09-21.
