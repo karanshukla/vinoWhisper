@@ -84,6 +84,20 @@ pub fn autostart(caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
     autostart_into(&Dirs::from_env(), &std::env::current_exe()?, caption)
 }
 
+pub fn autostart_enabled() -> bool {
+    Dirs::from_env().autostart().exists()
+}
+
+pub fn set_autostart(enabled: bool, caption: Option<&Path>) -> io::Result<()> {
+    set_autostart_in(
+        &Dirs::from_env(),
+        &std::env::current_exe()?,
+        enabled,
+        caption,
+    )
+    .map(drop)
+}
+
 pub fn uninstall() -> io::Result<Vec<PathBuf>> {
     uninstall_from(&Dirs::from_env())
 }
@@ -128,12 +142,23 @@ fn install_into(
         &desktop_entry(exe, caption, false),
     )?];
     written.extend(write_icons(&dirs.data)?);
-    if autostart {
-        written.extend(autostart_into(dirs, exe, caption)?);
-    } else if dirs.autostart().exists() {
-        std::fs::remove_file(dirs.autostart())?;
-    }
+    written.extend(set_autostart_in(dirs, exe, autostart, caption)?);
     Ok(written)
+}
+
+fn set_autostart_in(
+    dirs: &Dirs,
+    exe: &Path,
+    enabled: bool,
+    caption: Option<&Path>,
+) -> io::Result<Vec<PathBuf>> {
+    if enabled {
+        return autostart_into(dirs, exe, caption);
+    }
+    match std::fs::remove_file(dirs.autostart()) {
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+        _ => Ok(Vec::new()),
+    }
 }
 
 fn autostart_into(dirs: &Dirs, exe: &Path, caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
@@ -377,5 +402,21 @@ mod tests {
         install_into(&dirs, Path::new("/bin/vinowhisper-gui"), false, None).unwrap();
         assert!(!dirs.autostart().exists());
         assert!(dirs.launcher().exists());
+    }
+
+    #[test]
+    fn the_tray_toggle_turns_autostart_on_and_off() {
+        let dirs = scratch("autostart-toggle");
+        let exe = Path::new("/bin/vinowhisper-gui");
+        set_autostart_in(&dirs, exe, false, None).unwrap();
+        assert!(!dirs.autostart().exists());
+
+        set_autostart_in(&dirs, exe, true, None).unwrap();
+        let entry = std::fs::read_to_string(dirs.autostart()).unwrap();
+        assert_eq!(exec_line(&entry), "Exec=/bin/vinowhisper-gui --hidden");
+
+        set_autostart_in(&dirs, exe, false, None).unwrap();
+        assert!(!dirs.autostart().exists());
+        assert!(!dirs.launcher().exists());
     }
 }
