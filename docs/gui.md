@@ -112,12 +112,9 @@ session, which also retries after an error.
 After 30 minutes with the captions hidden and no dictation, the tray icon
 reports itself Passive, which Plasma moves into the hidden icons behind the
 panel's arrow. Showing captions or dictating brings it back. Same mechanism
-as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21.
-
-After 30 minutes with the captions hidden and no dictation, the tray icon
-reports itself Passive, which Plasma moves into the hidden icons behind the
-panel's arrow. Showing captions or dictating brings it back. Same mechanism
-as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21.
+as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21. The
+delay is `tray_idle_minutes` in `gui.json`, and 0 keeps the icon in view.
+It is read at startup, so restart the overlay after changing it.
 
 Tray choices are remembered in `~/.config/vinowhisper/gui.json`. An
 unreadable one is reported and ignored, and every field has a default, so a

@@ -53,9 +53,6 @@ const QUIT_AFTER: Duration = Duration::from_secs(5);
 
 const TICK: Duration = Duration::from_secs(1);
 
-// Unused this long, the tray icon moves to the panel's hidden icons.
-const TRAY_IDLE: Duration = Duration::from_secs(30 * 60);
-
 #[derive(Debug)]
 pub enum Command {
     Show,
@@ -411,14 +408,15 @@ impl App {
             self.tray_passive = false;
             return;
         }
-        if self.idle_since.is_some() {
+        let minutes = self.settings.tray_idle_minutes;
+        if self.idle_since.is_some() || minutes == 0 {
             return;
         }
         self.idle_since = Some(Instant::now());
         self.idle_epoch += 1;
         let epoch = self.idle_epoch;
         let _ = self.handle.insert_source(
-            Timer::from_duration(TRAY_IDLE),
+            Timer::from_duration(Duration::from_secs(minutes.saturating_mul(60))),
             move |_, _, app: &mut App| {
                 if app.idle_epoch == epoch && app.idle_since.is_some() {
                     app.tray_passive = true;
