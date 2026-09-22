@@ -109,6 +109,16 @@ and scale-to-zero is why the server is socket-activated at all
 ([architecture.md](architecture.md)). Showing it again starts a fresh
 session, which also retries after an error.
 
+After 30 minutes with the captions hidden and no dictation, the tray icon
+reports itself Passive, which Plasma moves into the hidden icons behind the
+panel's arrow. Showing captions or dictating brings it back. Same mechanism
+as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21.
+
+After 30 minutes with the captions hidden and no dictation, the tray icon
+reports itself Passive, which Plasma moves into the hidden icons behind the
+panel's arrow. Showing captions or dictating brings it back. Same mechanism
+as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21.
+
 Tray choices are remembered in `~/.config/vinowhisper/gui.json`. An
 unreadable one is reported and ignored, and every field has a default, so a
 bad settings file never stops captions from starting. The top position is for

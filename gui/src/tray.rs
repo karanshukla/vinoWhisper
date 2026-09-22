@@ -20,6 +20,7 @@ pub struct View {
     pub size: TextSize,
     pub status: String,
     pub shortcut: ShortcutState,
+    pub passive: bool,
 }
 
 pub struct Tray {
@@ -105,6 +106,14 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
     }
 }
 
+fn tray_status(passive: bool) -> ksni::Status {
+    if passive {
+        ksni::Status::Passive
+    } else {
+        ksni::Status::Active
+    }
+}
+
 fn dictate_label(state: &ShortcutState) -> String {
     match state {
         ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
@@ -160,6 +169,10 @@ impl ksni::Tray for Tray {
 
     fn category(&self) -> Category {
         Category::ApplicationStatus
+    }
+
+    fn status(&self) -> ksni::Status {
+        tray_status(self.view.passive)
     }
 
     fn icon_name(&self) -> String {
@@ -299,6 +312,12 @@ mod tests {
         };
         assert!(dictate_label(&bound).contains("Meta+H"));
         assert!(dictate_label(&ShortcutState::Pending).contains("vinowhisper-gui dictate"));
+    }
+
+    #[test]
+    fn an_idle_overlay_asks_to_be_tucked_away() {
+        assert_eq!(tray_status(true), ksni::Status::Passive);
+        assert_eq!(tray_status(false), ksni::Status::Active);
     }
 
     #[test]

@@ -53,6 +53,9 @@ const QUIT_AFTER: Duration = Duration::from_secs(5);
 
 const TICK: Duration = Duration::from_secs(1);
 
+// Unused this long, the tray icon moves to the panel's hidden icons.
+const TRAY_IDLE: Duration = Duration::from_secs(30 * 60);
+
 #[derive(Debug)]
 pub enum Command {
     Show,
@@ -165,6 +168,9 @@ pub struct App {
     clipboard: Option<Clipboard>,
     paster: Paster,
     lingering: Option<u64>,
+    idle_since: Option<Instant>,
+    idle_epoch: u64,
+    tray_passive: bool,
 }
 
 pub fn run(options: Options) -> Result<(), String> {
@@ -293,6 +299,9 @@ pub fn run(options: Options) -> Result<(), String> {
         clipboard,
         paster,
         lingering: None,
+        idle_since: None,
+        idle_epoch: 0,
+        tray_passive: false,
     };
     app.start_dictator();
     let view = app.view();
@@ -301,6 +310,7 @@ pub fn run(options: Options) -> Result<(), String> {
     if options.visible {
         app.show();
     }
+    app.track_idle();
     app.sync_tray();
 
     event_loop
@@ -391,7 +401,32 @@ impl App {
                 stderr,
             } => self.session_ended(generation, success, &status, &stderr),
         }
+        self.track_idle();
         self.sync_tray();
+    }
+
+    fn track_idle(&mut self) {
+        if self.visible || self.dictation.pill().is_some() {
+            self.idle_since = None;
+            self.tray_passive = false;
+            return;
+        }
+        if self.idle_since.is_some() {
+            return;
+        }
+        self.idle_since = Some(Instant::now());
+        self.idle_epoch += 1;
+        let epoch = self.idle_epoch;
+        let _ = self.handle.insert_source(
+            Timer::from_duration(TRAY_IDLE),
+            move |_, _, app: &mut App| {
+                if app.idle_epoch == epoch && app.idle_since.is_some() {
+                    app.tray_passive = true;
+                    app.sync_tray();
+                }
+                TimeoutAction::Drop
+            },
+        );
     }
 
     fn show(&mut self) {
@@ -737,6 +772,7 @@ impl App {
                 move |_, _, app: &mut App| {
                     app.dictation.dismiss(epoch);
                     app.show_pill();
+                    app.track_idle();
                     TimeoutAction::Drop
                 },
             );
@@ -789,6 +825,7 @@ impl App {
             position: self.settings.position,
             size: self.settings.size,
             status: self.status_text(),
+            passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
         }
     }
