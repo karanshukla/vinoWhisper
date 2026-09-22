@@ -75,8 +75,10 @@ is none: `--install` may have baked a `--caption` path into one, and a
 packaged launcher must not be shadowed by a copy in the home directory. The
 icons are the exception, rewritten whenever they differ, since they hold
 nothing of yours. The autostart entry runs `--hidden`, so it starts in the
-tray without touching the NPU until asked. Re-running `--install` without
-`--autostart` is how autostart gets turned off.
+tray without touching the NPU until asked. The tray's "Start at login"
+checkmark writes or removes that entry (baking in `--caption` if this instance
+was started with one); re-running `--install` without `--autostart` also
+turns it off.
 
 ## Using it
 

@@ -21,6 +21,7 @@ pub struct View {
     pub status: String,
     pub shortcut: ShortcutState,
     pub passive: bool,
+    pub autostart: bool,
 }
 
 pub struct Tray {
@@ -247,6 +248,15 @@ impl ksni::Tray for Tray {
                 enabled: can_configure,
                 icon_name: "preferences-desktop-keyboard-shortcuts".into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Command::ConfigureShortcut)),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Start at login".into(),
+                checked: self.view.autostart,
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send(Command::SetAutostart(!tray.view.autostart))
+                }),
                 ..Default::default()
             }
             .into(),

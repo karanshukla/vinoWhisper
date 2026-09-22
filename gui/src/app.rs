@@ -64,6 +64,7 @@ pub enum Command {
     SetPosition(Position),
     SetSize(TextSize),
     ConfigureShortcut,
+    SetAutostart(bool),
     Shortcut(shortcut::State),
     DictateKey {
         down: bool,
@@ -149,6 +150,8 @@ pub struct App {
     restart_pending: bool,
     quitting: bool,
     caption_program: Option<PathBuf>,
+    caption_override: Option<PathBuf>,
+    autostart: bool,
 
     handle: LoopHandle<'static, App>,
     ticking: bool,
@@ -294,6 +297,8 @@ pub fn run(options: Options) -> Result<(), String> {
         quitting: false,
         caption_program: session::find_caption(options.caption.as_deref()),
         dictate_program: session::find_sibling(session::DICTATE, options.caption.as_deref()),
+        caption_override: options.caption,
+        autostart: install::autostart_enabled(),
         handle,
         signal: event_loop.get_signal(),
         tx: tx.clone(),
@@ -352,6 +357,7 @@ impl App {
                 self.place();
             }
             Command::ConfigureShortcut => self.shortcut.configure(),
+            Command::SetAutostart(enabled) => self.set_autostart(enabled),
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
                 let action = self.dictation.key(down, Instant::now());
@@ -836,6 +842,14 @@ impl App {
             status: self.status_text(),
             passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
+            autostart: self.autostart,
+        }
+    }
+
+    fn set_autostart(&mut self, enabled: bool) {
+        match install::set_autostart(enabled, self.caption_override.as_deref()) {
+            Ok(()) => self.autostart = enabled,
+            Err(err) => eprintln!("[vinowhisper-gui] could not change start at login: {err}"),
         }
     }
 
