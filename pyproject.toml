@@ -1,6 +1,6 @@
 [project]
 name = "vinowhisper"
-version = "0.5.1"
+version = "0.6.0"
 description = "NPU-accelerated local live captioning for Linux, via OpenVINO GenAI Whisper"
 readme = "README.md"
 license = "MIT"
@@ -223,7 +223,7 @@ skips = [
 # ── bump-my-version ───────────────────────────────────────────────────────────
 
 [tool.bumpversion]
-current_version = "0.5.1"
+current_version = "0.6.0"
 commit = true
 tag = true
 tag_name = "v{new_version}"
