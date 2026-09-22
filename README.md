@@ -38,14 +38,18 @@ network. `openvino-genai`'s `WhisperPipeline` with `device="NPU"` does the
 work, the same idea as [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace),
 different feature.
 
-Measured on this laptop (Wildcat Lake, stepping A0), whisper-small.en:
+Measured on this laptop (Wildcat Lake, stepping A0), whisper-small.en on the
+NPU, 2026-09-12:
 
 | | |
 |---|---|
-| Per 30s window, `generate()` | **1.19s** |
+| Per 12s window (the default), `generate()` | **0.70s** mean, 0.85s p90 |
+| Captions behind the audio | **~1.5s** at best |
 | First streamed token | **0.204s** |
-| First readable sentence | **0.32s** |
 | Idle cost after you stop | **zero, the server exits itself** |
+
+The Intel iGPU does the same window in 0.95s and the CPU in 2.30s, so both
+fallbacks are usable, just laggier.
 
 ## What makes it different from a shell script around Whisper
 
@@ -73,13 +77,14 @@ then CPU, and a fallback is never silent: it shows up in the server journal, in
 `/health`, in `vinowhisper-doctor`, and on the status bar as a red border.
 
 **It tells you how to fix it.** Nearly every error path here prints the command
-that resolves it, in your distro's package names, for eight distro families.
+that resolves it, in your distro's package names (see
+[Supported distros](#supported-distros)).
 
 **The overlay is optional, and native.** `vinowhisper-gui` is a 6.3MB Rust
 binary that floats a caption box above every window, fullscreen video
-included, with a tray icon and a global shortcut. It links nothing but libc
-and adds nothing to the Python install. It draws the same event stream as the
-terminal UI rather than reimplementing any of it. It also does **dictation**:
+included, with a tray icon, a global shortcut and a start-at-login toggle. It
+links nothing but libc and adds nothing to the Python install. It draws the
+same event stream as the terminal UI rather than reimplementing any of it. It also does **dictation**:
 hold Meta+H (the dictation key on laptops that have one), talk, and let go to
 type what you said into the focused window, one NPU decode per utterance.
 [docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md)
@@ -115,7 +120,8 @@ pip install vinowhisper   # needs Python 3.11-3.13
 vinowhisper-setup         # still worth running: NPU driver, model export, units
 ```
 
-`pip install` gets you the five commands and the Python dependencies. It cannot
+`pip install` gets you the six `vinowhisper-*` commands and the Python
+dependencies. It cannot
 get you an NPU driver, a model export or systemd units, which is what
 `vinowhisper-setup` is for either way. See
 [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
@@ -126,16 +132,41 @@ for the OpenVINO version floor and why this could not be a pip install until
 
 | | |
 |---|---|
-| **OS** | Linux. Developed on Fedora 45 / KDE Plasma 6 / Wayland |
+| **OS** | Linux. Developed on Fedora 45 / KDE Plasma 6 / Wayland. See [Supported distros](#supported-distros) |
 | **Audio** | PipeWire (`pw-record`) or PulseAudio (`parec`), picked automatically |
-| **Accelerator** | Intel NPU for the numbers above. GPU and CPU run, slower |
+| **Accelerator** | Intel NPU for the numbers above. An Intel GPU or the CPU runs, slower. AMD NPUs are detected and not usable (no OpenVINO plugin) |
 | **Python** | 3.11 to 3.13. [3.14 cannot export the model](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) |
 | **Disk** | ~1.5GB for the model export |
+| **Overlay** (optional) | A Wayland compositor with wlr-layer-shell: KDE Plasma 6, Sway, Hyprland, niri, COSMIC. Not GNOME |
 
 The NPU needs a userspace driver half that no distro packages completely, and
 `vinowhisper-doctor` will tell you exactly which half is missing.
 [docs/hardware.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md)
 covers every way it fails to appear.
+
+## Supported distros
+
+`vinowhisper-setup` and `vinowhisper-doctor` read `/etc/os-release` and print
+install commands in your distro's own package names. Eight families are
+covered:
+
+| Family | Includes | NPU driver | Confidence |
+|---|---|---|---|
+| Fedora | RHEL, CentOS, Alma, Rocky, Nobara, Bazzite, Silverblue | `intel-npu-driver` in the repos | **Built and run here** |
+| Debian | Ubuntu, Pop!\_OS, Mint, elementary, Raspbian | Intel's upstream `.deb`s | From the package index |
+| Arch | CachyOS, EndeavourOS, Manjaro, Garuda | AUR (`intel-npu-driver`) | From the package index |
+| openSUSE | Tumbleweed, Leap, SLES | Upstream release | From the package index |
+| Gentoo | | Some overlays, else upstream | From the package index |
+| Void | | Upstream release | From the package index |
+| Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
+| NixOS | | `hardware.intel-npu` (unstable) | Config snippets, not `nix-env` lines |
+
+Anything else gets generic advice, and says so. Derivatives not listed are
+matched through `ID_LIKE`. On every distro the NPU compiler library
+(`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
+because nobody packages it; the doctor detects that and prints the steps.
+[docs/audio.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md#distro-support)
+has the capture side.
 
 ## Commands
 
@@ -152,6 +183,7 @@ vinowhisper-gui                           # the floating overlay and tray icon
 vinowhisper-gui toggle                    # show/hide it; Meta+Alt+C does the same
 vinowhisper-gui dictate                   # start/finish dictating; hold Meta+H does the same
 vinowhisper-gui --install --autostart     # launcher entry, and the tray at login
+                                          #   (or tick "Start at login" in the tray)
 
 vinowhisper-setup                         # guided install; re-runnable, idempotent
 vinowhisper-setup --dry-run               # print the plan, change nothing
@@ -185,7 +217,9 @@ Worth saying before you install it, because the numbers above are all from one
 machine:
 
 - **Every benchmark here is n=1**, on one laptop, with early-silicon NPU
-  drivers. The GPU and CPU fallbacks have never run on hardware at all.
+  drivers. The GPU and CPU fallbacks have run on this laptop's Xe3 iGPU and
+  Core 5 320 and nowhere else, and 2 of 15 GPU model loads segfaulted inside
+  OpenVINO's GPU plugin.
 - **Captions trail the audio by roughly twice the cycle time.** That is
   inherent to a two-cycle commit policy, not a bug to be tuned away.
   [docs/latency.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md)
@@ -202,15 +236,17 @@ machine:
   compositor's virtual keyboard (Sway, Hyprland, niri, COSMIC, KWin), else the
   desktop portal, and KDE then posts a notification for every dictation. The
   virtual-keyboard route has not been tried on a live compositor yet.
-- **Package names for seven of the eight distro families are unverified.** If
-  one is wrong for yours, that is expected, and it is the fastest thing in this
-  repo to fix.
-- **Export the model with `transformers<5.4`.** Bisected on hardware
+- **Only Fedora's package names have been used for real.** The other seven
+  families come from their package indexes. If one is wrong for yours, that is
+  expected, and it is the fastest thing in this repo to fix. The PulseAudio
+  capture backend has never run against a real PulseAudio server either.
+- **The NPU export needs `transformers<5.4`.** Bisected on hardware
   2026-09-04: 5.4.0 and up produce a graph that compiles and then fails at
-  `generate()` with `Port for tensor name cache_position was not found`, and a
-  fresh install resolves to 5.5.4. The digest check catches it and says so
-  rather than letting it fail at the first transcription, but it is not fixed
-  upstream.
+  `generate()` with `Port for tensor name cache_position was not found`. The
+  `vinowhisper[export]` extra holds the pin, so the wizard's export is fine,
+  but an `optimum-cli` installed some other way is not. That pinned version
+  carries two open transformers CVEs; both need you to export a malicious
+  model repo, which the default `openai/whisper-small.en` is not.
   [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
   has the bisect table.
 

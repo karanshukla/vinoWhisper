@@ -25,9 +25,9 @@ the wizard both speak your distro:
 
 | Family | Covered | Confidence |
 |---|---|---|
-| Fedora / RHEL / derivatives | ✓ | Built and run here |
-| Debian / Ubuntu / Pop / Mint | ✓ | From the package index, not from use |
-| Arch / CachyOS / EndeavourOS / Manjaro | ✓ | Same |
+| Fedora / RHEL / Alma / Rocky / Nobara / Bazzite / Silverblue | ✓ | Built and run here |
+| Debian / Ubuntu / Pop / Mint / elementary / Raspbian | ✓ | From the package index, not from use |
+| Arch / CachyOS / EndeavourOS / Manjaro / Garuda | ✓ | Same |
 | openSUSE / SLES | ✓ | Same |
 | Void, Gentoo, Alpine | ✓ | Same |
 | NixOS | ✓ | Configuration advice, not `nix-env` lines: imperative installs there do not persist |
