@@ -197,9 +197,11 @@ machine:
   terminal UI is the way in. Sway, Hyprland, niri and COSMIC should work and
   are untested.
 - **Dictation pastes into whatever has focus.** Wayland does not say what that
-  is, so it cannot check, and the clipboard is cleared after each paste. Without
-  access to `/dev/uinput` it types through the desktop portal, and KDE then
-  posts a notification for every dictation.
+  is, so it cannot check, and the clipboard is cleared after each paste. The
+  paste keys come from `/dev/uinput` when udev lets you open it, else the
+  compositor's virtual keyboard (Sway, Hyprland, niri, COSMIC, KWin), else the
+  desktop portal, and KDE then posts a notification for every dictation. The
+  virtual-keyboard route has not been tried on a live compositor yet.
 - **Package names for seven of the eight distro families are unverified.** If
   one is wrong for yours, that is expected, and it is the fastest thing in this
   repo to fix.

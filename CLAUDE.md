@@ -276,6 +276,16 @@ and the traps found building it:
   is a notification per dictation. So `/dev/uinput` first (a two-key virtual
   keyboard, made once at startup; writable here via Steam's udev rules),
   portal as fallback. User's choice.
+- **Non-KDE desktops type through `zwp_virtual_keyboard_v1`** (added
+  2026-09-22, `gui/src/virtual_keyboard.rs`): uinput first, then this, then
+  the portal. Sway, niri and COSMIC have no RemoteDesktop portal, so without
+  it a stock Fedora spin (no udev rule for uinput) could only fill the
+  clipboard. The two-key keymap compiled under libxkbcommon and sets Shift
+  on keycode 50; no live compositor has run it. Without a shortcuts portal,
+  `vinowhisper-gui dictate-press` / `dictate-release` on a key's press and
+  release give hold-to-talk. GNOME stays out: no layer-shell for the pill
+  and no data-control for the clipboard, so it needs a different design
+  (portal `NotifyKeyboardKeysym` per character, no overlay), not a route.
 - **Keys wait on a `wl_display.sync`.** uinput pasted the *previous*
   clipboard until the keys were held back for the compositor to confirm the
   new selection. The portal's D-Bus latency had hidden this.

@@ -159,7 +159,9 @@ laptop's F-row sends, after Windows' Win+H. A small pill shows what it is
 doing: a level meter while listening, then "Transcribing…", then the text it
 typed. It sits above the caption box when that is showing, and works with the
 captions hidden. Without a shortcuts portal, bind `vinowhisper-gui dictate` to a
-key: it behaves as a tap.
+key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-gui
+dictate-press` to the key's press and `vinowhisper-gui dictate-release` to its
+release (sway: `bindsym` and `bindsym --release`; Hyprland has the portal).
 
 Rebinding works like the captions shortcut: **Change shortcut…** or System
 Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
@@ -179,7 +181,9 @@ copies the text and presses Shift+Insert:
 2. Shift+Insert rather than Ctrl+V: it pastes in terminals and GUI apps
    alike, and uses evdev codes that do not move with the keyboard layout.
 3. The keys come from a virtual keyboard on `/dev/uinput` when the user can
-   open it, and from the remote-desktop portal otherwise.
+   open it; else from the compositor's own virtual keyboard
+   (`zwp_virtual_keyboard_v1`, which wlroots compositors, niri, COSMIC and
+   KWin offer to any client); else from the remote-desktop portal.
 4. The keys go out only once the compositor confirms it has the new
    selection (a `wl_display.sync` round trip). Without that, uinput is fast
    enough to paste the *previous* clipboard, which it did on 2026-09-21.
@@ -201,6 +205,21 @@ has no dialog and no notification. Whether you can open it depends on udev:
 on this laptop Steam's `60-steam-input.rules` grants it. The log says which
 path is in use.
 
+**The compositor's virtual keyboard, added 2026-09-22, is for everything
+that is not KDE with Steam.** `zwp_virtual_keyboard_v1` needs no udev rule
+and no portal: on the first paste that needs it, the overlay hands the
+compositor a two-key keymap (Shift and Insert, at their evdev codes plus 8,
+with a `modifier_map` so Shift really sets Shift) and sends the four key
+events on the same Wayland connection that set the clipboard, so they cannot
+overtake it. The keymap was compiled
+through libxkbcommon before shipping; it has not been tried against a live
+compositor yet. It sits between uinput and the portal because the uinput
+path is the one measured on hardware, and on Sway, niri and COSMIC there is
+no remote-desktop portal to fall back to. A compositor that restricts the
+protocol (Hyprland's `ecosystem:enforce_permissions`, off by default) may
+answer a protocol error, which ends the Wayland connection; none of the
+desktops in the table below do so out of the box.
+
 **Where the text goes is not checked.** Wayland does not say what has focus,
 so it pastes into whatever does. If typing failed outright, the text is left
 on the clipboard and the pill says so; after a paste that went to the wrong
@@ -220,12 +239,18 @@ The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what
 lets it sit above fullscreen windows without a window rule or keep-above
 hint, and it is a Wayland protocol that not every compositor offers:
 
-| Desktop | Overlay | Tray | Shortcut | Status |
-|---|---|---|---|---|
-| KDE Plasma 6.7 (Wayland) | yes | yes | portal | **Tested on hardware, 2026-09-12** |
-| Sway, Hyprland, niri, COSMIC | layer-shell: yes | needs an SNI tray | varies | untested |
-| GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | will not start; use the terminal |
-| X11 sessions | no | | | will not start; use the terminal |
+| Desktop | Overlay | Tray | Shortcut | Dictation types via | Status |
+|---|---|---|---|---|---|
+| KDE Plasma 6.7 (Wayland) | yes | yes | portal | uinput, then virtual keyboard, then portal | **Tested on hardware, 2026-09-12; dictation 2026-09-21** |
+| Hyprland | layer-shell: yes | needs an SNI tray | portal | virtual keyboard | untested |
+| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind `dictate-press`/`dictate-release` | virtual keyboard | untested |
+| GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | no data-control, so no paste | will not start; use the terminal |
+| X11 sessions | no | | | | will not start; use the terminal |
+
+The clipboard half needs `ext-data-control-v1`: KWin 6.3, wlroots 0.19 (Sway
+1.11), Hyprland 0.49, niri 25.02 and COSMIC all have it; older ones offer
+only the `wlr-` version, which the overlay does not speak. GNOME has neither,
+which is what rules it out for dictation independently of layer-shell.
 
 On a compositor without layer-shell it exits with a message that says so,
 rather than falling back to a normal window that cannot stay on top.
@@ -249,7 +274,8 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
       │              ▲ start / stop / cancel on stdin
       ├── tray (StatusNotifierItem over D-Bus)
       ├── shortcuts (xdg-desktop-portal GlobalShortcuts: Activated and Deactivated)
-      ├── paste: ext-data-control, then Shift+Insert via /dev/uinput or RemoteDesktop
+      ├── paste: ext-data-control, then Shift+Insert via /dev/uinput,
+      │          zwp_virtual_keyboard_v1, or RemoteDesktop
       └── $XDG_RUNTIME_DIR/vinowhisper-gui.sock (show/hide/toggle/dictate/quit)
 ```
 
