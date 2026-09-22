@@ -12,6 +12,7 @@ dependencies = [
  "futures-util",
  "getrandom",
  "serde",
+ "serde_repr",
  "zbus",
 ]
 
@@ -1166,6 +1167,7 @@ version = "0.5.1"
 dependencies = [
  "ashpd",
  "async-channel",
+ "async-io",
  "cosmic-text",
  "futures-lite",
  "ksni",

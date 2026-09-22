@@ -93,6 +93,9 @@ _vinowhisper() {
                 _vinowhisper_dirs "$cur"
             fi
             ;;
+        vinowhisper-dictate)
+            mapfile -t COMPREPLY < <(compgen -W "--json --version --help" -- "$cur")
+            ;;
         vinowhisper-doctor)
             mapfile -t COMPREPLY < <(compgen -W "--json --no-probe --version --help" -- "$cur")
             ;;
@@ -115,6 +118,7 @@ _vinowhisper() {
 }
 
 complete -F _vinowhisper vinowhisper-caption
+complete -F _vinowhisper vinowhisper-dictate
 complete -F _vinowhisper vinowhisper-server
 complete -F _vinowhisper vinowhisper-replay
 complete -F _vinowhisper vinowhisper-doctor

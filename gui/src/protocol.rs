@@ -31,8 +31,31 @@ pub enum Event {
     },
 }
 
+/// What vinowhisper-dictate --json says.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "event")]
+pub enum Dictate {
+    Listening,
+    Level {
+        rms: f32,
+    },
+    Transcribing,
+    Ready {
+        device: String,
+        #[serde(default)]
+        degraded: bool,
+    },
+    Dictated {
+        text: String,
+    },
+    Cancelled,
+    Error {
+        message: String,
+    },
+}
+
 /// Unknown records are skipped, not fatal: a newer Python side may add some.
-pub fn parse(line: &str) -> Option<Event> {
+pub fn parse<T: for<'de> Deserialize<'de>>(line: &str) -> Option<T> {
     serde_json::from_str(line.trim()).ok()
 }
 
@@ -106,11 +129,33 @@ mod tests {
 
     #[test]
     fn unknown_records_and_stray_output_are_skipped() {
-        assert_eq!(parse(r#"{"event": "Heartbeat", "at": 1}"#), None);
+        assert_eq!(parse::<Event>(r#"{"event": "Heartbeat", "at": 1}"#), None);
         assert_eq!(
-            parse("[vinowhisper] waiting for the transcription server"),
+            parse::<Event>("[vinowhisper] waiting for the transcription server"),
             None
         );
-        assert_eq!(parse(""), None);
+        assert_eq!(parse::<Event>(""), None);
+        assert_eq!(parse::<Dictate>(CYCLE), None);
+    }
+
+    #[test]
+    fn dictation_records_parse() {
+        let lines = [
+            r#"{"event": "Listening", "limit_s": 29.5}"#,
+            r#"{"event": "Level", "rms": 0.031}"#,
+            r#"{"event": "Transcribing", "audio_s": 2.4}"#,
+            r#"{"event": "Ready", "device": "NPU", "degraded": false, "warnings": []}"#,
+            r#"{"event": "Dictated", "text": "It’s done.", "audio_s": 2.4, "total_s": 0.46, "rms": 0.02}"#,
+            r#"{"event": "Cancelled"}"#,
+            r#"{"event": "Error", "message": "Microphone capture failed"}"#,
+        ];
+        let parsed: Vec<Dictate> = lines.iter().filter_map(|line| parse(line)).collect();
+        assert_eq!(parsed.len(), lines.len());
+        assert_eq!(
+            parsed[4],
+            Dictate::Dictated {
+                text: "It’s done.".into()
+            }
+        );
     }
 }

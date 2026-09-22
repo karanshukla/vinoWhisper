@@ -1,15 +1,20 @@
 mod app;
 mod captions;
+mod clipboard;
+mod dictation;
+mod dictator;
 mod icon;
 mod install;
 mod ipc;
 mod paint;
+mod paste;
 mod protocol;
 mod raster;
 mod session;
 mod settings;
 mod shortcut;
 mod tray;
+mod uinput;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -31,6 +36,9 @@ Commands go to the running instance, starting one if there is none:
   hide        hide the overlay and stop captioning
   toggle      one or the other: bind this to a key if your desktop has
               no global-shortcuts portal
+  dictate     start dictating from the microphone, or stop and type what
+              was said: the tap half of the dictation key, for desktops
+              with no global-shortcuts portal
   quit        stop everything, tray icon included
 
 Options:
@@ -47,9 +55,14 @@ Options:
   -V, --version     print the version
   -h, --help        print this help
 
-The global shortcut is requested from the desktop portal, preferring
-Meta+Alt+C. Change it from the tray menu (\"Change shortcut…\") or in your
-desktop's shortcut settings, where it is listed under vinoWhisper. Tray
+Two global shortcuts are requested from the desktop portal: captions,
+preferring Meta+Alt+C, and dictation, preferring Meta+H (the dictation key
+on laptops that have one). Hold the dictation key to talk and release to
+type, or tap it to start and tap again to finish. The text is typed with
+Shift+Insert through the remote-desktop portal, which asks permission once,
+and stays on the clipboard. Change either shortcut from the tray menu
+(\"Change shortcut…\") or in your desktop's shortcut settings, where they
+are listed under vinoWhisper. Tray
 choices are remembered in $XDG_CONFIG_HOME/vinowhisper/gui.json.";
 
 #[derive(Debug, Default, PartialEq)]
@@ -152,7 +165,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    if matches!(request, Request::Hide | Request::Quit) {
+    if matches!(request, Request::Hide | Request::Quit | Request::Dictate) {
         eprintln!("vinowhisper-gui is not running");
         return ExitCode::SUCCESS;
     }

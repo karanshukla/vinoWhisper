@@ -99,9 +99,9 @@ driven from three places instead:
 
 | | |
 |---|---|
-| **Shortcut** | Meta+Alt+C by default. Shows or hides the captions |
+| **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
 | **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Change shortcut… and Quit |
-| **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `quit`, sent to the running instance |
+| **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,
@@ -139,6 +139,69 @@ settings; it reaches the running instance the same way.
 ConfigureShortcuts first appears. On version 1 the binding is still an
 ordinary desktop shortcut, so change it in System Settings instead.
 
+## Dictation
+
+Added 2026-09-21, from [issue #12](https://github.com/karanshukla/vinoWhisper/issues/12).
+The overlay also types what you say into whatever window has focus.
+
+- **Hold** the dictation key, talk, release: the text is typed on release.
+- **Tap** it (shorter than 350ms) to start hands-free, talk, tap again to finish.
+
+It asks the portal for **Meta+H**, which is what the dictation key on this
+laptop's F-row sends, after Windows' Win+H. A small pill shows what it is
+doing: a level meter while listening, then "Transcribing…", then the text it
+typed. It sits above the caption box when that is showing, and works with the
+captions hidden. Without a shortcuts portal, bind `vinowhisper-gui dictate` to a
+key: it behaves as a tap.
+
+One utterance is one decode, so none of the caption stitching applies: 29.5s
+at most (it stops and types by itself there), about 0.5-0.8s from release to
+text on the NPU, measured 2026-09-21.
+
+**How the text gets there.** Wayland lets no app type into another, so it
+copies the text and presses Shift+Insert:
+
+1. The text goes on the clipboard *and* the primary selection, through
+   `ext-data-control-v1`. Both, because Shift+Insert pastes the primary
+   selection in terminals (Ghostty binds it to `paste_from_selection`).
+2. Shift+Insert rather than Ctrl+V: it pastes in terminals and GUI apps
+   alike, and uses evdev codes that do not move with the keyboard layout.
+3. The keys come from a virtual keyboard on `/dev/uinput` when the user can
+   open it, and from the remote-desktop portal otherwise.
+4. The keys go out only once the compositor confirms it has the new
+   selection (a `wl_display.sync` round trip). Without that, uinput is fast
+   enough to paste the *previous* clipboard, which it did on 2026-09-21.
+5. Once the paste has read the text, both selections are cleared: 300ms after
+   the last read, never sooner than 500ms after the keys, and at 2s whether
+   or not anything read it. The text is also offered with
+   `x-kde-passwordManagerHint: secret`, so Klipper never records it, and
+   Klipper then puts back whatever you had copied before (measured
+   2026-09-21). Without a clipboard manager the clipboard is left empty.
+
+**Why uinput first.** Measured 2026-09-21 on Plasma 6.7: the portal works,
+and after the first permission dialog a saved restore token starts every
+later session silently (0.00s, three of three; KDE issues a new token each
+time, so it is saved after every start, in
+`~/.local/state/vinowhisper/remote-desktop.token`). But KDE posts "Remote
+control session started" for every session and shows a Remote Control tray
+icon while one is open, which is a notification per dictation. `/dev/uinput`
+has no dialog and no notification. Whether you can open it depends on udev:
+on this laptop Steam's `60-steam-input.rules` grants it. The log says which
+path is in use.
+
+**Where the text goes is not checked.** Wayland does not say what has focus,
+so it pastes into whatever does. If typing failed outright, the text is left
+on the clipboard and the pill says so; after a paste that went to the wrong
+window it is gone, and the pill is the only place it still shows.
+
+The microphone is recorded by `vinowhisper-dictate --json`, which the
+overlay keeps running idle (reading its stdin, not the microphone) so that
+Python's imports (270ms) are not paid when the key goes down. It starts
+`pw-record` on the key, which delivers audio 90-290ms later, and keeps
+recording 250ms past the release so a key let go on the last syllable does
+not cut it off. The key also wakes the server, so a cold model load overlaps
+the speech.
+
 ## Where it works
 
 The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what
@@ -170,9 +233,12 @@ be dragged; Position is top or bottom only.
 vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──> vinowhisper-server (NPU)
       │   ▲                          │
       │   └──── one JSON event per line on stdout
+      ├──spawns──> vinowhisper-dictate --json ──HTTP──> (same server)
+      │              ▲ start / stop / cancel on stdin
       ├── tray (StatusNotifierItem over D-Bus)
-      ├── shortcut (xdg-desktop-portal GlobalShortcuts)
-      └── $XDG_RUNTIME_DIR/vinowhisper-gui.sock (show/hide/toggle/quit)
+      ├── shortcuts (xdg-desktop-portal GlobalShortcuts: Activated and Deactivated)
+      ├── paste: ext-data-control, then Shift+Insert via /dev/uinput or RemoteDesktop
+      └── $XDG_RUNTIME_DIR/vinowhisper-gui.sock (show/hide/toggle/dictate/quit)
 ```
 
 - **The wire format is `events.to_dict`, verbatim.** `--json` writes one
@@ -253,4 +319,8 @@ prefixed `[caption]`.
 | "does not offer wlr-layer-shell" | GNOME or X11. See the table above |
 | Box shows raw error text | The caption process exited without an `Error` record, so the box shows its last stderr lines. Run `vinowhisper-caption` in a terminal for the rest |
 | Text in an unexpected font | fontconfig names a sans-serif that is not installed. It falls back to the first installed of Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans and Liberation Sans |
+| Dictation: "vinowhisper-dictate was not found" | Older install. `pip install -U vinowhisper`, then `vinowhisper-setup` links it |
+| Dictation: a notification every time | No `/dev/uinput` access, so it types through the portal. A udev rule giving your user `/dev/uinput` (as Steam's does) stops it |
+| Dictation: "On the clipboard, not typed" | The paste was refused or failed; the text is on the clipboard. After refusing the portal dialog, restart the overlay to be asked again |
+| Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_GUI_TRACE=1 vinowhisper-gui` logs every key and state change |
 | Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -8,7 +8,9 @@ use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle, LoopSignal};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
-use smithay_client_toolkit::reexports::client::protocol::{wl_output, wl_shm, wl_surface};
+use smithay_client_toolkit::reexports::client::protocol::{
+    wl_output, wl_seat::WlSeat, wl_shm, wl_surface,
+};
 use smithay_client_toolkit::reexports::client::{Connection, Dispatch, QueueHandle, delegate_noop};
 use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
@@ -28,10 +30,14 @@ use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{delegate_registry, registry_handlers};
 
 use crate::captions::{Captions, Phase};
+use crate::clipboard::Clipboard;
+use crate::dictation::{Action, Dictation};
+use crate::dictator::Dictator;
 use crate::install;
 use crate::ipc::{self, Request};
 use crate::paint::{self, Painter};
-use crate::protocol::Event;
+use crate::paste::Paster;
+use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
 use crate::settings::{Position, Settings, Source, TextSize};
@@ -40,6 +46,7 @@ use crate::tray::{self, Tray};
 
 const SIDE_MARGIN: i32 = 16;
 const EDGE_MARGIN: i32 = 48;
+const PILL_GAP: i32 = 12;
 
 const KILL_AFTER: Duration = Duration::from_secs(4);
 const QUIT_AFTER: Duration = Duration::from_secs(5);
@@ -57,6 +64,18 @@ pub enum Command {
     SetSize(TextSize),
     ConfigureShortcut,
     Shortcut(shortcut::State),
+    DictateKey {
+        down: bool,
+    },
+    Dictation {
+        generation: u64,
+        event: Dictate,
+    },
+    DictatorExited {
+        generation: u64,
+        message: String,
+    },
+    Pasted(Result<(), String>),
     Caption {
         generation: u64,
         event: Event,
@@ -117,6 +136,7 @@ pub struct App {
     scaling: Option<(WpFractionalScaleManagerV1, WpViewporter)>,
     qh: QueueHandle<App>,
     overlay: Option<Overlay>,
+    pill: Option<Overlay>,
     painter: Painter,
 
     captions: Captions,
@@ -137,6 +157,14 @@ pub struct App {
     tray_view: Option<tray::View>,
     shortcut: Shortcut,
     shortcut_state: shortcut::State,
+
+    dictation: Dictation,
+    dictator: Option<Dictator>,
+    dictator_generation: u64,
+    dictate_program: Option<PathBuf>,
+    clipboard: Option<Clipboard>,
+    paster: Paster,
+    lingering: Option<u64>,
 }
 
 pub fn run(options: Options) -> Result<(), String> {
@@ -189,6 +217,11 @@ pub fn run(options: Options) -> Result<(), String> {
                 Request::Hide => Command::Hide,
                 Request::Toggle => Command::Toggle,
                 Request::Quit => Command::Quit,
+                Request::Dictate => {
+                    // A tap: starts hands-free, or finishes what is running.
+                    let _ = tx.send(Command::DictateKey { down: true });
+                    Command::DictateKey { down: false }
+                }
                 Request::Ping => return,
             };
             let _ = tx.send(command);
@@ -214,8 +247,16 @@ pub fn run(options: Options) -> Result<(), String> {
         Ok(None) => {}
         Err(err) => eprintln!("[vinowhisper-gui] no launcher, so no global shortcut: {err}"),
     }
+    let clipboard = match Clipboard::bind(&conn, &globals, &qh) {
+        Ok(clipboard) => Some(clipboard),
+        Err(err) => {
+            eprintln!("[vinowhisper-gui] dictation cannot set the clipboard: {err}");
+            None
+        }
+    };
     let settings = Settings::load();
     let shortcut = Shortcut::spawn(settings.shortcut.clone(), tx.clone());
+    let paster = Paster::spawn(tx.clone());
     let mut app = App {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
@@ -226,6 +267,7 @@ pub fn run(options: Options) -> Result<(), String> {
         scaling,
         qh,
         overlay: None,
+        pill: None,
         painter: Painter::new(),
         captions: Captions::new(),
         ticking: false,
@@ -237,6 +279,7 @@ pub fn run(options: Options) -> Result<(), String> {
         restart_pending: false,
         quitting: false,
         caption_program: session::find_caption(options.caption.as_deref()),
+        dictate_program: session::find_sibling(session::DICTATE, options.caption.as_deref()),
         handle,
         signal: event_loop.get_signal(),
         tx: tx.clone(),
@@ -244,7 +287,14 @@ pub fn run(options: Options) -> Result<(), String> {
         tray_view: None,
         shortcut,
         shortcut_state: shortcut::State::Pending,
+        dictation: Dictation::new(),
+        dictator: None,
+        dictator_generation: 0,
+        clipboard,
+        paster,
+        lingering: None,
     };
+    app.start_dictator();
     let view = app.view();
     app.tray = tray::spawn(Tray::new(tx, view.clone()));
     app.tray_view = Some(view);
@@ -285,6 +335,46 @@ impl App {
             }
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::Shortcut(state) => self.shortcut_state = state,
+            Command::DictateKey { down } => {
+                let action = self.dictation.key(down, Instant::now());
+                trace(format_args!(
+                    "key {} -> {action:?}, now {:?}",
+                    if down { "down" } else { "up" },
+                    self.dictation.phase()
+                ));
+                self.dictate(action);
+            }
+            Command::Dictation { generation, event } => {
+                if self.dictator_is(generation) {
+                    match &event {
+                        Dictate::Level { .. } => {}
+                        Dictate::Dictated { text } => trace(format_args!(
+                            "dictate says Dictated ({} chars)",
+                            text.chars().count()
+                        )),
+                        event => trace(format_args!("dictate says {event:?}")),
+                    }
+                    let action = self.dictation.event(event);
+                    self.dictate(action);
+                }
+            }
+            Command::DictatorExited {
+                generation,
+                message,
+            } => {
+                if self.dictator_is(generation) {
+                    self.dictator = None;
+                    self.dictation.child_exited(message);
+                    self.dictate(None);
+                }
+            }
+            Command::Pasted(result) => {
+                if result.is_ok() {
+                    self.clear_clipboard_after_paste();
+                }
+                self.dictation.pasted(result);
+                self.dictate(None);
+            }
             Command::Caption { generation, event } => {
                 if self.is_current(generation) {
                     let before = self.captions.frame();
@@ -313,18 +403,22 @@ impl App {
             self.create_overlay();
         }
         self.start_session();
+        self.place_pill();
     }
 
     fn hide(&mut self) {
         self.visible = false;
         self.overlay = None;
         self.stop_session();
+        self.place_pill();
     }
 
     fn quit(&mut self) {
         self.quitting = true;
         self.visible = false;
         self.overlay = None;
+        self.pill = None;
+        self.dictator = None;
         if self.session.is_none() {
             self.signal.stop();
             return;
@@ -464,18 +558,24 @@ impl App {
     }
 
     fn create_overlay(&mut self) {
+        self.overlay = Some(self.create_layer("vinowhisper", |layer, app| {
+            place(layer, &app.settings);
+        }));
+    }
+
+    fn create_layer(&self, namespace: &str, place: impl FnOnce(&LayerSurface, &App)) -> Overlay {
         let surface = self.compositor.create_surface(&self.qh);
         let layer = self.layer_shell.create_layer_surface(
             &self.qh,
             surface,
             Layer::Overlay,
-            Some("vinowhisper"),
+            Some(namespace),
             None,
         );
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         // Zero, not -1: stay clear of panels.
         layer.set_exclusive_zone(0);
-        place(&layer, &self.settings);
+        place(&layer, self);
         // Empty input region: click-through, so it never blocks the video under it.
         match Region::new(&self.compositor) {
             Ok(region) => layer
@@ -491,7 +591,7 @@ impl App {
             None => (None, None),
         };
         layer.commit();
-        self.overlay = Some(Overlay {
+        Overlay {
             layer,
             fractional,
             viewport,
@@ -500,7 +600,7 @@ impl App {
             configured: false,
             scale120: 120,
             buffer_scale: 1,
-        });
+        }
     }
 
     fn place(&mut self) {
@@ -508,49 +608,178 @@ impl App {
             place(&overlay.layer, &self.settings);
             overlay.layer.commit();
         }
+        self.place_pill();
+    }
+
+    fn place_pill(&mut self) {
+        if let Some(pill) = &self.pill {
+            place_pill(&pill.layer, &self.settings, self.visible);
+            pill.layer.commit();
+        }
+    }
+
+    fn dictator_is(&self, generation: u64) -> bool {
+        self.dictator
+            .as_ref()
+            .is_some_and(|dictator| dictator.generation == generation)
+    }
+
+    fn start_dictator(&mut self) {
+        if self.dictator.is_some() || self.quitting {
+            return;
+        }
+        let Some(program) = &self.dictate_program else {
+            return;
+        };
+        self.dictator_generation += 1;
+        match Dictator::start(program, self.dictator_generation, self.tx.clone()) {
+            Ok(dictator) => self.dictator = Some(dictator),
+            Err(err) => eprintln!(
+                "[vinowhisper-gui] could not start {}: {err}",
+                program.display()
+            ),
+        }
+    }
+
+    fn tell_dictator(&mut self, command: &str) {
+        if command == "start" {
+            self.start_dictator();
+        }
+        let Some(dictator) = &mut self.dictator else {
+            let why = if self.dictate_program.is_none() {
+                format!(
+                    "{} was not found; update vinoWhisper (pip install -U vinowhisper)",
+                    session::DICTATE
+                )
+            } else {
+                format!("{} is not running", session::DICTATE)
+            };
+            self.dictation.fail(why);
+            return;
+        };
+        if let Err(err) = dictator.send(command) {
+            self.dictator = None;
+            self.dictation
+                .fail(format!("lost {}: {err}", session::DICTATE));
+        }
+    }
+
+    fn dictate(&mut self, action: Option<Action>) {
+        match action {
+            Some(Action::Start) => self.tell_dictator("start"),
+            Some(Action::Stop) => self.tell_dictator("stop"),
+            Some(Action::Paste(text)) => match &mut self.clipboard {
+                Some(clipboard) => clipboard.set(&text, &self.qh),
+                None => self
+                    .dictation
+                    .pasted(Err("this desktop gives no clipboard access".into())),
+            },
+            None => {}
+        }
+        self.show_pill();
+    }
+
+    pub fn clipboard_mut(&mut self) -> Option<&mut Clipboard> {
+        self.clipboard.as_mut()
+    }
+
+    fn clear_clipboard_after_paste(&mut self) {
+        let Some(clipboard) = &mut self.clipboard else {
+            return;
+        };
+        clipboard.arm(Instant::now());
+        if !clipboard.armed() {
+            return;
+        }
+        let _ = self.handle.insert_source(
+            Timer::from_duration(Duration::from_millis(100)),
+            |_, _, app: &mut App| {
+                let done = app
+                    .clipboard
+                    .as_mut()
+                    .is_none_or(|clipboard| clipboard.clear_if_due(Instant::now()));
+                if done {
+                    TimeoutAction::Drop
+                } else {
+                    TimeoutAction::ToDuration(Duration::from_millis(100))
+                }
+            },
+        );
+    }
+
+    pub fn selection_taken(&mut self) {
+        if !self.paster.paste() {
+            self.dictation
+                .pasted(Err("the paste thread is gone".into()));
+            self.show_pill();
+        }
+    }
+
+    fn show_pill(&mut self) {
+        if self.dictation.pill().is_none() {
+            self.pill = None;
+            return;
+        }
+        if self.pill.is_none() {
+            self.pill = Some(self.create_layer("vinowhisper-dictation", |layer, app| {
+                place_pill(layer, &app.settings, app.visible);
+            }));
+        }
+        self.draw_pill();
+
+        let epoch = self.dictation.epoch();
+        if let Some(linger) = self.dictation.linger()
+            && self.lingering != Some(epoch)
+        {
+            self.lingering = Some(epoch);
+            let _ = self.handle.insert_source(
+                Timer::from_duration(linger),
+                move |_, _, app: &mut App| {
+                    app.dictation.dismiss(epoch);
+                    app.show_pill();
+                    TimeoutAction::Drop
+                },
+            );
+        }
+    }
+
+    fn draw_pill(&mut self) {
+        let (Some(pill), Some(content)) = (&self.pill, self.dictation.pill()) else {
+            return;
+        };
+        let painter = &mut self.painter;
+        render(&mut self.pool, pill, |canvas, scale| {
+            painter.paint_pill(canvas, scale, &content);
+        });
     }
 
     fn draw(&mut self) {
         let Some(overlay) = &self.overlay else {
             return;
         };
-        if !overlay.configured || overlay.width == 0 || overlay.height == 0 {
-            return;
-        }
-        let scale = overlay.scale();
-        let width = (f64::from(overlay.width) * scale).round() as u32;
-        let height = (f64::from(overlay.height) * scale).round() as u32;
-        let (buffer, pixels) = match self.pool.create_buffer(
-            width as i32,
-            height as i32,
-            width as i32 * 4,
-            wl_shm::Format::Argb8888,
-        ) {
-            Ok(pair) => pair,
-            Err(err) => {
-                eprintln!("[vinowhisper-gui] no buffer to draw into: {err}");
-                return;
-            }
-        };
-        let mut canvas = Canvas::new(pixels, width, height);
-        self.painter.paint(
-            &mut canvas,
-            scale as f32,
-            self.settings.size,
-            &self.captions,
-        );
+        let (painter, size, captions) = (&mut self.painter, self.settings.size, &self.captions);
+        render(&mut self.pool, overlay, |canvas, scale| {
+            painter.paint(canvas, scale, size, captions);
+        });
+    }
 
-        let surface = overlay.layer.wl_surface();
-        match &overlay.viewport {
-            Some(viewport) => viewport.set_destination(overlay.width as i32, overlay.height as i32),
-            None => surface.set_buffer_scale(overlay.buffer_scale),
+    fn redraw(&mut self, surface: &wl_surface::WlSurface) {
+        if self
+            .pill
+            .as_ref()
+            .is_some_and(|pill| pill.layer.wl_surface() == surface)
+        {
+            self.draw_pill();
+        } else {
+            self.draw();
         }
-        surface.damage_buffer(0, 0, width as i32, height as i32);
-        if let Err(err) = buffer.attach_to(surface) {
-            eprintln!("[vinowhisper-gui] could not attach the frame: {err}");
-            return;
-        }
-        overlay.layer.commit();
+    }
+
+    fn surface_mut(&mut self, surface: &wl_surface::WlSurface) -> Option<&mut Overlay> {
+        [self.overlay.as_mut(), self.pill.as_mut()]
+            .into_iter()
+            .flatten()
+            .find(|overlay| overlay.layer.wl_surface() == surface)
     }
 
     fn view(&self) -> tray::View {
@@ -592,6 +821,64 @@ impl App {
     }
 }
 
+/// VINOWHISPER_GUI_TRACE=1: every dictation key and state change on stderr.
+fn trace(message: std::fmt::Arguments) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_GUI_TRACE").is_some_and(|v| v == "1")) {
+        eprintln!("[vinowhisper-gui] {message}");
+    }
+}
+
+fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(&mut Canvas, f32)) {
+    if !overlay.configured || overlay.width == 0 || overlay.height == 0 {
+        return;
+    }
+    let scale = overlay.scale();
+    let width = (f64::from(overlay.width) * scale).round() as u32;
+    let height = (f64::from(overlay.height) * scale).round() as u32;
+    let (buffer, pixels) = match pool.create_buffer(
+        width as i32,
+        height as i32,
+        width as i32 * 4,
+        wl_shm::Format::Argb8888,
+    ) {
+        Ok(pair) => pair,
+        Err(err) => {
+            eprintln!("[vinowhisper-gui] no buffer to draw into: {err}");
+            return;
+        }
+    };
+    let mut canvas = Canvas::new(pixels, width, height);
+    paint(&mut canvas, scale as f32);
+
+    let surface = overlay.layer.wl_surface();
+    match &overlay.viewport {
+        Some(viewport) => viewport.set_destination(overlay.width as i32, overlay.height as i32),
+        None => surface.set_buffer_scale(overlay.buffer_scale),
+    }
+    surface.damage_buffer(0, 0, width as i32, height as i32);
+    if let Err(err) = buffer.attach_to(surface) {
+        eprintln!("[vinowhisper-gui] could not attach the frame: {err}");
+        return;
+    }
+    overlay.layer.commit();
+}
+
+fn place_pill(layer: &LayerSurface, settings: &Settings, captions_visible: bool) {
+    let captions = if captions_visible {
+        paint::logical_height(settings.size) as i32 + PILL_GAP
+    } else {
+        0
+    };
+    let (anchor, (top, bottom)) = match settings.position {
+        Position::Bottom => (Anchor::BOTTOM, (0, EDGE_MARGIN + captions)),
+        Position::Top => (Anchor::TOP, (EDGE_MARGIN + captions, 0)),
+    };
+    layer.set_anchor(anchor);
+    layer.set_size(paint::PILL_WIDTH, paint::PILL_HEIGHT);
+    layer.set_margin(top, 0, bottom, 0);
+}
+
 fn place(layer: &LayerSurface, settings: &Settings) {
     let (anchor, (top, bottom)) = match settings.position {
         Position::Bottom => (Anchor::BOTTOM, (0, EDGE_MARGIN)),
@@ -611,12 +898,11 @@ impl CompositorHandler for App {
         surface: &wl_surface::WlSurface,
         factor: i32,
     ) {
-        if let Some(overlay) = &mut self.overlay
-            && overlay.layer.wl_surface() == surface
+        if let Some(overlay) = self.surface_mut(surface)
             && overlay.viewport.is_none()
         {
             overlay.buffer_scale = factor.max(1);
-            self.draw();
+            self.redraw(surface);
         }
     }
 
@@ -661,6 +947,13 @@ impl LayerShellHandler for App {
             if self.visible {
                 self.create_overlay();
             }
+        } else if self
+            .pill
+            .as_ref()
+            .is_some_and(|pill| pill.layer.wl_surface() == layer.wl_surface())
+        {
+            self.pill = None;
+            self.show_pill();
         }
     }
 
@@ -672,22 +965,24 @@ impl LayerShellHandler for App {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        let height = paint::logical_height(self.settings.size);
-        let Some(overlay) = &mut self.overlay else {
-            return;
-        };
-        if overlay.layer.wl_surface() != layer.wl_surface() {
-            return;
-        }
-        let (width, configured_height) = configure.new_size;
-        overlay.width = width;
-        overlay.height = if configured_height == 0 {
-            height
+        let surface = layer.wl_surface().clone();
+        let is_pill = self
+            .pill
+            .as_ref()
+            .is_some_and(|pill| pill.layer.wl_surface() == &surface);
+        let (default_width, default_height) = if is_pill {
+            (paint::PILL_WIDTH, paint::PILL_HEIGHT)
         } else {
-            configured_height
+            (0, paint::logical_height(self.settings.size))
         };
+        let Some(overlay) = self.surface_mut(&surface) else {
+            return;
+        };
+        let (width, height) = configure.new_size;
+        overlay.width = if width == 0 { default_width } else { width };
+        overlay.height = if height == 0 { default_height } else { height };
         overlay.configured = true;
-        self.draw();
+        self.redraw(&surface);
     }
 }
 
@@ -729,16 +1024,22 @@ impl Dispatch<WpFractionalScaleV1, ()> for App {
         let wp_fractional_scale_v1::Event::PreferredScale { scale } = event else {
             return;
         };
-        if let Some(overlay) = &mut app.overlay
-            && overlay.fractional.as_ref() == Some(proxy)
-        {
-            overlay.scale120 = scale;
-            app.draw();
+        let surface = [app.overlay.as_mut(), app.pill.as_mut()]
+            .into_iter()
+            .flatten()
+            .find(|overlay| overlay.fractional.as_ref() == Some(proxy))
+            .map(|overlay| {
+                overlay.scale120 = scale;
+                overlay.layer.wl_surface().clone()
+            });
+        if let Some(surface) = surface {
+            app.redraw(&surface);
         }
     }
 }
 
 delegate_noop!(App: WpFractionalScaleManagerV1);
+delegate_noop!(App: ignore WlSeat);
 delegate_noop!(App: WpViewporter);
 delegate_noop!(App: ignore WpViewport);
 delegate_registry!(App);

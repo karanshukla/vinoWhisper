@@ -79,7 +79,9 @@ that resolves it, in your distro's package names, for eight distro families.
 binary that floats a caption box above every window, fullscreen video
 included, with a tray icon and a global shortcut. It links nothing but libc
 and adds nothing to the Python install. It draws the same event stream as the
-terminal UI rather than reimplementing any of it.
+terminal UI rather than reimplementing any of it. It also does **dictation**:
+hold Meta+H (the dictation key on laptops that have one), talk, and let go to
+type what you said into the focused window, one NPU decode per utterance.
 [docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md)
 
 ## Install
@@ -148,6 +150,7 @@ vinowhisper-caption --json                # one event per line, what the overlay
 
 vinowhisper-gui                           # the floating overlay and tray icon
 vinowhisper-gui toggle                    # show/hide it; Meta+Alt+C does the same
+vinowhisper-gui dictate                   # start/finish dictating; hold Meta+H does the same
 vinowhisper-gui --install --autostart     # launcher entry, and the tray at login
 
 vinowhisper-setup                         # guided install; re-runnable, idempotent
@@ -169,7 +172,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 |---|---|
 | [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
 | [Terminal captions](https://github.com/karanshukla/vinoWhisper/blob/main/docs/terminal.md) | Scrollback, paragraphs, the level meter, and plain output |
-| [Caption overlay](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcut: installing, which desktops it works on, and why it is Rust |
+| [Caption overlay](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
 | [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
@@ -193,6 +196,10 @@ machine:
   does not offer the protocol, so there the overlay refuses to start and the
   terminal UI is the way in. Sway, Hyprland, niri and COSMIC should work and
   are untested.
+- **Dictation pastes into whatever has focus.** Wayland does not say what that
+  is, so it cannot check, and the clipboard is cleared after each paste. Without
+  access to `/dev/uinput` it types through the desktop portal, and KDE then
+  posts a notification for every dictation.
 - **Package names for seven of the eight distro families are unverified.** If
   one is wrong for yours, that is expected, and it is the fastest thing in this
   repo to fix.

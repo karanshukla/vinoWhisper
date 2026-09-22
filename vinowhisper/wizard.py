@@ -13,7 +13,7 @@ from . import __version__, capture, config, devices, distro, integrity, overlay
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
-COMMANDS = ("caption", "server", "replay", "doctor", "setup")
+COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup")
 
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"

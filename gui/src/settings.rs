@@ -137,6 +137,10 @@ pub fn data_home() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share")
 }
 
+pub fn state_home() -> PathBuf {
+    xdg_dir("XDG_STATE_HOME", ".local/state")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
