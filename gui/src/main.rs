@@ -4,6 +4,7 @@ mod clipboard;
 mod dictation;
 mod dictator;
 mod icon;
+mod idle;
 mod install;
 mod ipc;
 mod paint;

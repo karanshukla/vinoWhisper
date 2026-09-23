@@ -4,8 +4,11 @@ use std::time::{Duration, Instant};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::channel::{self, Sender};
+use smithay_client_toolkit::reexports::calloop::generic::Generic;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle, LoopSignal};
+use smithay_client_toolkit::reexports::calloop::{
+    EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::{
@@ -33,6 +36,7 @@ use crate::captions::{Captions, Phase};
 use crate::clipboard::Clipboard;
 use crate::dictation::{Action, Dictation};
 use crate::dictator::Dictator;
+use crate::idle::{self, IdleTimer};
 use crate::install;
 use crate::ipc::{self, Request};
 use crate::paint::{self, Painter};
@@ -169,8 +173,8 @@ pub struct App {
     clipboard: Option<Clipboard>,
     paster: Paster,
     lingering: Option<u64>,
-    idle_since: Option<Instant>,
-    idle_epoch: u64,
+    idle: bool,
+    idle_timer: Option<IdleTimer>,
     tray_passive: bool,
 }
 
@@ -312,10 +316,11 @@ pub fn run(options: Options) -> Result<(), String> {
         clipboard,
         paster,
         lingering: None,
-        idle_since: None,
-        idle_epoch: 0,
+        idle: false,
+        idle_timer: None,
         tray_passive: false,
     };
+    app.idle_timer = watch_idle(&app.handle);
     app.start_dictator();
     let view = app.view();
     app.tray = tray::spawn(Tray::new(tx, view.clone()));
@@ -421,27 +426,24 @@ impl App {
 
     fn track_idle(&mut self) {
         if self.visible || self.dictation.pill().is_some() {
-            self.idle_since = None;
+            if std::mem::take(&mut self.idle)
+                && let Some(timer) = &self.idle_timer
+            {
+                let _ = timer.disarm();
+            }
             self.tray_passive = false;
             return;
         }
         let minutes = self.settings.tray_idle_minutes;
-        if self.idle_since.is_some() || minutes == 0 {
+        if self.idle || minutes == 0 {
             return;
         }
-        self.idle_since = Some(Instant::now());
-        self.idle_epoch += 1;
-        let epoch = self.idle_epoch;
-        let _ = self.handle.insert_source(
-            Timer::from_duration(Duration::from_secs(minutes.saturating_mul(60))),
-            move |_, _, app: &mut App| {
-                if app.idle_epoch == epoch && app.idle_since.is_some() {
-                    app.tray_passive = true;
-                    app.sync_tray();
-                }
-                TimeoutAction::Drop
-            },
-        );
+        self.idle = true;
+        if let Some(timer) = &self.idle_timer
+            && let Err(err) = timer.arm(Duration::from_secs(minutes.saturating_mul(60)))
+        {
+            eprintln!("[vinowhisper-gui] could not start the tray's idle timer: {err}");
+        }
     }
 
     fn show(&mut self) {
@@ -879,6 +881,29 @@ impl App {
         }
         self.tray_view = Some(view);
     }
+}
+
+fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
+    let timer = IdleTimer::new().and_then(|timer| Ok((timer.watcher()?, timer)));
+    let (watcher, timer) = match timer {
+        Ok(pair) => pair,
+        Err(err) => {
+            eprintln!("[vinowhisper-gui] no idle timer, the tray icon stays in view: {err}");
+            return None;
+        }
+    };
+    let source = Generic::new(watcher, Interest::READ, Mode::Level);
+    handle
+        .insert_source(source, |_, fd, app: &mut App| {
+            if idle::fired(&**fd) && app.idle {
+                app.tray_passive = true;
+                app.sync_tray();
+            }
+            Ok(PostAction::Continue)
+        })
+        .map_err(|err| eprintln!("[vinowhisper-gui] no idle timer: {err}"))
+        .ok()?;
+    Some(timer)
 }
 
 /// VINOWHISPER_GUI_TRACE=1: every dictation key and state change on stderr.

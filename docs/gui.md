@@ -118,6 +118,14 @@ as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21. The
 delay is `tray_idle_minutes` in `gui.json`, and 0 keeps the icon in view.
 It is read at startup, so restart the overlay after changing it.
 
+The 30 minutes are wall-clock minutes, suspend included: the timer is a
+`CLOCK_BOOTTIME` timerfd. Until 2026-09-22 it was calloop's `Timer`, which
+runs on the monotonic clock, and that clock stops while the laptop sleeps. On
+a laptop that suspended often, three hours on the clock were 23 minutes to the
+timer, and the icon never tucked away. A timer that expires during suspend
+fires on resume, and it never wakes the machine (that would be
+`CLOCK_BOOTTIME_ALARM`).
+
 Tray choices are remembered in `~/.config/vinowhisper/gui.json`. An
 unreadable one is reported and ignored, and every field has a default, so a
 bad settings file never stops captions from starting. The top position is for
