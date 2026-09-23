@@ -201,7 +201,7 @@ def test_a_copy_in_home_gets_a_launcher_and_a_packaged_one_does_not(monkeypatch,
 
 def test_declining_an_optional_step_is_not_unfinished_setup(capsys):
     instance = wizard.Wizard(dry_run=True)
-    instance.step("Caption overlay", lambda: wizard.Outcome(None, "declined"), optional=True)
+    instance.step("Desktop overlay", lambda: wizard.Outcome(None, "declined"), optional=True)
     assert instance.skipped == []
 
 

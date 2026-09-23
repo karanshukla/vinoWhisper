@@ -17,7 +17,7 @@
 #   4. hands over to `vinowhisper-setup`, which does the parts that need to
 #      look at your actual hardware: capture tool, NPU driver, model export,
 #      systemd units, PATH symlinks
-#   5. with --gui only: builds the caption overlay (gui/, Rust) and installs
+#   5. with --gui only: builds the desktop overlay (gui/, Rust) and installs
 #      it into ~/.local/bin with a launcher and a login autostart. Optional
 #      on purpose; the terminal captions need none of it.
 #
@@ -59,7 +59,7 @@ vinoWhisper installer.
   --yes         pass --yes to vinowhisper-setup: no prompts, sudo included
   --dry-run     print what would happen, change nothing
   --no-setup    stop after `uv sync`, do not run the setup wizard
-  --gui         also build the caption overlay and tray icon (needs cargo)
+  --gui         also build the overlay: captions, dictation, tray (needs cargo)
 EOF
 }
 
@@ -131,11 +131,11 @@ say "Building the environment (uv sync)"
 say "  This pulls the OpenVINO wheels; expect a few GB and a few minutes."
 run uv sync --extra export --project "$INSTALL_DIR"
 
-# --- caption overlay (optional) --------------------------------------------
+# --- desktop overlay (optional) --------------------------------------------
 
 if [[ $GUI -eq 1 ]]; then
     if command -v cargo >/dev/null 2>&1; then
-        say "Building the caption overlay (a few minutes the first time)"
+        say "Building the desktop overlay (a few minutes the first time)"
         run cargo build --release --locked --manifest-path "$INSTALL_DIR/gui/Cargo.toml"
         run install -Dm755 "$INSTALL_DIR/gui/target/release/vinowhisper-gui" \
             "$HOME/.local/bin/vinowhisper-gui"

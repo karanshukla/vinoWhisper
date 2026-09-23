@@ -305,7 +305,7 @@ class Wizard:
         self.step("Commands on PATH", self.link_binaries)
         self.step("Bash completion", self.install_completion)
         if os.environ.get("WAYLAND_DISPLAY"):
-            self.step("Caption overlay (optional)", self.install_overlay, optional=True)
+            self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
 
         self.say("")
         if self.failed:
@@ -320,10 +320,10 @@ class Wizard:
         return 0
 
     def run_overlay(self) -> int:
-        self.say(f"vinowhisper-setup {__version__}: the caption overlay")
+        self.say(f"vinowhisper-setup {__version__}: the desktop overlay")
         if self.dry_run:
             self.say("\n  --dry-run: nothing will be changed; every command is printed.")
-        self.step("Caption overlay", self.install_overlay)
+        self.step("Desktop overlay", self.install_overlay)
         return 1 if self.failed else 0
 
 
@@ -451,7 +451,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gui",
         action="store_true",
-        help="Install only the optional caption overlay (vinowhisper-gui): the "
+        help="Install only the optional desktop overlay (vinowhisper-gui: floating "
+        "captions and dictation): the "
         "release binary, checked against the sha256 pinned in this package, or a "
         "cargo build from a checkout.",
     )
