@@ -1,16 +1,6 @@
 name: Bandit
 
-# Bandit is a security linter for Python, by PyCQA (Apache v2.0).
-# https://pypi.org/project/bandit/
-#
-# Findings land under the repository's Security → Code scanning tab. The scan
-# configuration — excluded paths, skipped checks and why — lives in
-# [tool.bandit] in pyproject.toml, so `uv run poe security` reproduces this
-# job's findings locally.
-#
-# Worth having on a tool like this despite it being local-only: it shells out
-# to pw-record, parec, pactl, optimum-cli and systemctl, and it binds a socket.
-# Bandit's subprocess and network checks are aimed at exactly that surface.
+# Config is [tool.bandit] in pyproject.toml, so `uv run poe security` matches it.
 
 on:
   push:

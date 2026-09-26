@@ -19,46 +19,23 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-# Python 3.14 is unusable here: it made functools.partial a descriptor, which
-# breaks optimum's `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)` class-
-# attribute idiom (self gets auto-bound as an extra positional arg). Confirmed
-# 2026-08-03 across every optimum/optimum-intel/transformers version tried —
-# root cause, not a version-pairing issue. Use 3.13 until upstream fixes it.
+# 3.14 breaks optimum's export (docs/install.md)
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    # 2026.3.1 is the floor because it is the first *stable* release that can
-    # build the NPU static Whisper pipeline. Stable 2026.2.1 could not: its
-    # pipeline_static.cpp pattern-matcher did not recognize the optimum-intel
-    # export's SDPA attention-mask node shape
-    # (OPENVINO_ASSERT(!self_attn_nodes.empty())), which is why this project
-    # pinned the nightly wheel index from 2026-08-03 until 2026-08-31.
-    # Re-measured 2026-08-31 on the Wildcat Lake NPU against the same
-    # --disable-stateful export, WhisperPipeline(..., STATIC_PIPELINE=True):
-    # 2026.3.1 stable builds in 2.0s and decodes, as do nightly 2026.4.0.dev-
-    # 20260805 and 2026.5.0.dev20260831. Stable caught up, so the nightly
-    # index, the global prerelease policy and the weekly resolve canary are
-    # all gone and these resolve from PyPI like anything else.
+    # First stable release that builds the NPU static pipeline (docs/install.md)
     "openvino>=2026.3.1",
     "openvino-genai>=2026.3.1.0",
-    # Pulled in transitively by openvino-genai and still listed directly: the
-    # NPU pipeline hard-depends on it, and a transitive-only dependency is one
-    # upstream packaging change away from disappearing silently.
+    # Also pulled in by openvino-genai; listed because the NPU pipeline needs it
     "openvino-tokenizers>=2026.3.1.0",
     "flask",
     "werkzeug",
     "requests",
     "numpy",
-    # Status bar only. Rich rather than Textual because the transcript is
-    # append-only (see stitch.py), so it belongs in the terminal's own
-    # scrollback and only the status line needs to redraw.
     "rich",
 ]
 
 [project.optional-dependencies]
-# Only the one-time model export uses these, and optimum brings torch with it,
-# so they stay out of the default install. transformers 5.4.0 stopped emitting
-# the cache_position tensor the NPU static pipeline resolves by name, so an
-# export under it builds and then fails at generate() (docs/install.md).
+# The one-time model export. transformers 5.4+ breaks it on the NPU (docs/install.md)
 export = [
     "optimum[openvino]",
     "transformers<5.4",
@@ -83,32 +60,17 @@ requires = ["setuptools>=77"]  # PEP 639 license expressions
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# Without this, setuptools' flat-layout auto-discovery sees the top-level
-# systemd/ directory (unit files, not a package) and refuses to build,
-# thinking it found two packages. Confirmed failing 2026-08-03.
+# Explicit, or flat-layout discovery trips over systemd/ (docs/development.md)
 packages = ["vinowhisper"]
 
-# model_digests.json is data, not code, so it needs saying out loud or the
-# wheel ships without it. integrity.load_pins() treats a missing file as
-# "nothing pinned" rather than crashing, which means this line going wrong
-# would degrade silently — hence tests/test_integrity.py asserting the file is
-# both declared here and readable.
-#
-# gui_release.json is the same kind of file and the same risk, with one
-# difference: it exists only in a release build. release.yml writes it (the
-# sha256 of the overlay binary attached to the GitHub Release) just before
-# `uv build`, then checks the wheel carries it. A checkout has none, and
-# overlay.availability() then refuses to download, which is the point.
+# Dropping either from the wheel fails quietly (docs/development.md)
 [tool.setuptools.package-data]
 vinowhisper = ["model_digests.json", "gui_release.json"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 
 [dependency-groups]
-# Deliberately installable on its own (`uv sync --only-group dev`): CI has no
-# NPU, no audio server and no reason to download ~400MB of OpenVINO to run
-# tests that are forbidden from importing it. Nothing under tests/ imports
-# openvino, transcriber or server, which is what keeps this split honest.
+# Installable alone so CI never downloads OpenVINO (docs/development.md)
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -119,12 +81,7 @@ dev = [
     "types-requests",
     "numpy",
     "rich",
-    # Not for making requests — nothing here talks to the server. It is here
-    # because vinowhisper.caption imports it at module scope (via client.py),
-    # so tests/test_caption.py cannot even be *collected* without it, and the
-    # silence notice it pins is the one piece of prose in this project that was
-    # wrong for a month. ~100KB of pure Python, so it costs nothing against the
-    # reason this group exists, which is the ~400MB of OpenVINO above it.
+    # caption.py imports it, so tests/test_caption.py cannot be collected without it
     "requests",
 ]
 
@@ -161,14 +118,7 @@ known-first-party = ["vinowhisper"]
 # ── Mypy ──────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
-# Deliberately not pinned to python_version = "3.11". Numpy's own stubs use
-# 3.12-only syntax (`type X = ...`), and mypy parses them against the target
-# version, so pinning 3.11 while running on 3.12 fails inside numpy with a
-# syntax error before it checks any of this project's code. The floor is
-# enforced where it belongs anyway: requires-python and ruff's target-version.
-#
-# openvino_genai ships no stubs, and CI type-checks without it installed at all
-# (see the dev group note above).
+# No python_version: numpy's stubs need 3.12 syntax (docs/development.md)
 ignore_missing_imports = true
 warn_unused_ignores = false
 
@@ -178,16 +128,13 @@ warn_unused_ignores = false
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
-# The package is imported from the source tree, not from an install: CI never
-# installs the project itself, because that would drag in the OpenVINO nightly
-# stack it deliberately does without.
 pythonpath = ["."]
 
 # ── Coverage ──────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]
 source = ["vinowhisper"]
-# Not covered by design: these need an NPU, an audio server, or a live socket.
+# Need an NPU, an audio server or a live socket
 omit = ["vinowhisper/transcriber.py", "vinowhisper/server.py", "vinowhisper/replay.py"]
 
 [tool.coverage.report]
@@ -195,29 +142,14 @@ show_missing = true
 
 # ── Bandit ────────────────────────────────────────────────────────────────────
 
-# Read with `bandit -c pyproject.toml` (needs the `toml` extra). The Bandit
-# workflow passes the same flag, so CI and `poe security` agree.
+# Read by `poe security` and the Bandit workflow
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", ".git", "build", "dist"]
-# Three blanket skips, each because the finding is this tool's entire job
-# rather than a defect in it. B602 (shell=True) stays ON, and is the one that
-# would actually matter: there is no shell anywhere in this codebase, and if
-# one ever appears it should fail this scan.
+# Why each check is skipped: docs/development.md
 skips = [
-    # blacklist — flags the `import subprocess` line itself, in a program whose
-    # purpose is to drive pw-record, parec, pactl, optimum-cli and systemctl.
-    "B404",
-    # subprocess_without_shell_equals_true. Every call site builds a literal
-    # argv list and passes it without a shell, so there is nothing to inject
-    # into: the variable parts are PipeWire node names read from pw-dump and a
-    # --target the user typed, both of which arrive as single argv elements.
-    "B603",
-    # start_process_with_partial_path. Deliberate: pw-record, parec and pactl
-    # live in different places on different distros, and hardcoding /usr/bin
-    # would break the fallbacks this release exists to add. PATH resolution is
-    # the portable behaviour here, and the tools are located with shutil.which
-    # before use.
-    "B607",
+    "B404",  # import subprocess
+    "B603",  # subprocess without shell
+    "B607",  # partial executable path
 ]
 
 # ── bump-my-version ───────────────────────────────────────────────────────────
@@ -234,9 +166,7 @@ filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
-# One version for the whole repo: the overlay is downloaded from the release
-# tagged with the Python package's version, so the two cannot be allowed to
-# differ. tests/test_packaging.py fails if any of these three drift apart.
+# One version for the whole repo; tests/test_packaging.py checks all three
 [[tool.bumpversion.files]]
 filename = "gui/Cargo.toml"
 search = "name = \"vinowhisper-gui\"\nversion = \"{current_version}\""

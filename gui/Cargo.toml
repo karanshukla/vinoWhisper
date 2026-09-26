@@ -2,29 +2,14 @@
 name = "vinowhisper-gui"
 version = "0.6.1"
 edition = "2024"
-# let-chains, which are 1.88.
+# let-chains
 rust-version = "1.88"
 description = "Floating captions, dictation, tray icon and global shortcuts for vinoWhisper, on Wayland"
 license = "MIT"
 repository = "https://github.com/karanshukla/vinoWhisper"
 publish = false
 
-# Every one of these is pure Rust, which is the point: the binary links
-# nothing beyond libc, so it installs as one file on any distro, and the
-# Python package it drives gains no dependencies at all.
-#
-#   smithay-client-toolkit  Wayland: layer-shell, shm buffers, the event loop.
-#                           No libwayland (its pure-Rust backend) and no
-#                           xkbcommon, since nothing here reads the keyboard.
-#   cosmic-text             shaping, wrapping and glyph rasterising; finds
-#                           fonts by parsing fontconfig's files, not by
-#                           linking libfontconfig.
-#   ksni                    the tray icon (StatusNotifierItem over D-Bus).
-#   ashpd                   the global shortcuts, and Shift+Insert for dictation
-#                           (xdg-desktop-portal).
-#   rustix                  signals, the parent-death signal for the child, the
-#                           memfd that carries a keymap to the compositor, and
-#                           the tray's idle timerfd.
+# All pure Rust, so the binary links only libc (docs/development.md)
 [dependencies]
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts", "remote_desktop", "screencast"] }
 async-io = "2.6.0"

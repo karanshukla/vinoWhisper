@@ -1,34 +1,14 @@
 #!/usr/bin/env bash
 # Converts openai/whisper-small.en to OpenVINO IR via optimum-intel.
 #
-# `vinowhisper-setup` runs the equivalent of this for the device it detects;
-# this script is the standalone version, for re-exporting without the wizard.
-# The flags below and vinowhisper/wizard.py:export_argv() must stay in step.
-#
-# small.en is a deliberate choice, not just the default: benchmarked against
-# base.en and tiny.en on this NPU (2026-08-03), same test clip. base.en (2.6x
-# faster) and tiny.en (3.8x faster) both introduced real transcription errors
-# (garbled words, dropped/mis-heard terms, tiny.en hallucinated a repeat at
-# the end). small.en was the only one with zero observed accuracy loss.
-#
-# Two variants, because the export is device-specific:
-#
-#   npu       --disable-stateful, which produces the separate KV-cache
-#             "decoder_with_past" submodel WhisperPipeline's NPU static
-#             pipeline requires (self_attn_nodes assertion otherwise — see
-#             openvinotoolkit/openvino.genai#1728).
-#   stateful  the ordinary export, for CPU and GPU. The npu export cannot run
-#             on CPU at all: it fails on a beam_idx port error.
+# The standalone version of the wizard's export; keep the flags in step with
+# vinowhisper/wizard.py:export_argv(). Why two variants: docs/hardware.md
 #
 # Usage:
 #   ./scripts/convert_model.sh                      # npu variant (default)
 #   ./scripts/convert_model.sh --variant stateful   # cpu/gpu variant
 #   ./scripts/convert_model.sh --variant both
 #   ./scripts/convert_model.sh --model openai/whisper-base.en --out /tmp/x
-#
-# Each export is checked against the digests pinned in
-# vinowhisper/model_digests.json before you are told it is done. That check
-# warns and continues on anything unpinned; see vinowhisper/integrity.py.
 set -euo pipefail
 
 MODEL_ID="openai/whisper-small.en"
@@ -76,10 +56,7 @@ fi
 
 INTEGRITY_FAILED=0
 
-# Verify what came down against vinowhisper/model_digests.json. Warn-and-
-# continue on an export nobody has pinned or a toolchain that has moved on;
-# non-zero only when the pinned toolchain produced different bytes, which is
-# the case worth stopping for. See vinowhisper/integrity.py.
+# Fails only when the pinned toolchain produced different bytes (docs/install.md)
 verify_one() {
     local variant="$1" out="$2"
     if ! python3 -c "import vinowhisper" >/dev/null 2>&1; then
@@ -113,8 +90,7 @@ for variant in npu stateful; do
     fi
 done
 
-# Deliberately not `set -e`-aborting mid-loop: with --variant both, a digest
-# problem on the first export should not hide whether the second one worked.
+# Checked after the loop so one bad variant does not hide the other
 if [[ "$INTEGRITY_FAILED" -ne 0 ]]; then
     echo "==> the export completed, but its digests did not verify (see above)" >&2
     exit 1

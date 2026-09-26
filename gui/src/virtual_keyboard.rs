@@ -20,16 +20,13 @@ const XKB_V1: u32 = 1;
 const PRESSED: u32 = 1;
 const RELEASED: u32 = 0;
 
-/// Shift+Insert through `zwp_virtual_keyboard_v1`: the compositor's own way of taking keys
-/// from a client, so no udev rule (uinput) and no permission dialog or notification (portal).
-/// wlroots compositors, niri, COSMIC and KWin offer it; GNOME does not.
+/// Shift+Insert through `zwp_virtual_keyboard_v1`: no udev rule and no portal notification.
 pub struct VirtualKeyboard {
     manager: ZwpVirtualKeyboardManagerV1,
     seat: WlSeat,
     qh: QueueHandle<App>,
     conn: Connection,
-    // Made on the first paste that needs it: a new keyboard on the seat is not free of
-    // side effects (Sway hands its keymap to the focused window), so not on every start.
+    // Made on first use: Sway hands a new keyboard's keymap to the focused window.
     keyboard: Option<ZwpVirtualKeyboardV1>,
     started: Instant,
 }
@@ -93,8 +90,7 @@ fn upload(keyboard: &ZwpVirtualKeyboardV1, text: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Two keys, at the evdev codes a physical keyboard uses (xkb adds 8). A compositor that
-/// reads a virtual keyboard through the user's own keymap instead still sees Shift and Insert.
+/// Real evdev codes (xkb adds 8), so a compositor using the user's own keymap agrees.
 fn keymap() -> String {
     format!(
         "xkb_keymap {{\n\

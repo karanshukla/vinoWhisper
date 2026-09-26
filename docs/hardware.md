@@ -64,6 +64,12 @@ doctor and the server all check which one you have against the device you got.
 ./scripts/convert_model.sh --variant both
 ```
 
+**The model is whisper-small.en, on purpose.** Benchmarked against base.en and
+tiny.en on this NPU (2026-08-03, same clip): base.en was 2.6x faster and
+tiny.en 3.8x, and both made real transcription errors (garbled and misheard
+words, and tiny.en repeated itself at the end). small.en was the only one with
+none.
+
 ## When the GPU doesn't show up
 
 OpenVINO drives Intel GPUs through OpenCL, so it needs Intel's compute

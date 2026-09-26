@@ -4,6 +4,11 @@
 scrollback, so the transcript survives quitting and native search and
 selection work on it. Only the status bar at the bottom redraws.
 
+That is why it uses Rich and not Textual. A word is never revised once
+printed, so the transcript belongs in scrollback and only one line needs a
+live region, which is `rich.live.Live`. Textual owns the screen, so the
+transcript would live in a widget that is gone on quit and cannot be piped.
+
 - **Paragraphs are inferred.** A pause well above a normal gap between
   sentences starts a new paragraph, and so does a sentence end once a
   paragraph is about a screenful long. Sentence ends skip common abbreviations

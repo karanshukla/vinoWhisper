@@ -221,7 +221,9 @@ and no portal: on the first paste that needs it, the overlay hands the
 compositor a two-key keymap (Shift and Insert, at their evdev codes plus 8,
 with a `modifier_map` so Shift really sets Shift) and sends the four key
 events on the same Wayland connection that set the clipboard, so they cannot
-overtake it. The keymap was compiled
+overtake it. It is made on the first paste rather than at startup, because
+a new keyboard on the seat has side effects: Sway hands its keymap to the
+focused window. The keymap was compiled
 through libxkbcommon before shipping; it has not been tried against a live
 compositor yet. It sits between uinput and the portal because the uinput
 path is the one measured on hardware, and on Sway, niri and COSMIC there is

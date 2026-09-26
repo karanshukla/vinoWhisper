@@ -4,8 +4,7 @@
 
 # vinoWhisper
 
-[![PyPI](https://img.shields.io/badge/PyPI-vinowhisper-blue?logo=pypi&logoColor=white)](https://pypi.org/project/vinowhisper/)
-![PyPI - Version](https://img.shields.io/pypi/v/vinowhisper?label=latest%20version)
+[![PyPI](https://img.shields.io/pypi/v/vinowhisper?logo=pypi&logoColor=white)](https://pypi.org/project/vinowhisper/)
 [![Python](https://img.shields.io/pypi/pyversions/vinowhisper)](https://pypi.org/project/vinowhisper/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/karanshukla/vinoWhisper/blob/main/LICENSE)
 [![CI](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/karanshukla/vinoWhisper/actions/workflows/ci.yml)
@@ -84,10 +83,10 @@ that resolves it, in your distro's package names (see
 **The overlay is optional, and native.** `vinowhisper-gui` is a 6.3MB Rust
 binary that floats a caption box above every window, fullscreen video
 included, with a tray icon, a global shortcut and a start-at-login toggle. It
-links nothing but libc and adds nothing to the Python install. It draws the
-same event stream as the terminal UI rather than reimplementing any of it. It also does **dictation**:
-hold Meta+H (the dictation key on laptops that have one), talk, and let go to
-type what you said into the focused window, one NPU decode per utterance.
+links nothing but libc, adds nothing to the Python install, and draws the same
+event stream as the terminal UI. It also does **dictation**: hold Meta+H (the
+dictation key on laptops that have one), talk, and let go to type what you
+said into the focused window, one NPU decode per utterance.
 [docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md)
 
 ## Install
@@ -101,19 +100,10 @@ environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.
-The desktop overlay (floating captions and dictation) is one more command
-once that is done:
-`vinowhisper-setup --gui`, which downloads it from the GitHub release and
+
+The desktop overlay (floating captions and dictation) is one more command:
+`vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
 checks it against a digest pinned in the Python package.
-
-From a checkout, or to see what it would do without doing it:
-
-```bash
-git clone https://github.com/karanshukla/vinoWhisper && cd vinoWhisper
-uv sync --extra export               # --extra export: the one-time model export
-uv run vinowhisper-setup --dry-run   # the whole plan, nothing changed
-uv run vinowhisper-setup             # for real, one prompt per step
-```
 
 Or from PyPI, if you would rather wire up the machine yourself:
 
@@ -122,13 +112,10 @@ pip install vinowhisper   # needs Python 3.11-3.13
 vinowhisper-setup         # still worth running: NPU driver, model export, units
 ```
 
-`pip install` gets you the six `vinowhisper-*` commands and the Python
-dependencies. It cannot
-get you an NPU driver, a model export or systemd units, which is what
-`vinowhisper-setup` is for either way. See
+pip gets you the commands. It cannot get you an NPU driver, a model export or
+systemd units, which is what `vinowhisper-setup` is for either way.
 [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
-for the OpenVINO version floor and why this could not be a pip install until
-2026-08-31.
+covers installing from a checkout and the OpenVINO version floor.
 
 ## What you need
 
@@ -212,6 +199,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 | [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
 | [Debugging](https://github.com/karanshukla/vinoWhisper/blob/main/docs/debugging.md) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
 | [Architecture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/architecture.md) | Socket activation and scale-to-zero, and how to stop it |
+| [Development](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md) | Tests without the hardware, the build config, CI and releases |
 
 ## Honest limits
 
@@ -233,37 +221,32 @@ machine:
   terminal UI is the way in. Sway, Hyprland, niri and COSMIC should work and
   are untested.
 - **Dictation pastes into whatever has focus.** Wayland does not say what that
-  is, so it cannot check, and the clipboard is cleared after each paste. The
-  paste keys come from `/dev/uinput` when udev lets you open it, else the
-  compositor's virtual keyboard (Sway, Hyprland, niri, COSMIC, KWin), else the
-  desktop portal, and KDE then posts a notification for every dictation. The
-  virtual-keyboard route has not been tried on a live compositor yet.
+  is, so it cannot check. Outside KDE the paste goes through the compositor's
+  virtual keyboard, which has not been tried on a live compositor yet.
+  [docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md#dictation)
+  has the details.
 - **Only Fedora's package names have been used for real.** The other seven
   families come from their package indexes. If one is wrong for yours, that is
   expected, and it is the fastest thing in this repo to fix. The PulseAudio
   capture backend has never run against a real PulseAudio server either.
-- **The NPU export needs `transformers<5.4`.** Bisected on hardware
-  2026-09-04: 5.4.0 and up produce a graph that compiles and then fails at
-  `generate()` with `Port for tensor name cache_position was not found`. The
-  `vinowhisper[export]` extra holds the pin, so the wizard's export is fine,
-  but an `optimum-cli` installed some other way is not. That pinned version
-  carries two open transformers CVEs; both need you to export a malicious
-  model repo, which the default `openai/whisper-small.en` is not.
+- **The NPU export needs `transformers<5.4`.** 5.4.0 and up produce a model
+  that compiles and then fails at `generate()` (bisected 2026-09-04). The
+  `vinowhisper[export]` extra holds the pin. That version carries two open
+  transformers CVEs, and both need you to export a malicious model repo, which
+  the default `openai/whisper-small.en` is not.
   [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
   has the bisect table.
 
 ## More
 
-- [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md),
-  where the useful contributions are distro corrections and reports from
-  hardware that isn't this laptop
-- [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md),
-  what stays on the machine and what the loopback server's trust boundary
-  actually is
+- [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md)
+  and [docs/development.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md)
+- [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md):
+  what stays on the machine, and the loopback server's trust boundary
 - [CHANGELOG.md](https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md)
 
 If you run this on hardware that isn't a Wildcat Lake laptop, I want the
-report, working or not. That is the one thing I cannot test myself, and an
+report, working or not. An
 [issue](https://github.com/karanshukla/vinoWhisper/issues) with
 `vinowhisper-doctor --json` pasted into it is worth more than any benchmark I
 can run here.
