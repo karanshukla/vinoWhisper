@@ -1,88 +1,57 @@
 # Contributing
 
-This started as a single-machine tool for one Fedora/KDE laptop with an Intel
-NPU. Most of what would make it good for anyone else is knowledge about
-*their* machine, which is exactly the thing that cannot be tested from here.
+This was built on one Fedora/KDE laptop with an Intel NPU. The most useful
+thing you can bring is what it does on *your* machine, since that is the one
+thing I cannot test from here.
 
-## The most useful contributions
+## Most useful
 
 1. **A distro correction.** `vinowhisper/distro.py` maps capabilities to
-   package names for eight families. Fedora is the only one confirmed by use;
-   the rest came from reading package indexes. If a command it printed did not
-   work on your distro, [say so](https://github.com/karanshukla/vinoWhisper/issues/new?template=distro_support.yml) —
-   it is a one-line fix and it is the difference between the tool working and
-   not on your machine.
-2. **A capture backend report.** PipeWire is what this was built against.
-   PulseAudio support (`parec`) is written but has never run on a
-   PulseAudio-only machine.
-3. **Hardware other than Wildcat Lake.** Different NPU generations, Arc GPUs,
-   the CPU fallback. `vinowhisper-doctor --json` plus the per-cycle numbers
-   from `vinowhisper-caption --debug` are the useful payload.
+   package names for eight families. Only Fedora is confirmed by use; the rest
+   came from package indexes. If a command it printed was wrong for your
+   distro, [open a distro issue](https://github.com/karanshukla/vinoWhisper/issues/new?template=distro_support.yml).
+   It is usually a one-line fix.
+2. **A PulseAudio report.** The `parec` backend is written and tested, and has
+   never run on a PulseAudio-only machine.
+3. **Other hardware.** Other NPU generations, Arc GPUs, the CPU fallback.
+   Attach `vinowhisper-doctor --json` and a few cycles of
+   `vinowhisper-caption --debug`.
 
 ## Setup
 
-```bash
-git clone https://github.com/karanshukla/vinoWhisper
-cd vinoWhisper
-uv sync --extra export  # the real environment: OpenVINO, the export tooling, Python <3.14
-uv run vinowhisper-setup --dry-run   # see what a full install would do
-```
-
-For work that does not touch the model — the stitcher, the UI, the distro
-table, the capture argv — you do not need OpenVINO at all:
+For anything that does not touch the model (the stitcher, the UI, the distro
+table, capture argv), you do not need OpenVINO. This is what CI does:
 
 ```bash
 uv venv
-uv pip install --group dev    # no OpenVINO, ~5 seconds
+uv pip install --group dev
 .venv/bin/python -m pytest
 ```
 
-That is exactly what CI does, and for the same reason: OpenVINO is ~400MB of
-wheels that no test is allowed to import anyway, so nothing that has to pass on
-every pull request depends on it.
-
-## Before pushing
+For the real thing, with OpenVINO and the export tooling:
 
 ```bash
-uv run poe check    # ruff check, ruff format --check, mypy, pytest
+uv sync --extra export
+uv run vinowhisper-setup --dry-run
 ```
 
-## What good looks like here
+The overlay in `gui/` is plain cargo: `cargo test` from that directory.
 
-- **Comments say why, not what.** This codebase is unusually comment-heavy on
-  purpose: nearly every non-obvious line is a bug someone already paid for.
-  If you fix something subtle, leave the reason behind.
-- **Measured claims carry a date.** "Measured 2026-08-07: the sink monitor
-  reads 0.98x of the app's level while muted" is worth keeping. "The monitor
-  is pre-mute" on its own is how the project spent a week believing the
-  opposite of the truth.
-- **A failure should name its fix.** Every error path here tries to print the
-  command that resolves it. An exception that only says what went wrong is
-  half-finished.
-- **Tests are for the logic, not the hardware.** Anything under `tests/` must
-  run with no NPU, no audio server and no OpenVINO. If a change can only be
-  verified on the laptop, say so in the PR rather than faking a test for it.
-- **`test_characterization_*` pins a known oddity on purpose.** Several
-  behaviours here are correct as written and look like bugs cold: `--target`
-  refused on PulseAudio rather than reinterpreted, the sink monitor being
-  pre-volume and pre-mute, `Live.update()` needing `refresh=True`. If one of
-  those tests goes red, the question is not which assertion to update — it is
-  whether the behaviour was supposed to change. Flipping one is a deliberate
-  act; say so in the PR.
-
-## Commits
-
-Conventional commits (`feat:`, `fix:`, `docs:`, `ci:`, …). `CHANGELOG.md` is
-generated from them with git-cliff, so the prefix decides which section an
-entry lands in.
-
-## Releasing
+## Before you push
 
 ```bash
-uv run bump-my-version bump minor   # writes the version, commits, tags vX.Y.Z
-git cliff -c cliff.toml --tag vX.Y.Z -o CHANGELOG.md   # then hand-edit
-git push --follow-tags
+uv run poe check    # ruff, ruff format --check, mypy, pytest
 ```
 
-Pushing the tag runs `.github/workflows/release.yml`, which builds the
-artifacts and cuts a GitHub Release using that CHANGELOG section as its notes.
+- Tests run with no NPU, no audio server and no OpenVINO. If a change can
+  only be verified on hardware, say so in the PR instead of faking a test.
+- A red `test_characterization_*` test means a deliberate oddity changed.
+  Say in the PR whether that was the point.
+- Keep code comments to one line, and only where the code would invite a
+  wrong "fix". Longer reasoning goes in `docs/`.
+- Measured claims carry a date.
+- Commits are conventional (`feat:`, `fix:`, `docs:`, ...); the changelog is
+  generated from them.
+
+[docs/development.md](docs/development.md) has the rest: why the build config
+looks the way it does, what CI runs, and how releases are cut.

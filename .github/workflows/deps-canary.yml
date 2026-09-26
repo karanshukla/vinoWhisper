@@ -1,22 +1,6 @@
 name: Dependency canary
 
-# The full dependency set is installed here and nowhere else, on a schedule,
-# deliberately kept off the PR path.
-#
-# Why it is separate: pull-request CI installs `--group dev` only, because
-# OpenVINO is ~400MB that no test may import. So nothing on the PR path would
-# ever notice the real set breaking. This job is what notices.
-#
-# It used to exist for a sharper reason. From 2026-08-03 to 2026-08-31 the
-# project pinned OpenVINO nightly wheels, which upstream prunes on its own
-# schedule, so a lock that resolved last week could 404 today through nobody's
-# fault. Stable 2026.3.1 caught up (measured on the NPU 2026-08-31), the pin is
-# gone, and that failure mode with it. What is left is ordinary upstream churn.
-#
-# What a failure here means, in rough order of likelihood:
-#   - optimum/transformers moved and the resolve no longer satisfies
-#   - a new OpenVINO stable broke the import or the plugin load
-#   - a transitive dependency yanked a release
+# The full dependency set, which PR CI never installs (docs/development.md).
 
 on:
   schedule:
@@ -38,9 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
-      # Not --frozen: the lock is allowed to be behind pyproject.toml here,
-      # since resolving from scratch is part of what is being tested. A failure
-      # at this step is the canary firing.
+      # Not --frozen: resolving from scratch is part of the test
       - name: uv sync (the full, real dependency set)
         run: uv sync --extra export
 
@@ -50,22 +32,13 @@ jobs:
           import openvino, openvino_genai
           print("openvino", openvino.__version__)
           print("openvino-genai", openvino_genai.__version__)
-          # Device enumeration, not inference: the runner has no NPU, and the
-          # point is that the plugins load at all.
+          # Enumeration only; the runner has no NPU
           print("devices:", openvino.Core().available_devices)
           PY
 
-      # The resolve above can succeed on a toolchain that cannot export at
-      # all: satisfying a raised transformers cap by backtracking optimum to a
-      # pre-5.x release still resolves, and `optimum-cli` then dies on import
-      # (ImportError: cannot import name 'is_tf_available'). Dependabot #24
-      # did exactly that and went green here. `env` is the cheapest subcommand
-      # that imports the full command tree without downloading a model.
+      # A resolve can succeed with an optimum-cli that dies on import (#24)
       - name: The export extra can actually run
         run: uv run optimum-cli env
 
       - name: Re-resolve against today's indexes
-        # Separate from the sync above so the two failure modes stay
-        # distinguishable: "the lock no longer installs" vs "nothing newer
-        # resolves either".
         run: uv lock --upgrade --dry-run

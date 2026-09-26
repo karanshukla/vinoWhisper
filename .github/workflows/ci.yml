@@ -8,12 +8,8 @@ on:
 permissions:
   contents: read
 
-# `uv pip install --group dev` rather than `uv sync`, everywhere below. A full
-# sync pulls ~400MB of OpenVINO wheels that no job here can use: there is no NPU
-# on a runner, and nothing under tests/ is allowed to import openvino at all.
-# The dev group installs none of it and the suite runs in seconds. Whether the
-# real dependency set still resolves is a separate, scheduled question, see
-# deps-canary.yml.
+# The dev group only, never `uv sync`: no job here can use OpenVINO.
+# deps-canary.yml checks the full set (docs/development.md).
 
 jobs:
   lint:
@@ -32,9 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.14 is excluded on purpose, not by omission: it made
-        # functools.partial a descriptor, which breaks optimum's export code
-        # (see pyproject.toml). requires-python caps at <3.14 to match.
+        # Not 3.14: it breaks optimum's export (docs/install.md)
         python-version: ["3.11", "3.12", "3.13"]
     runs-on: ubuntu-latest
     steps:
@@ -48,20 +42,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # The installer and the model export are shell, and they are the first
-      # thing a new user runs. A syntax error there is a worse first
-      # impression than any Python bug in here.
       - name: shellcheck
         run: shellcheck scripts/install.sh scripts/convert_model.sh
       - name: bash -n the completion script
         run: bash -n scripts/vinowhisper-completion.bash
 
   gui:
-    # The desktop overlay (gui/) is Rust and separate from the Python package.
-    # Every crate in it is pure Rust, so a stock runner builds it with nothing
-    # installed beyond the toolchain. None of its tests needs a compositor, a
-    # tray or a portal: they draw into memory, bind scratch sockets and write
-    # into temp dirs, the same bargain tests/ makes about the NPU.
     runs-on: ubuntu-latest
     defaults:
       run:

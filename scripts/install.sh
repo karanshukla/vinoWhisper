@@ -5,31 +5,9 @@
 #
 # or, from a checkout:
 #
-#   ./scripts/install.sh [--dir DIR] [--ref BRANCH] [--yes] [--dry-run]
+#   ./scripts/install.sh [--dir DIR] [--ref BRANCH] [--yes] [--dry-run] [--gui]
 #
-# What it does, in order:
-#
-#   1. finds (or installs) uv, since the Python <3.14 pin and the OpenVINO
-#      floor both live in pyproject.toml and only uv reads them
-#   2. clones or updates the checkout
-#   3. `uv sync --extra export`, which builds the environment against those
-#      pins, plus the model-export tooling the wizard needs once
-#   4. hands over to `vinowhisper-setup`, which does the parts that need to
-#      look at your actual hardware: capture tool, NPU driver, model export,
-#      systemd units, PATH symlinks
-#   5. with --gui only: builds the desktop overlay (gui/, Rust) and installs
-#      it into ~/.local/bin with a launcher and a login autostart. Optional
-#      on purpose; the terminal captions need none of it.
-#
-# Step 4 is where every distro-specific decision happens, and it prompts
-# before running anything. This script deliberately does not install system
-# packages itself — it does not know what you have, and the wizard does.
-#
-# `pip install vinowhisper` also works, and has since 2026-08-31, when stable
-# OpenVINO 2026.3.1 could finally build the NPU static Whisper pipeline and the
-# nightly pin came out (docs/install.md). This script is for everyone who would
-# rather not assemble the rest by hand: a pip install gets the commands, not a
-# model export, an NPU driver or systemd units.
+# What it does and why: docs/install.md
 set -euo pipefail
 
 REPO_URL="${VINOWHISPER_REPO:-https://github.com/karanshukla/vinoWhisper}"
@@ -139,8 +117,7 @@ if [[ $GUI -eq 1 ]]; then
         run cargo build --release --locked --manifest-path "$INSTALL_DIR/gui/Cargo.toml"
         run install -Dm755 "$INSTALL_DIR/gui/target/release/vinowhisper-gui" \
             "$HOME/.local/bin/vinowhisper-gui"
-        # Launcher, icon and login autostart. The launcher is also what the
-        # desktop's shortcut portal needs before it will grant a shortcut.
+        # The shortcut portal needs the launcher entry
         run "$HOME/.local/bin/vinowhisper-gui" --install --autostart
     else
         warn "--gui needs a Rust toolchain (cargo), which is not installed:"
