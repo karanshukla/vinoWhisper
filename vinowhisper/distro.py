@@ -12,12 +12,13 @@ GPU_RUNTIME = "gpu-runtime"
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
 NPU_COMPILER_STEPS = (
-    "No distro packages libopenvino_intel_npu_compiler.so. Intel ships it only "
-    "inside intel-driver-compiler-npu, in the release archive below.",
-    "Download the linux-npu-driver tarball for your architecture, then:",
+    "No distro packages the NPU compiler. Intel ships it only inside "
+    "intel-driver-compiler-npu, in the release archive below.",
+    "Download the linux-npu-driver tarball for the same version as your driver "
+    "(the compiler's file name changed between 1.32 and 1.35), then:",
     "  tar xf linux-npu-driver-*.tar.gz",
     "  dpkg-deb -x intel-driver-compiler-npu_*.deb extracted",
-    "  sudo install -m 0755 $(find extracted -name 'libopenvino_intel_npu_compiler*.so') /usr/lib64/",
+    "  sudo install -m 0755 $(find extracted -name '*compiler*.so') /usr/lib64/",
     "  sudo ldconfig",
     "dpkg-deb is in the `dpkg` package and is present on rpm distros too, so "
     "no alien/rpm2cpio conversion is needed. The result is untracked by your "

@@ -131,11 +131,20 @@ The kernel checks above can all pass, OpenVINO can enumerate
 userspace half that device enumeration does not exercise, and it goes wrong two
 ways, both silently:
 
-- **The compiler libraries are absent.** No distro packages
-  `libopenvino_intel_npu_compiler.so`. Fedora's `intel-npu-driver` rpm ships
-  the level-zero backend and stops there, and the same holds for every family
-  in the table. Intel ships it only inside `intel-driver-compiler-npu`, in the
-  release archive, so waiting for a package upgrade never fixes it.
+- **The compiler libraries are absent.** No distro packages the NPU
+  compiler. Fedora's `intel-npu-driver` rpm ships the level-zero backend and
+  stops there, and the same holds for every family in the table. Intel ships
+  it only inside `intel-driver-compiler-npu`, in the release archive, so
+  waiting for a package upgrade never fixes it. Its file name depends on the
+  driver: 1.32.0 loads `libnpu_driver_compiler.so`, while 1.35.0 loads
+  `libopenvino_intel_npu_compiler_loader.so` (which maps
+  `libopenvino_intel_npu_compiler.so`) and falls back to the 1.32 name. The
+  doctor reads which names the installed backend carries and checks for
+  those, so a newer compiler sitting beside an older backend is not mistaken
+  for a working pair. The failure is `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` on
+  every compile, which looks like a version mismatch and is not one: measured
+  2026-09-28, Fedora's 1.32.0 backend failed on every OpenVINO from 2025.4 to
+  2026.4, and Intel's 1.32.0 with its own compiler passed on all of them.
 - **The level-zero backend is older than the silicon.** An older backend
   enumerates the device perfectly well and then fails at compile time with
   `Missing upper bound for one or more nodes`, which reads as a model problem
@@ -165,10 +174,34 @@ with no kernel-module or packaging-system dependency:
 ```bash
 tar xf linux-npu-driver-*.tar.gz
 dpkg-deb -x intel-driver-compiler-npu_*.deb extracted
-sudo install -m 0755 $(find extracted -name 'libopenvino_intel_npu_compiler*.so') /usr/lib64/
+sudo install -m 0755 $(find extracted -name '*compiler*.so') /usr/lib64/
 sudo ldconfig
 ```
 
 `dpkg-deb` is in the `dpkg` package and is present on rpm distros too, so no
 `alien` or `rpm2cpio` conversion is needed. The result is untracked by your
 package manager: note it somewhere, because nothing will upgrade it.
+
+## Platform data from ovfetch
+
+[ovfetch](https://github.com/karanshukla/ovfetch) keeps a table of Intel NPUs
+by PCI ID, the first driver release Intel verified on each, and which
+OpenVINO versions are known to work with each driver, refreshed weekly from
+Intel's release notes and the kernel's `ivpu` driver. When it is on `PATH`
+(`cargo install ovfetch --locked`), the doctor runs `ovfetch detect`, which is
+offline, and adds three lines:
+
+```
+[  ok] npu: platform        Wildcat Lake (0xfd3e), Intel verifies driver 1.32.0 and newer
+[  ok] npu: openvino range  OpenVINO 2026.4, inside 2025.4 to 2026.4 for NPU driver 1.35.0
+```
+
+plus any warning ovfetch raises, such as a driver older than the platform's
+first verified release. It is optional, and nothing it says is a failure: its
+range is deliberately pessimistic, the newest OpenVINO *recorded* as working
+rather than the newest that works. Measured 2026-09-28 on Wildcat Lake,
+drivers 1.32.0 and 1.35.0 each ran a test model on every OpenVINO from 2025.0
+to 2026.4, and whisper-small.en's static pipeline on 2026.4, so a warning
+that the installed OpenVINO is past the range means untested, not broken.
+vinoWhisper does not use ovfetch's installer, which fetches ONNX Runtime;
+see `docs/architecture.md` for why this project runs OpenVINO GenAI directly.

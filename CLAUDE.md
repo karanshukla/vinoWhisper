@@ -310,6 +310,7 @@ vinowhisper/
   devices.py      OpenVINO device inventory, NPU>GPU>CPU selection, kernel-side preflight,
                   the PCI bus (what is present, as against what OpenVINO enumerates)
   failures.py     devices that enumerated and then failed to compile, skipped by auto
+  ovfetch.py      optional: `ovfetch detect` -> doctor notes (platform, known-good OpenVINO range)
   distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP client
   server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
@@ -674,6 +675,35 @@ trusting this the way the rest of this file's measured claims are trusted.
 the NPU, about 2,000 static-pipeline decodes at 0.67s per 12s window, the
 same as 2026.3.1. `return_timestamps` and `word_timestamps` also work on it
 (see Remaining questions, 1).
+
+## NPU driver vs OpenVINO, measured 2026-09-28
+
+**There is no driver/OpenVINO version ceiling on this laptop, and the
+failure that looked like one is a missing compiler.** Matrix on the WCL NPU,
+empty driver cache per cell (`HOME` pointed at a temp dir; the driver caches
+blobs in `$HOME/.cache/ze_intel_npu_cache` and a warm cache hides compiles),
+`NPU_COMPILER_TYPE=DRIVER`, firmware `intel-npu-firmware-20260916`:
+
+| Driver | OpenVINO 2025.0 to 2026.4 |
+|---|---|
+| Fedora rpm 1.32.0 (no compiler) | every one fails, `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` |
+| Intel 1.32.0 + its `libnpu_driver_compiler.so` | every one passes |
+| 1.35.0 (hand-installed) + its compiler | every one passes |
+
+whisper-small.en's static pipeline on 2026.4.0 compiled fresh and decoded
+correctly on both working drivers (41s / 49s compile). Toy model only for the
+older versions. The compiler file name is per driver: 1.32 loads only
+`libnpu_driver_compiler.so`; 1.35 loads the OpenVINO compiler loader first.
+`devices._compiler_notes` used to accept `libopenvino_intel_npu_compiler.so`
+for any driver, so Fedora's 1.32 beside a 1.35 compiler read as ok. It now
+reads the names out of the backend binary (`COMPILER_ROUTES`).
+
+**ovfetch** (github.com/karanshukla/ovfetch, built for Gaze's ONNX Runtime
+install) carried a ceiling built on that misdiagnosis; fixed there the same
+day, kept deliberately pessimistic at the user's request ("newest recorded as
+working", never "fails past"). The doctor runs `ovfetch detect` when it is on
+PATH and reports platform + range, never as FAIL. vinoWhisper does not use
+ONNX Runtime; `docs/architecture.md` says why.
 
 ## Known gotchas
 
