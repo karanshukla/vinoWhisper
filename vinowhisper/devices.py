@@ -322,6 +322,14 @@ def npu_preflight() -> list[Note]:
 LEVEL_ZERO_STEM = "libze_intel_npu.so"
 COMPILER_LIB = "libopenvino_intel_npu_compiler.so"
 COMPILER_LOADER = "libopenvino_intel_npu_compiler_loader.so"
+LEGACY_COMPILER_LIB = "libnpu_driver_compiler.so"
+
+# (name the driver binary carries, libraries that route needs). 1.35.0 stores
+# the loader's name split, so only its prefix is searchable.
+COMPILER_ROUTES = (
+    (b"libopenvino_intel_npu_compiler_l", (COMPILER_LOADER, COMPILER_LIB)),
+    (LEGACY_COMPILER_LIB.encode(), (LEGACY_COMPILER_LIB,)),
+)
 
 LIBRARY_DIRS = (
     "/usr/lib64",
@@ -417,37 +425,55 @@ def _level_zero_notes() -> list[Note]:
 
 
 def _compiler_notes(distro_info: "distro.Distro | None" = None) -> list[Note]:
-    compiler = find_library(COMPILER_LIB)
-    loader = find_library(COMPILER_LOADER)
-    if compiler is None:
-        remedy = distro.remediation(distro.NPU_COMPILER, distro_info)
+    soname = find_library(f"{LEVEL_ZERO_STEM}.1")
+    if soname is None:
+        return []
+    routes = compiler_routes(soname.resolve())
+    if not routes:
         return [
             Note(
-                False,
+                None,
                 "NPU compiler",
-                f"no {COMPILER_LIB} on the library path. Nothing above catches "
-                "this: the device still enumerates and every compile fails.\n"
-                + "\n".join(remedy.lines()),
+                f"{soname.resolve().name} names no compiler library vinoWhisper "
+                "recognises, so whether it can compile is unknown",
             )
         ]
 
-    version = _marker(loader, _OPENVINO_MARK) if loader else None
-    version = version or _marker(compiler, _OPENVINO_MARK) or "unknown version"
-    notes = [Note(True, "NPU compiler", f"{compiler} (OpenVINO {version})")]
-    if loader is None:
-        notes.append(
-            Note(
-                False,
-                "NPU compiler loader",
-                f"{COMPILER_LOADER} is missing; it ships beside {COMPILER_LIB} "
-                "and is what the plugin actually dlopen()s",
+    for libs in routes:
+        present = [path for lib in libs if (path := find_library(lib)) is not None]
+        if len(present) == len(libs):
+            version = next(
+                (v for path in present if (v := _marker(path, _OPENVINO_MARK))),
+                "unknown version",
             )
+            return [Note(True, "NPU compiler", f"{present[-1]} (OpenVINO {version})")]
+
+    wanted = ", or ".join(" + ".join(libs) for libs in routes)
+    remedy = distro.remediation(distro.NPU_COMPILER, distro_info)
+    return [
+        Note(
+            False,
+            "NPU compiler",
+            f"{soname.resolve().name} loads {wanted}, and it is not on the library "
+            "path. Nothing above catches this: the device still enumerates and every "
+            "compile fails with ZE_RESULT_ERROR_UNSUPPORTED_FEATURE.\n" + "\n".join(remedy.lines()),
         )
-    return notes
+    ]
 
 
 def npu_userspace(distro_info: "distro.Distro | None" = None) -> list[Note]:
     return _level_zero_notes() + _compiler_notes(distro_info)
+
+
+def compiler_routes(driver: Path) -> list[tuple[str, ...]]:
+    try:
+        with (
+            driver.open("rb") as handle,
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data,
+        ):
+            return [libs for needle, libs in COMPILER_ROUTES if data.find(needle) != -1]
+    except (OSError, ValueError):
+        return []
 
 
 def npu_missing_help(distro_info: distro.Distro | None = None) -> list[str]:

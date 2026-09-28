@@ -113,6 +113,25 @@ def install_binary(source: Path, dest: Path) -> Path:
 
 
 def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
+    return download_verified(
+        pin.url,
+        pin.sha256,
+        dest,
+        f"{pin.name} does not match the sha256 pinned in vinowhisper {pin.version}",
+        "Please report it at https://github.com/karanshukla/vinoWhisper/issues. "
+        "A cargo build from a checkout avoids the download (docs/gui.md).",
+        get,
+    )
+
+
+def download_verified(
+    url: str,
+    sha256: str,
+    dest: Path,
+    mismatch: str,
+    advice: str,
+    get: Callable[..., Any] | None = None,
+) -> Path:
     if get is None:
         # Lazy, so scripts/pin_gui_release.py runs on the standard library alone.
         import requests
@@ -123,7 +142,7 @@ def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
     digest = hashlib.sha256()
     try:
         with get(
-            pin.url, stream=True, timeout=(config.CONNECT_TIMEOUT_S, DOWNLOAD_TIMEOUT_S)
+            url, stream=True, timeout=(config.CONNECT_TIMEOUT_S, DOWNLOAD_TIMEOUT_S)
         ) as response:
             response.raise_for_status()
             with partial.open("wb") as out:
@@ -132,18 +151,16 @@ def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
                     out.write(chunk)
     except OSError as exc:  # requests' exceptions are OSErrors too
         partial.unlink(missing_ok=True)
-        raise OverlayError(f"could not download {pin.url}: {exc}") from exc
+        raise OverlayError(f"could not download {url}: {exc}") from exc
 
     actual = digest.hexdigest()
-    if actual != pin.sha256:
+    if actual != sha256:
         partial.unlink(missing_ok=True)
         raise OverlayError(
-            f"{pin.name} does not match the sha256 pinned in vinowhisper {pin.version}, "
-            "so nothing was installed.\n"
-            f"    expected {pin.sha256}\n"
+            f"{mismatch}, so nothing was installed.\n"
+            f"    expected {sha256}\n"
             f"    got      {actual}\n"
-            "  Please report it at https://github.com/karanshukla/vinoWhisper/issues. "
-            "A cargo build from a checkout avoids the download (docs/gui.md)."
+            f"  {advice}"
         )
     return _commit(partial, dest)
 

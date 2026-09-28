@@ -6,7 +6,18 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import __version__, audio, capture, config, devices, distro, failures, integrity, recorder
+from . import (
+    __version__,
+    audio,
+    capture,
+    config,
+    devices,
+    distro,
+    failures,
+    integrity,
+    ovfetch,
+    recorder,
+)
 
 _PROBE_S = 2.0
 
@@ -111,6 +122,36 @@ def _devices() -> list[Result]:
         )
     )
     return results
+
+
+def _openvino_version() -> str | None:
+    try:
+        import openvino
+    except ImportError:
+        return None
+    return str(openvino.__version__)
+
+
+def _ovfetch() -> list[Result]:
+    if not any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
+        return []
+    try:
+        status = ovfetch.detect()
+    except ovfetch.OvfetchError as exc:
+        return [Result(WARN, "ovfetch", str(exc))]
+    if status is None:
+        return [
+            Result(
+                UNKNOWN,
+                "ovfetch",
+                f"not installed; `{ovfetch.INSTALL_HINT}` adds Intel's per-platform driver data",
+            )
+        ]
+    # Its bounds are pessimistic on purpose, so nothing it says is a FAIL.
+    return [
+        Result(OK if note.ok else (UNKNOWN if note.ok is None else WARN), note.label, note.detail)
+        for note in ovfetch.notes(status, _openvino_version())
+    ]
 
 
 def _failed_devices() -> list[Result]:
@@ -375,6 +416,7 @@ def collect(probe: bool = True) -> list[Result]:
     ]
     results += _openvino()
     results += _devices()
+    results += _ovfetch()
     results += _failed_devices()
     results += _models()
     results += _server()

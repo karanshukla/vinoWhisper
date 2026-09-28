@@ -53,6 +53,27 @@ again on first connection.
 - Started by hand rather than by the socket unit, it never idles out; the
   unload applies only to a socket-activated start.
 
+## Why OpenVINO GenAI, not ONNX Runtime
+
+Never weighed until 2026-09-28, when a sibling tool (ovfetch, built for Gaze,
+which does run ONNX Runtime) claimed vinoWhisper needed it. It does not, and
+switching would cost more than it buys:
+
+- Whisper is an encoder, an autoregressive decoder with a KV cache, mel
+  features and a tokenizer. `WhisperPipeline` is all of it, including token
+  streaming and `max_new_tokens`; ONNX Runtime runs graphs, and the loop
+  would be ours.
+- The NPU wants static shapes. `STATIC_PIPELINE=True` with the
+  `--disable-stateful` export is Intel's NPU path for Whisper; ONNX Runtime's
+  OpenVINO execution provider reaches the same compiler with that work moved
+  into this repo.
+- Intel's `onnxruntime-openvino` bundles its own OpenVINO, 2025.4.1 as of
+  2026-09-28, and this project's floor is 2026.3.1.
+- Both end in the same NPU plugin and compiler, so there is no speed to gain.
+
+ONNX Runtime would be a candidate only as the non-Intel backend, where
+whisper.cpp over Vulkan is the current pick (see `docs/hardware.md`).
+
 ## Power
 
 Measured 2026-09-12 on the Wildcat Lake laptop, per process over 15 to 30s,

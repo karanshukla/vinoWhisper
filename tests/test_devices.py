@@ -114,6 +114,12 @@ def fake_lib(path, marker: str = "") -> None:
     path.write_bytes(b"\x7fELF" + b"\x00" * 64 + marker.encode() + b"\x00" * 64)
 
 
+# What each driver's binary names, measured 2026-09-28 with `strings`: 1.35.0
+# stores the loader's name split, so only its prefix appears.
+DRIVER_1_35 = "npu-linux-driver-ci-1.35.0.20260722\0libopenvino_intel_npu_compiler_l\0libnpu_driver_compiler.so"
+DRIVER_1_32 = "npu-linux-driver-ci-1.32.0.20260402\0libnpu_driver_compiler.so"
+
+
 @pytest.fixture
 def libdir(monkeypatch, tmp_path):
     monkeypatch.setattr(devices, "library_dirs", lambda: [tmp_path])
@@ -125,7 +131,7 @@ def labelled(notes, label):
 
 
 def test_userspace_reports_both_libraries_and_their_versions(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0", "npu-linux-driver-ci-1.35.0.20260722")
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
     (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
     fake_lib(libdir / devices.COMPILER_LIB)
     fake_lib(libdir / devices.COMPILER_LOADER, "2026.3.0-22159-4089686065a-0722.205447")
@@ -142,7 +148,7 @@ def test_userspace_reports_both_libraries_and_their_versions(libdir):
 
 
 def test_a_missing_compiler_is_a_failure_carrying_the_extraction_steps(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0")
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
     (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
 
     compiler = labelled(devices.npu_userspace(), "NPU compiler")
@@ -151,6 +157,53 @@ def test_a_missing_compiler_is_a_failure_carrying_the_extraction_steps(libdir):
     assert "still enumerates" in compiler.detail
     assert "dpkg-deb" in compiler.detail
     assert "linux-npu-driver/releases" in compiler.detail
+
+
+def test_driver_1_32_is_satisfied_by_its_own_compiler(libdir):
+    fake_lib(libdir / "libze_intel_npu.so.1.32.0", DRIVER_1_32)
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.32.0")
+    fake_lib(libdir / devices.LEGACY_COMPILER_LIB, "2026.0.0-20965-abcdef01234")
+
+    compiler = labelled(devices.npu_userspace(), "NPU compiler")
+    assert compiler.ok is True
+    assert devices.LEGACY_COMPILER_LIB in compiler.detail
+
+
+def test_characterization_driver_1_32_is_not_satisfied_by_the_newer_compiler(libdir):
+    """characterization: Fedora's 1.32.0 rpm next to a hand-installed 1.35 compiler.
+
+    The newer compiler is on the path and the check still fails, because 1.32.0
+    only ever dlopen()s libnpu_driver_compiler.so. Measured 2026-09-28: that
+    exact setup fails every compile with ZE_RESULT_ERROR_UNSUPPORTED_FEATURE,
+    on every OpenVINO from 2025.4 to 2026.4, which is what was once mistaken for
+    a driver/OpenVINO version ceiling. Accepting any compiler here would pass it.
+    """
+    fake_lib(libdir / "libze_intel_npu.so.1.32.0", DRIVER_1_32)
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.32.0")
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER)
+
+    compiler = labelled(devices.npu_userspace(), "NPU compiler")
+    assert compiler.ok is False
+    assert devices.LEGACY_COMPILER_LIB in compiler.detail
+    assert "UNSUPPORTED_FEATURE" in compiler.detail
+
+
+def test_the_loader_without_the_compiler_it_loads_is_a_failure(libdir):
+    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    fake_lib(libdir / devices.COMPILER_LOADER)
+
+    assert labelled(devices.npu_userspace(), "NPU compiler").ok is False
+
+
+def test_a_driver_naming_no_known_compiler_is_unknown_not_ok(libdir):
+    fake_lib(libdir / "libze_intel_npu.so.1.99.0")
+    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.99.0")
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER)
+
+    assert labelled(devices.npu_userspace(), "NPU compiler").ok is None
 
 
 def test_a_reverted_soname_symlink_is_caught_and_named(libdir):
