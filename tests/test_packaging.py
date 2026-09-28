@@ -45,3 +45,4 @@ def test_the_pin_ships_in_the_wheel():
     """Without it, `vinowhisper-setup --gui` refuses to download by design."""
     package_data = _toml("pyproject.toml")["tool"]["setuptools"]["package-data"]["vinowhisper"]
     assert "gui_release.json" in package_data
+    assert "ovfetch_release.json" in package_data

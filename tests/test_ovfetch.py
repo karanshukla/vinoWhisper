@@ -8,10 +8,11 @@ are replaced, the same boundary the capture tests use.
 import copy
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from vinowhisper import devices, doctor, ovfetch
+from vinowhisper import devices, doctor, ovfetch, wizard
 
 WILDCAT_LAKE = {
     "devices": [
@@ -179,3 +180,125 @@ def test_the_doctor_skips_ovfetch_without_an_intel_npu(monkeypatch):
     monkeypatch.setattr(devices, "hardware", lambda: [])
     monkeypatch.setattr(ovfetch, "detect", lambda: pytest.fail("ran ovfetch"))
     assert doctor._ovfetch() == []
+
+
+# --- installing it -------------------------------------------------------
+
+
+def _pin(tmp_path, body=b"\x7fELF ovfetch", arch="x86_64"):
+    import hashlib
+
+    path = tmp_path / "ovfetch_release.json"
+    record = {"version": "0.2.0", "assets": {arch: {"sha256": hashlib.sha256(body).hexdigest()}}}
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def test_the_pin_names_the_release_asset(tmp_path):
+    release = ovfetch.pinned(_pin(tmp_path), machine="x86_64")
+    assert isinstance(release, ovfetch.Release)
+    assert release.url == (
+        "https://github.com/karanshukla/ovfetch/releases/download/v0.2.0/ovfetch-x86_64-linux"
+    )
+
+
+def test_no_pin_means_no_download(tmp_path):
+    assert isinstance(ovfetch.pinned(tmp_path / "missing.json"), str)
+
+
+def test_other_architectures_have_no_binary(tmp_path):
+    reason = ovfetch.pinned(_pin(tmp_path), machine="aarch64")
+    assert isinstance(reason, str)
+    assert "cargo install ovfetch" in reason
+
+
+def test_the_shipped_pin_matches_ovfetchs_release_asset():
+    """If the file ships, it names the asset ovfetch's release.yml uploads."""
+    if not ovfetch.PIN_FILE.exists():
+        pytest.skip("no ovfetch pin in this checkout")
+    release = ovfetch.pinned(machine="x86_64")
+    assert isinstance(release, ovfetch.Release)
+    assert release.name == "ovfetch-x86_64-linux"
+    assert len(release.sha256) == 64
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"), [("ovfetch 0.2.0\n", (0, 2, 0)), ("ovfetch 0.1.1\n", (0, 1, 1))]
+)
+def test_the_installed_version_is_read_from_version(monkeypatch, stdout, expected):
+    monkeypatch.setattr(ovfetch.shutil, "which", lambda name: "/usr/bin/ovfetch")
+    monkeypatch.setattr(
+        ovfetch.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, stdout, ""),
+    )
+    assert ovfetch.installed() == (ovfetch.Path("/usr/bin/ovfetch"), expected)
+
+
+def test_a_mismatched_download_installs_nothing(tmp_path):
+    from tests.test_overlay import _serving
+
+    release = ovfetch.pinned(_pin(tmp_path, body=b"pinned"), machine="x86_64")
+    dest = tmp_path / "bin" / "ovfetch"
+    with pytest.raises(ovfetch.overlay.OverlayError, match="nothing was installed"):
+        ovfetch.fetch(release, dest, get=_serving(b"tampered"))
+    assert list(dest.parent.iterdir()) == []
+
+
+def test_a_verified_download_is_installed(tmp_path):
+    from tests.test_overlay import _serving
+
+    body = b"\x7fELF ovfetch"
+    release = ovfetch.pinned(_pin(tmp_path, body=body), machine="x86_64")
+    dest = ovfetch.fetch(release, tmp_path / "bin" / "ovfetch", get=_serving(body))
+    assert dest.read_bytes() == body
+
+
+@pytest.fixture
+def release(monkeypatch):
+    pinned = ovfetch.Release(version="0.2.0", arch="x86_64", sha256="0" * 64)
+    monkeypatch.setattr(ovfetch, "pinned", lambda: pinned)
+    return pinned
+
+
+def test_a_current_ovfetch_is_left_alone(monkeypatch, release):
+    monkeypatch.setattr(ovfetch, "installed", lambda: (ovfetch.Path("/usr/bin/ovfetch"), (0, 2, 0)))
+    monkeypatch.setattr(ovfetch, "fetch", lambda *a, **k: pytest.fail("downloaded again"))
+    assert wizard.Wizard(assume_yes=True).install_ovfetch().ok is True
+
+
+def test_an_older_ovfetch_is_offered_the_pinned_one(monkeypatch, release, capsys):
+    monkeypatch.setattr(ovfetch, "installed", lambda: (ovfetch.Path("/usr/bin/ovfetch"), (0, 1, 1)))
+    outcome = wizard.Wizard(dry_run=True).install_ovfetch()
+    assert outcome.ok is None
+    assert "predates 0.2.0" in capsys.readouterr().out
+
+
+def test_setup_never_downloads_ovfetch_without_a_pin(monkeypatch):
+    monkeypatch.setattr(ovfetch, "pinned", lambda: "no pin")
+    monkeypatch.setattr(ovfetch, "fetch", lambda *a, **k: pytest.fail("downloaded without a pin"))
+    assert wizard.Wizard(assume_yes=True).install_ovfetch().ok is None
+
+
+def test_setup_ovfetch_runs_that_step_and_nothing_else(monkeypatch):
+    ran: list[str] = []
+    monkeypatch.setattr(wizard.Wizard, "run_all", lambda self: pytest.fail("ran the full setup"))
+    monkeypatch.setattr(
+        wizard.Wizard,
+        "install_ovfetch",
+        lambda self: ran.append("ovfetch") or wizard.Outcome(True, "fine"),
+    )
+    assert wizard.main(["--ovfetch", "--dry-run"]) == 0
+    assert ran == ["ovfetch"]
+
+
+def test_an_older_copy_earlier_on_path_is_named_with_its_fix(monkeypatch, release, tmp_path):
+    """What this laptop had on 2026-09-28: `cargo install`'s 0.1.1 ahead of ~/.local/bin."""
+    cargo_copy = str(Path.home() / ".cargo/bin/ovfetch")
+    monkeypatch.setattr(ovfetch, "installed", lambda: (Path(cargo_copy), (0, 1, 1)))
+    monkeypatch.setattr(ovfetch, "fetch", lambda release, dest, get=None: dest)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name: cargo_copy)
+
+    outcome = wizard.Wizard(assume_yes=True).install_ovfetch()
+    assert outcome.ok is None
+    assert "cargo uninstall ovfetch" in outcome.summary

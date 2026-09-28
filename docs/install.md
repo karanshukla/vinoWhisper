@@ -217,6 +217,17 @@ GitHub release and checks it against the sha256 pinned in the Python package,
 so no Rust toolchain is needed. It is never on PyPI; from a checkout it can be
 built with cargo instead (`./scripts/install.sh --gui`). See [gui.md](gui.md).
 
+## NPU platform data (optional)
+
+`vinowhisper-setup --ovfetch` installs [ovfetch](https://github.com/karanshukla/ovfetch),
+which gives `vinowhisper-doctor` Intel's per-platform NPU driver data: the
+first driver verified on your NPU, and the OpenVINO range recorded as working
+with the driver you have. Setup offers it only when there is an Intel NPU,
+downloads the static release binary and checks it against the sha256 pinned in
+this package, and leaves an ovfetch that is already current alone. Nothing
+needs it; without it the doctor just has two fewer lines. See
+[hardware.md](hardware.md#platform-data-from-ovfetch).
+
 ## Pinning the terminal on top
 
 The overlay above stays on top by itself. For the terminal UI instead: the

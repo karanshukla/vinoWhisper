@@ -178,6 +178,7 @@ vinowhisper-setup                         # guided install; re-runnable, idempot
 vinowhisper-setup --dry-run               # print the plan, change nothing
 vinowhisper-setup --print-units           # the systemd units it would generate
 vinowhisper-setup --gui                   # just the optional overlay and dictation
+vinowhisper-setup --ovfetch               # just ovfetch, NPU driver data for the doctor
 
 vinowhisper-doctor                        # devices, model, digests, audio, live levels
 vinowhisper-doctor --json                 # the same, for a bug report

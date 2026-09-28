@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, capture, config, devices, distro, integrity, overlay
+from . import __version__, capture, config, devices, distro, integrity, overlay, ovfetch
 
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
@@ -290,6 +290,35 @@ class Wizard:
 
         return Outcome(None, available)
 
+    def install_ovfetch(self) -> Outcome:
+        release = ovfetch.pinned()
+        if isinstance(release, str):
+            return Outcome(None, release)
+        current = ovfetch.installed()
+        wanted = ovfetch.version_tuple(release.version)
+        if current is not None and current[1] >= wanted:
+            return Outcome(True, f"{current[0]} is current")
+        if current is not None:
+            self.say(f"  {current[0]} predates {release.version}, which the doctor reads")
+        self.say(f"  Download {release.url}")
+        self.say(f"  sha256   {release.sha256} (pinned in vinowhisper {__version__})")
+        self.say("  It adds Intel's per-platform NPU driver data to vinowhisper-doctor.")
+        if not self.confirm(f"install it into {BIN_DIR}?"):
+            return Outcome(None, f"skipped; `{ovfetch.INSTALL_HINT}` installs it any time")
+        try:
+            path = ovfetch.fetch(release, BIN_DIR / ovfetch.BINARY)
+        except overlay.OverlayError as exc:
+            return Outcome(False, str(exc))
+        found = shutil.which(ovfetch.BINARY)
+        if found is not None and Path(found) != path:
+            fix = (
+                "`cargo uninstall ovfetch`"
+                if Path(found).parent.name == "bin" and Path(found).parent.parent.name == ".cargo"
+                else f"remove it, or put {BIN_DIR} ahead of it on PATH"
+            )
+            return Outcome(None, f"{path}, but the older {found} comes first on PATH; {fix}")
+        return Outcome(True, str(path))
+
     def run_all(self) -> int:
         self.say(f"vinowhisper-setup {__version__}")
         self.say(f"  distro:  {self.distro}")
@@ -306,6 +335,8 @@ class Wizard:
         self.step("Bash completion", self.install_completion)
         if os.environ.get("WAYLAND_DISPLAY"):
             self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
+        if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
+            self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
 
         self.say("")
         if self.failed:
@@ -318,6 +349,13 @@ class Wizard:
             return 0
         self.say("✓ Ready. Run `vinowhisper-caption` with something playing.")
         return 0
+
+    def run_ovfetch(self) -> int:
+        self.say(f"vinowhisper-setup {__version__}: ovfetch")
+        if self.dry_run:
+            self.say("\n  --dry-run: nothing will be changed; every command is printed.")
+        self.step("NPU platform data", self.install_ovfetch)
+        return 1 if self.failed else 0
 
     def run_overlay(self) -> int:
         self.say(f"vinowhisper-setup {__version__}: the desktop overlay")
@@ -456,6 +494,13 @@ def main(argv: list[str] | None = None) -> int:
         "release binary, checked against the sha256 pinned in this package, or a "
         "cargo build from a checkout.",
     )
+    parser.add_argument(
+        "--ovfetch",
+        action="store_true",
+        help="Install only ovfetch, which gives vinowhisper-doctor Intel's per-platform "
+        "NPU driver data: its release binary, checked against the sha256 pinned in "
+        "this package.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
 
@@ -471,7 +516,9 @@ def main(argv: list[str] | None = None) -> int:
 
     wizard = Wizard(assume_yes=args.yes, dry_run=args.dry_run, device=args.device)
     try:
-        return wizard.run_overlay() if args.gui else wizard.run_all()
+        if args.gui:
+            return wizard.run_overlay()
+        return wizard.run_ovfetch() if args.ovfetch else wizard.run_all()
     except KeyboardInterrupt:
         print("\ninterrupted; nothing further was changed", file=sys.stderr)
         return 130

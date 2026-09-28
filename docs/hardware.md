@@ -188,7 +188,7 @@ package manager: note it somewhere, because nothing will upgrade it.
 by PCI ID, the first driver release Intel verified on each, and which
 OpenVINO versions are known to work with each driver, refreshed weekly from
 Intel's release notes and the kernel's `ivpu` driver. When it is on `PATH`
-(`cargo install ovfetch --locked`), the doctor runs `ovfetch detect`, which is
+(`vinowhisper-setup --ovfetch`), the doctor runs `ovfetch detect`, which is
 offline, and adds three lines:
 
 ```

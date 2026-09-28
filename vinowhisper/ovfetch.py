@@ -1,13 +1,36 @@
 import json
+import platform
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from . import overlay
 from .devices import Note
 
 _TIMEOUT_S = 10
-INSTALL_HINT = "cargo install ovfetch --locked"
+BINARY = "ovfetch"
+PIN_FILE = Path(__file__).resolve().parent / "ovfetch_release.json"
+RELEASES_URL = "https://github.com/karanshukla/ovfetch/releases/download"
+INSTALL_HINT = "vinowhisper-setup --ovfetch"
+
+
+@dataclass(frozen=True)
+class Release:
+    version: str
+    arch: str
+    sha256: str
+
+    @property
+    def name(self) -> str:
+        return f"{BINARY}-{self.arch}-linux"
+
+    @property
+    def url(self) -> str:
+        return f"{RELEASES_URL}/v{self.version}/{self.name}"
 
 
 class OvfetchError(Exception):
@@ -15,7 +38,7 @@ class OvfetchError(Exception):
 
 
 def detect() -> dict[str, Any] | None:
-    exe = shutil.which("ovfetch")
+    exe = shutil.which(BINARY)
     if exe is None:
         return None
     try:
@@ -38,6 +61,53 @@ def detect() -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         raise OvfetchError(f"{exe} detect printed something other than a JSON object")
     return payload
+
+
+def pinned(pin_file: Path = PIN_FILE, machine: str | None = None) -> Release | str:
+    arch = machine or platform.machine()
+    try:
+        record = json.loads(pin_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "this vinowhisper pins no ovfetch release, so nothing will be downloaded"
+    except (OSError, ValueError) as exc:
+        return f"{pin_file} is unreadable ({exc}), so nothing will be downloaded"
+    asset = record.get("assets", {}).get(arch) or {}
+    if not record.get("version") or not asset.get("sha256"):
+        return (
+            f"ovfetch publishes no binary for {arch}; `cargo install ovfetch --locked` builds one"
+        )
+    return Release(version=str(record["version"]), arch=arch, sha256=str(asset["sha256"]))
+
+
+def installed() -> tuple[Path, tuple[int, ...]] | None:
+    exe = shutil.which(BINARY)
+    if exe is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [exe, "--version"], capture_output=True, text=True, timeout=_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return Path(exe), ()
+    return Path(exe), version_tuple(
+        completed.stdout.split()[-1] if completed.stdout.split() else ""
+    )
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", text)[:3])
+
+
+def fetch(release: Release, dest: Path, get: Callable[..., Any] | None = None) -> Path:
+    return overlay.download_verified(
+        release.url,
+        release.sha256,
+        dest,
+        f"{release.name} does not match the sha256 pinned in this vinowhisper",
+        "Please report it at https://github.com/karanshukla/vinoWhisper/issues. "
+        "`cargo install ovfetch --locked` avoids the download.",
+        get,
+    )
 
 
 def _minor(text: str | None) -> tuple[int, int] | None:
