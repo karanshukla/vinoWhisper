@@ -119,7 +119,6 @@ def _cut(confirmed: list[str], curr: list[str]) -> int:
         return sum(min(b.b + b.size, end) - b.b for b in matching if b.b < end)
 
     # Filter by size before taking the furthest reach; the reverse lets one stray word reprint everything.
-    # A block must also carry most of the text before it, or it is a phrase that merely recurs.
     blocks = [
         b
         for b in matching

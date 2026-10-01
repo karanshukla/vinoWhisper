@@ -15,7 +15,7 @@ DRI_DIR = Path("/dev/dri")
 
 
 class DeviceError(RuntimeError):
-    """OpenVINO is unusable, or the requested device does not exist."""
+    pass
 
 
 @dataclass(frozen=True)

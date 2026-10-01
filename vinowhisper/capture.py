@@ -13,7 +13,7 @@ BACKEND_ENV = "VINOWHISPER_CAPTURE_BACKEND"
 
 
 class CaptureError(RuntimeError):
-    """A capture tool is missing, failed to start, or died mid-session."""
+    pass
 
 
 @dataclass(frozen=True)

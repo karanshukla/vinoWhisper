@@ -21,7 +21,7 @@ _BUILD_INSTEAD = "build it from a checkout with cargo instead (docs/gui.md)"
 
 
 class OverlayError(Exception):
-    """A download or install that did not happen, and what to do instead."""
+    pass
 
 
 def asset_name(arch: str) -> str:

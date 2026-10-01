@@ -103,6 +103,18 @@ def test_silence_or_a_bare_tap_costs_no_decode():
         assert client.decoded == []
 
 
+def test_audio_just_under_the_minimum_costs_no_decode():
+    just_under = pcm.sine(220.0, dictate.MIN_AUDIO_S - 0.05, amplitude=0.1)
+    _, _, client = _run(["start", "stop"], signal=just_under)
+    assert client.decoded == []
+
+
+def test_audio_just_over_the_minimum_is_decoded():
+    just_over = pcm.sine(220.0, dictate.MIN_AUDIO_S + 0.05, amplitude=0.1)
+    _, _, client = _run(["start", "stop"], signal=just_over)
+    assert len(client.decoded) == 1
+
+
 def test_cancel_discards_the_recording():
     records, recordings, client = _run(["start", "cancel"])
     assert [r["event"] for r in records] == ["Listening", "Cancelled"]

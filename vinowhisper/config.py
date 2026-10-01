@@ -23,8 +23,7 @@ def model_dir(device_kind: str) -> Path:
 
 DEFAULT_DEVICE = "auto"
 
-# Beside the overlay's gui.json. Devices that enumerated and then failed to
-# build a pipeline; see failures.py.
+# Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
 SERVER_HOST = "127.0.0.1"
@@ -44,7 +43,6 @@ MIN_WINDOW_S = 1.5
 
 MIN_HOP_S = 0.5
 
-# Real speech peaked at 8.5 tokens/s (1.75x, docs/latency.md); a repetition loop runs to 448.
 MAX_TOKENS_PER_S = 12.0
 MAX_TOKENS_MARGIN = 16
 
@@ -53,7 +51,6 @@ def max_new_tokens(duration_s: float) -> int:
     return int(duration_s * MAX_TOKENS_PER_S) + MAX_TOKENS_MARGIN
 
 
-# Low on purpose: quiet speech sits at the noise floor (docs/audio.md).
 SILENCE_RMS_THRESHOLD = 0.002
 
 TARGET_RMS = 0.05

@@ -17,14 +17,12 @@ from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats
 
-# A tap on the key, with nothing said, is not worth a decode.
 MIN_AUDIO_S = 0.3
 
 # Keys come up on the last syllable, and pw-record delivers in 100ms chunks.
 TAIL_S = 0.25
 _TAIL_WAIT_S = 1.0
 
-# Whisper's names for silence, emitted as if they were speech.
 _NON_SPEECH = re.compile(r"^\s*[\[(][^\])]*[\])]\s*$")
 
 _FULL = "full"
