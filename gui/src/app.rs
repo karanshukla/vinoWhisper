@@ -906,7 +906,6 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
     Some(timer)
 }
 
-/// VINOWHISPER_GUI_TRACE=1: every dictation key and state change on stderr.
 fn trace(message: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_GUI_TRACE").is_some_and(|v| v == "1")) {

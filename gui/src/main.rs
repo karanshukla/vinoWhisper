@@ -24,7 +24,7 @@ use std::process::ExitCode;
 use ipc::Request;
 use settings::Source;
 
-/// Changing this orphans every shortcut already bound.
+// Changing this orphans every shortcut already bound.
 pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
 
 const USAGE: &str = "\

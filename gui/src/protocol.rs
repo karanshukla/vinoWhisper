@@ -31,7 +31,6 @@ pub enum Event {
     },
 }
 
-/// What vinowhisper-dictate --json says.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "event")]
 pub enum Dictate {
@@ -54,7 +53,7 @@ pub enum Dictate {
     },
 }
 
-/// Unknown records are skipped, not fatal: a newer Python side may add some.
+// Unknown records are skipped, not fatal: a newer Python side may add some.
 pub fn parse<T: for<'de> Deserialize<'de>>(line: &str) -> Option<T> {
     serde_json::from_str(line.trim()).ok()
 }

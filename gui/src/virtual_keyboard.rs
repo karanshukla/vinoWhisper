@@ -20,7 +20,6 @@ const XKB_V1: u32 = 1;
 const PRESSED: u32 = 1;
 const RELEASED: u32 = 0;
 
-/// Shift+Insert through `zwp_virtual_keyboard_v1`: no udev rule and no portal notification.
 pub struct VirtualKeyboard {
     manager: ZwpVirtualKeyboardManagerV1,
     seat: WlSeat,
@@ -32,7 +31,7 @@ pub struct VirtualKeyboard {
 }
 
 impl VirtualKeyboard {
-    /// None when the compositor has no such global. Main thread; `shift_insert` can run anywhere.
+    // Main thread only; `shift_insert` can run anywhere.
     pub fn bind(
         conn: &Connection,
         globals: &GlobalList,
@@ -90,7 +89,7 @@ fn upload(keyboard: &ZwpVirtualKeyboardV1, text: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Real evdev codes (xkb adds 8), so a compositor using the user's own keymap agrees.
+// Real evdev codes (xkb adds 8), so a compositor using the user's own keymap agrees.
 fn keymap() -> String {
     format!(
         "xkb_keymap {{\n\

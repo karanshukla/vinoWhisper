@@ -35,7 +35,6 @@ fn caption_from_env() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Beside an explicitly named vinowhisper-caption first: both come from one install.
 pub fn find_sibling(name: &str, caption: Option<&Path>) -> Option<PathBuf> {
     let beside = caption
         .map(Path::to_path_buf)
@@ -92,7 +91,7 @@ pub struct Child {
     pub stdin: Option<ChildStdin>,
 }
 
-/// Main thread only: the parent-death signal fires when the spawning thread exits.
+// Main thread only: the parent-death signal fires when the spawning thread exits.
 pub fn spawn(
     mut process: Process,
     label: &'static str,
@@ -159,7 +158,7 @@ pub fn spawn(
 }
 
 impl Session {
-    /// Main thread only, see `spawn`.
+    // Main thread only, see `spawn`.
     pub fn start(
         program: &Path,
         source: Source,
