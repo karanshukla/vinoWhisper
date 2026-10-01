@@ -7,11 +7,10 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::APP_ID;
 use crate::app::Command;
 
-/// Renaming either orphans every binding already made.
+// Renaming either orphans every binding already made.
 const TOGGLE: &str = "toggle-captions";
 const DICTATE: &str = "dictate";
 
-/// The dictation key on laptops that have one sends Meta+H, after Windows' Win+H.
 pub const DICTATE_PREFERRED: &str = "LOGO+h";
 
 #[derive(Debug, Clone, PartialEq)]

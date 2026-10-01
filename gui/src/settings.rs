@@ -72,7 +72,6 @@ pub struct Settings {
     pub position: Position,
     pub size: TextSize,
     pub shortcut: String,
-    /// Minutes unused before the tray icon moves to the hidden icons; 0 keeps it in view.
     pub tray_idle_minutes: u64,
 }
 

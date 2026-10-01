@@ -74,9 +74,10 @@ const PILL_PAD: f32 = 16.0;
 const PILL_ICON: f32 = 18.0;
 const PILL_GAP: f32 = 10.0;
 
-// Speech sits around 0.01-0.1 rms; square root so quiet talk still moves the bars.
+const LOUD_SPEECH_RMS: f32 = 0.08;
+
 fn meter(rms: f32) -> f32 {
-    (rms / 0.08).sqrt().clamp(0.0, 1.0)
+    (rms / LOUD_SPEECH_RMS).sqrt().clamp(0.0, 1.0)
 }
 
 struct TextBlock {
@@ -300,7 +301,7 @@ impl Painter {
     }
 }
 
-/// fontconfig can name a sans that is not installed; fall back to one that is.
+// fontconfig can name a sans that is not installed.
 fn prefer_an_installed_sans(db: &mut fontdb::Database) {
     const PREFERRED: [&str; 6] = [
         "Inter",

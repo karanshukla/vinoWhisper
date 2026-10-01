@@ -9,7 +9,6 @@ use crate::app::Command;
 use crate::protocol;
 use crate::session;
 
-/// A resident vinowhisper-dictate: started ahead of the key so Python's imports are not in the first word.
 pub struct Dictator {
     pub generation: u64,
     pid: Pid,
@@ -17,7 +16,7 @@ pub struct Dictator {
 }
 
 impl Dictator {
-    /// Main thread only, see `session::spawn`.
+    // Main thread only, see `session::spawn`.
     pub fn start(program: &Path, generation: u64, tx: Sender<Command>) -> io::Result<Dictator> {
         let mut process = Process::new(program);
         process.arg("--json").stdin(Stdio::piped());

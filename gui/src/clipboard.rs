@@ -30,12 +30,10 @@ const MIME_TYPES: [&str; 5] = [
 // Klipper, and clipboard managers that copy it, keep nothing that carries this.
 const PASSWORD_HINT: &str = "x-kde-passwordManagerHint";
 
-// Cleared once the paste has read it: a moment after the last read, never before MIN.
 const GRACE: Duration = Duration::from_millis(300);
 const MIN: Duration = Duration::from_millis(500);
 const MAX: Duration = Duration::from_secs(2);
 
-/// Clipboard and primary selection both: terminals paste the primary one on Shift+Insert.
 pub struct Clipboard {
     manager: ExtDataControlManagerV1,
     device: ExtDataControlDeviceV1,
@@ -45,7 +43,7 @@ pub struct Clipboard {
     armed_at: Option<Instant>,
 }
 
-/// The compositor has taken the new selection; a paste before this gets the old one.
+// A paste before this arrives gets the old selection.
 pub struct Taken;
 
 impl Clipboard {

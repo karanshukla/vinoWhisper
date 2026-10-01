@@ -39,7 +39,6 @@ const UI_DEV_CREATE: Opcode = opcode::none(b'U', 1);
 const SETTLE: Duration = Duration::from_millis(250);
 const BETWEEN: Duration = Duration::from_millis(4);
 
-/// A virtual keyboard with two keys: no portal session, so nothing for the desktop to announce.
 pub struct Keyboard {
     device: File,
 }
@@ -95,7 +94,7 @@ impl Keyboard {
     }
 }
 
-/// struct input_event on 64-bit Linux; the kernel stamps the time itself.
+// struct input_event on 64-bit Linux; the kernel stamps the time itself.
 fn event(kind: u16, code: u16, value: i32) -> [u8; 24] {
     let mut bytes = [0u8; 24];
     bytes[16..18].copy_from_slice(&kind.to_ne_bytes());

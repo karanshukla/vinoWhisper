@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 use crate::captions::Tone;
 use crate::protocol::Dictate;
 
-/// Shorter than this is a tap, which latches hands-free; longer is hold-to-talk.
 pub const TAP: Duration = Duration::from_millis(350);
 
 const PREVIEW_CHARS: usize = 64;
@@ -298,6 +297,29 @@ mod tests {
             "the stopping tap's release is not a second tap"
         );
         assert_eq!(d.phase(), &Phase::Transcribing);
+    }
+
+    #[test]
+    fn a_press_just_under_the_tap_length_latches_hands_free() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        assert_eq!(d.key(false, t + TAP - Duration::from_millis(1)), None);
+        assert!(matches!(
+            d.phase(),
+            Phase::Listening {
+                hands_free: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_press_of_the_tap_length_is_hold_to_talk() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        assert_eq!(d.key(false, t + TAP), Some(Action::Stop));
     }
 
     #[test]
