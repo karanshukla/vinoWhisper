@@ -472,3 +472,52 @@ def test_characterization_graphs_disagreeing_makes_the_toolchain_unknown(tmp_pat
 
     assert integrity.read_toolchain(directory) == {}
     assert integrity.verify(directory, "npu", pins=pins).status == integrity.MISMATCH
+
+
+# What uv.lock calls each package the pin records, by its rt_info key.
+_LOCKED_AS = {
+    "openvino_version": "openvino",
+    "openvino_tokenizers_version": "openvino-tokenizers",
+    "optimum_intel_version": "optimum-intel",
+    "optimum_version": "optimum",
+    "transformers_version": "transformers",
+    "pytorch_version": "torch",
+    "tokenizers_version": "tokenizers",
+}
+
+# Lock drift already acknowledged, waiting on a re-export and re-pin on the
+# NPU. Recorded 2026-10-02: the lock moved openvino to 2026.4.1, optimum-intel
+# to 2.2.0 and torch to 2.14.1 after the 2026-09-12 pin, so every fresh
+# `uv sync --extra export` exports bytes the pin calls drift. Re-pin with
+# scripts/update_digests.py and empty this; never add to it to make CI pass.
+_ACKNOWLEDGED_LOCK_DRIFT = {
+    "openvino_version": "2026.4.1",
+    "openvino_tokenizers_version": "2026.4.1.0",
+    "optimum_intel_version": "2.2.0",
+    "pytorch_version": "2.14.1",
+}
+
+
+def _locked_versions() -> dict[str, str]:
+    lock = tomllib.loads((Path(__file__).resolve().parent.parent / "uv.lock").read_text("utf-8"))
+    return {package["name"]: package["version"] for package in lock["package"]}
+
+
+def test_the_locked_export_toolchain_is_the_pinned_one():
+    """A fresh locked install should export the pinned bytes, not drift.
+
+    Drift only warns, and a fresh install that always drifts teaches everyone
+    to ignore the warning. So a lock bump that moves the export toolchain away
+    from the pin fails here, in CI, rather than on a user's machine.
+    """
+    pin = integrity.load_pins()[f"{config.MODEL_ID}/npu"]
+    locked = _locked_versions()
+    drift = {}
+    for key, package in _LOCKED_AS.items():
+        pinned = integrity._short(pin.toolchain.get(key))
+        if locked.get(package) != pinned:
+            drift[key] = locked.get(package)
+    assert drift == _ACKNOWLEDGED_LOCK_DRIFT, (
+        f"uv.lock's export toolchain differs from the pin: {drift}. Re-export on the "
+        "NPU and re-pin (scripts/update_digests.py), or keep the lock where the pin is."
+    )
