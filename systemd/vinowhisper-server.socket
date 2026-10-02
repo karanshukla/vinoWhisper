@@ -8,7 +8,12 @@ Description=vinoWhisper transcription server socket
 Documentation=https://github.com/karanshukla/vinoWhisper
 
 [Socket]
-ListenStream=127.0.0.1:8099
+; A Unix socket in the runtime dir (%t is $XDG_RUNTIME_DIR), readable and
+; writable by you alone. A localhost TCP port could be bound or reached by any
+; local user.
+ListenStream=%t/vinowhisper/server.sock
+SocketMode=0600
+DirectoryMode=0700
 Accept=no
 
 [Install]

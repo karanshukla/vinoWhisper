@@ -5,7 +5,9 @@ file hardcoded ~/Development/vinoWhisper, which worked on exactly one machine;
 these assertions are what stop that regressing.
 """
 
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from conftest import fake_version
@@ -59,7 +61,49 @@ def test_the_service_is_socket_activated_only():
     assert not any(line.strip() == "[Install]" for line in service.splitlines())
     assert "Requires=vinowhisper-server.socket" in service
     assert any(line.strip() == "[Install]" for line in socket.splitlines())
-    assert f"ListenStream={config.SERVER_HOST}:{config.SERVER_PORT}" in socket
+    assert f"ListenStream=%t/{config.SERVER_SOCKET_RELPATH}" in socket
+
+
+def test_the_socket_is_private_to_the_user():
+    """Not a TCP port, which any local user could connect to, or bind first."""
+    _, socket = wizard.unit_files()
+    listen = [line for line in socket.splitlines() if line.startswith("ListenStream=")]
+    assert listen == ["ListenStream=%t/vinowhisper/server.sock"]
+    assert "SocketMode=0600" in socket.splitlines()
+    assert "DirectoryMode=0700" in socket.splitlines()
+
+
+def test_the_reference_socket_unit_matches_the_generated_one():
+    _, generated = wizard.unit_files()
+    reference = (Path(__file__).parent.parent / "systemd/vinowhisper-server.socket").read_text()
+
+    def directives(text):
+        return [line for line in text.splitlines() if line and line[0] not in ";#"]
+
+    assert directives(reference) == directives(generated)
+
+
+def test_reinstalling_rebinds_the_socket(monkeypatch, tmp_path):
+    """An existing install's socket keeps its old ListenStream until it is restarted."""
+    calls = []
+    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path)
+    monkeypatch.setattr(wizard, "_has_systemd", lambda: True)
+    monkeypatch.setattr(
+        wizard.subprocess,
+        "run",
+        lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
+    )
+    outcome = wizard.Wizard(assume_yes=True).install_units()
+    assert outcome.ok
+    assert "ListenStream=%t/" in (tmp_path / "vinowhisper-server.socket").read_text()
+    systemctl = [argv[2:] for argv in calls]
+    assert systemctl == [
+        ["daemon-reload"],
+        ["stop", "vinowhisper-server.service"],
+        ["reset-failed", "vinowhisper-server.service", "vinowhisper-server.socket"],
+        ["enable", "vinowhisper-server.socket"],
+        ["restart", "vinowhisper-server.socket"],
+    ]
 
 
 def test_the_device_choice_reaches_the_unit():

@@ -322,7 +322,7 @@ def main() -> int:
         return 1
     except requests.RequestException as exc:
         print(
-            f"\n[vinowhisper] server not reachable at {config.SERVER_URL}: {exc}\n"
+            f"\n[vinowhisper] server not reachable at {config.server_address()}: {exc}\n"
             "  systemctl --user status vinowhisper-server.socket\n"
             "  vinowhisper-doctor        # what is actually missing\n"
             "  vinowhisper-setup         # install the units if they were never installed",
@@ -330,7 +330,7 @@ def main() -> int:
         )
         if json_out is not None:
             json_out.error(
-                f"The transcription server is not reachable at {config.SERVER_URL}. "
+                f"The transcription server is not reachable at {config.server_address()}. "
                 "Run vinowhisper-doctor to see what is missing."
             )
         return 1
