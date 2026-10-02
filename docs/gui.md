@@ -325,6 +325,12 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
   starts two. A socket file left by a killed instance is detected by trying to
   connect, and `--hidden` only pings, so an autostart that finds an instance
   running leaves it alone.
+- **The socket is private.** It lives in `$XDG_RUNTIME_DIR`. Without one it
+  falls back to `/tmp/vinowhisper-gui-<uid>/`, a directory it creates 0700
+  and refuses to use if another user owns it, it is a symlink, or anyone else
+  can enter it: `/tmp` is shared, and a name there that another user made
+  first would let them stop the overlay starting. A connection from another
+  uid (`SO_PEERCRED`) gets no answer.
 
 ## Why Rust
 
