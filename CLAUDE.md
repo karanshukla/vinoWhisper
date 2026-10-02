@@ -317,6 +317,7 @@ vinowhisper/
   transcriber.py  WhisperTranscriber, wraps WhisperPipeline, serialized by a lock
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
   integrity.py    sha256 pins for the model export, and what a mismatch means
+  source.py       the pinned Hugging Face revision, downloaded and sha256-checked before export
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
@@ -647,6 +648,19 @@ bisection above (5.5.4 verified failing), and the 5.10.0 fix for CVE-2026-9856
 is outside every optimum-intel's range. The pin moves when optimum-intel
 supports >= 5.6 *and* someone re-runs the `generate()` bisection on an NPU,
 not before. The narrowed-exposure argument in the paragraph above still holds.
+
+**2026-10-02: the default model's source is pinned and checked.** optimum-cli
+has no `--revision` (optimum-intel 2.2.0), so `vinowhisper.source` downloads
+`openai/whisper-small.en` at commit `e8727524f962` into a local directory,
+checks every file against `model_sources.json` (hard failure, no drift), and
+the export runs from there with `HF_HUB_OFFLINE=1`. That keeps both
+advisories' attacker-controlled input away from transformers for the default
+model; `--model` anything else is still exposed. **Not yet run end to end**:
+it needs the 1GB download and an export. transformers 5.3.0 drops
+`_name_or_path` from the saved config and `name_or_path` from the tokenizer
+config, so exporting from a local path should give the same bytes as
+exporting by model id, but that is read from the source, not measured.
+Confirm the next export still verifies against the pin.
 
 The `resolve` canary went green on #24, because it only checked that the sync
 resolves and that openvino imports; nothing in CI ran `optimum-cli`.

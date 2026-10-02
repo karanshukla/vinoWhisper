@@ -29,13 +29,45 @@ would be a marginally tighter swap and would be an accepted change.
 ## The model download is verified
 
 `vinowhisper-setup` and `scripts/convert_model.sh` download ~1GB from Hugging
-Face and convert it into a model that then runs on your hardware. Every file in
-the result is hashed and compared against `vinowhisper/model_digests.json`,
-which pins the sha256 of the export this project has actually run on an NPU.
-The check runs before you are told the export is done, and
-`vinowhisper-doctor` repeats it on demand.
+Face and convert it into a model that then runs on your hardware. Two checks,
+and they are not equally strong.
 
-Two limits worth stating plainly rather than implying:
+**The download is pinned and checked, and a mismatch stops the export.**
+`vinowhisper/model_sources.json` pins `openai/whisper-small.en` to one commit
+(`e8727524f962`, the repository's head since 2024-01-22) and records the
+sha256 of every file the export reads: the safetensors weights, the configs and
+the tokenizer files. `vinowhisper.source` downloads exactly those files at that
+commit into `~/.local/share/vinowhisper/models/source/`, hashes each one, and
+refuses the directory if anything differs, is missing, or is there unpinned.
+Only then does `optimum-cli` run, from that local directory, with
+`HF_HUB_OFFLINE=1`, so nothing it reads came from anywhere else. These hashes
+do not depend on your toolchain, so there is no "drift" here: a difference
+is a failure. Recorded 2026-10-02 from the Hub API (the safetensors' LFS
+sha256) and from the files themselves, each checked against its git blob id.
+
+**The export is then hashed against `vinowhisper/model_digests.json`**, the
+sha256 of every file in the export this project has run on an NPU. The check
+runs before you are told the export is done, and `vinowhisper-doctor` repeats
+it on demand. This one can only warn in the common case, because the export is
+not reproducible across toolchains (below), and it is weaker than it looks:
+
+- **`drift` is the export's own claim.** Bytes that differ from the pin are
+  called `drift` (warn, continue) rather than `mismatch` (fail) when the
+  toolchain recorded in the export's `rt_info` differs from the pinned one.
+  That `rt_info` is inside the files being checked, so anything that can
+  rewrite the export can claim a different toolchain and get the softer
+  verdict. The source check above is what protects the download; this check
+  catches accidents and a stale export, not a determined local attacker (who,
+  running as you, could edit the code doing the checking anyway).
+- **A fresh install currently reports `drift`.** As of 2026-10-02 `uv.lock`
+  resolves openvino 2026.4.1, optimum-intel 2.2.0 and torch 2.14.1, and the
+  NPU pin was recorded with 2026.3.1, 2.1.0 and 2.13.0. A test now fails when
+  the lock moves further from the pin; closing the existing gap needs a
+  re-export and re-pin on an NPU.
+- **The stateful (CPU/GPU) export has no pin at all**, so it always verifies
+  as `unpinned`. Its source is checked exactly like the NPU export's.
+
+Further limits worth stating plainly rather than implying:
 
 - **It pins one export, not every export.** An unrecognised model or variant
   verifies as `unpinned`, which warns and continues. A hard failure there would
@@ -54,6 +86,31 @@ Two limits worth stating plainly rather than implying:
 Re-pinning is `./scripts/update_digests.py`, deliberately a script and
 deliberately not automatic: the diff it produces is a list of hashes, and it is
 meant to be read in review.
+
+### Open advisories in the export toolchain
+
+The export extra holds `transformers<5.4`, which resolves 5.3.0, because 5.4.0
+and later export a decoder the NPU cannot run (bisected 2026-09-04). 5.3.0 has
+two open advisories, and neither fix is reachable: every optimum-intel release
+caps transformers below 5.6.
+
+- [GHSA-fgcw-684q-jj6r](https://github.com/advisories/GHSA-fgcw-684q-jj6r)
+  (CVE-2026-5241, fixed in 5.5.0): a crafted model repository can run code
+  at load time despite `trust_remote_code` being off.
+- [GHSA-xrqw-3rrv-vx5w](https://github.com/advisories/GHSA-xrqw-3rrv-vx5w)
+  (CVE-2026-9856, fixed in 5.10.0): a crafted `tokenizer_config.json` makes
+  `save_pretrained()` write outside the output directory.
+
+Both need attacker-controlled model files to reach transformers. Nothing at
+runtime imports transformers; only the one-time export does. For the default
+model, the revision pin and the source hashes mean the files transformers
+reads are byte-for-byte the ones recorded above, so a compromised or
+force-pushed Hugging Face repository, or anything between you and it, is
+refused before the export starts. That does not fix the bugs; it keeps
+untrusted input away from them. **`--model` with any other repository has no
+pin** (`convert_model.sh` says so and exports whatever that repository's
+default branch holds), and is exposed to both advisories: only export
+repositories you trust.
 
 ## The setup wizard runs commands
 
