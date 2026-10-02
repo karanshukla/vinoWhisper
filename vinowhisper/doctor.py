@@ -229,10 +229,13 @@ def _server() -> list[Result]:
     import requests
 
     try:
-        response = requests.get(
-            f"{config.SERVER_URL}/health",
-            timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
-        )
+        # Never through a proxy, like the client (client.py).
+        with requests.Session() as session:
+            session.trust_env = False
+            response = session.get(
+                f"{config.SERVER_URL}/health",
+                timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
+            )
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as exc:

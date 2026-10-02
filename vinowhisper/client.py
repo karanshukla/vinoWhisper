@@ -12,6 +12,10 @@ class TranscriptionClient:
         # Not a default argument, which would bind config.SERVER_URL at import.
         self._base_url = base_url or config.SERVER_URL
         self._session = requests.Session()
+        # The server is on localhost. requests would otherwise send it through
+        # any http_proxy in the environment (it doesn't exempt 127.0.0.1), and
+        # the audio and transcripts with it.
+        self._session.trust_env = False
 
     def wait_ready(self) -> dict:
         response = self._session.get(
