@@ -16,6 +16,17 @@ Requires=vinowhisper-server.socket
 ExecStart=%h/Development/vinoWhisper/.venv/bin/vinowhisper-server --device auto
 Restart=on-failure
 RestartSec=2
+; Only seccomp-backed hardening: the namespace kind (ProtectClock, PrivateTmp,
+; ...) needs PrivateUsers in a user unit. No MemoryDenyWriteExecute (the CPU
+; plugin JITs) or PrivateDevices (the NPU and GPU are /dev/accel, /dev/dri).
+NoNewPrivileges=yes
+UMask=0077
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
 
 ; No [Install]/WantedBy: this unit is socket-activated (see
 ; vinowhisper-server.socket), not enabled/started directly. Systemd starts it

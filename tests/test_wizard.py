@@ -6,6 +6,7 @@ these assertions are what stop that regressing.
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 from conftest import fake_version
@@ -175,3 +176,36 @@ def test_setup_only_fails_on_a_severe_digest_result(monkeypatch, capsys, status,
     # the same as not checking.
     printed = capsys.readouterr().out
     assert (status == integrity.VERIFIED) == (printed.strip() == "")
+
+
+def _directives(unit: str) -> list[str]:
+    return [
+        line
+        for line in unit.splitlines()
+        if line and not line.startswith(("#", ";", "ExecStart=", "Documentation="))
+    ]
+
+
+def test_the_reference_service_matches_the_generated_one():
+    """The checked-in copy is what people read and hand-install; keep it honest."""
+    reference = Path(__file__).resolve().parent.parent / "systemd/vinowhisper-server.service"
+    service, _ = wizard.unit_files()
+    assert _directives(reference.read_text(encoding="utf-8")) == _directives(service)
+
+
+def test_characterization_the_service_hardening_leaves_the_accelerators_reachable():
+    """characterization: the hardening stops short of the obvious next steps.
+
+    MemoryDenyWriteExecute kills OpenVINO's CPU plugin, which JIT-compiles its
+    kernels. PrivateDevices hides /dev/accel and /dev/dri, so the NPU and GPU
+    vanish and "auto" quietly lands on the CPU. ProtectClock and the other
+    namespace settings need PrivateUsers in a user unit, which needs
+    unprivileged user namespaces, which not every distro allows. Adding any of
+    them is a hardware-tested change, not a tidy-up.
+    """
+    service, _ = wizard.unit_files()
+    directives = _directives(service)
+    assert "NoNewPrivileges=yes" in directives
+    assert "UMask=0077" in directives
+    for absent in ("MemoryDenyWriteExecute", "PrivateDevices", "ProtectClock", "PrivateUsers"):
+        assert not any(line.startswith(f"{absent}=") for line in directives)
