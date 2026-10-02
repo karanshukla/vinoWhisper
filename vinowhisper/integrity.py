@@ -171,14 +171,15 @@ class Verification:
         if self.status == MISMATCH:
             out += [
                 "  The pinned toolchain produced different bytes for these files.",
-                "  Re-download from a clean cache before trusting this export:",
-                f"    rm -rf {self.directory} ~/.cache/huggingface/hub",
+                "  Re-export from the checked source before trusting this export:",
+                f"    rm -rf {self.directory}",
                 f"    {config.export_command(self.variant)}",
                 "  If it still differs, open an issue rather than using it.",
             ]
         elif self.status == DRIFT:
             out += [
                 "  This is what a toolchain upgrade looks like, not necessarily tampering.",
+                "  The toolchain is read from the export itself, so it is a claim, not proof.",
                 "  Re-pin once you have satisfied yourself the export is good:",
                 f"    python scripts/update_digests.py --variant {self.variant}",
             ]

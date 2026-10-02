@@ -8,7 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import requests
+
 from . import __version__, capture, config, devices, distro, integrity, overlay, ovfetch
+from . import source as model_source
 
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
@@ -17,6 +20,8 @@ COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup")
 
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"
+# The export reads a checked local snapshot; nothing may fetch around it.
+_EXPORT_ENV = {"HF_HUB_OFFLINE": "1"}
 
 
 @dataclass
@@ -55,8 +60,11 @@ class Wizard:
         self.say(f"  $ {' '.join(argv)}")
         if not self.confirm(why):
             return False
+        return self.execute(argv)
+
+    def execute(self, argv: list[str], env: dict[str, str] | None = None) -> bool:
         try:
-            subprocess.run(argv, check=True)
+            subprocess.run(argv, check=True, env={**os.environ, **env} if env else None)
         except FileNotFoundError:
             self.say(f"  ✗ {argv[0]} not found")
             return False
@@ -171,8 +179,28 @@ class Wizard:
             if cli is None:
                 return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
 
+        source = model_source.load(config.MODEL_ID)
+        if source is None:
+            return Outcome(False, f"no pinned source for {config.MODEL_ID}; reinstall vinowhisper")
+        argv = [cli, *export_argv(variant, directory, source.directory)[1:]]
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
-        if self.run([cli, *export_argv(variant, directory)[1:]], "export it now?"):
+        self.say(
+            f"  $ fetch {source.model_id}@{source.revision[:12]} into {source.directory}, "
+            "checking every file's sha256"
+        )
+        self.say(
+            f"  $ {' '.join(f'{key}={value}' for key, value in _EXPORT_ENV.items())} "
+            + " ".join(argv)
+        )
+        if not self.confirm("download and export it now?"):
+            return Outcome(None, f"run {config.export_command(variant)} when ready")
+        try:
+            model_source.fetch(source, say=lambda line: self.say(f"  {line}"))
+        except model_source.SourceError as exc:
+            return Outcome(False, str(exc))
+        except (requests.RequestException, OSError) as exc:
+            return Outcome(None, f"download failed ({exc}); re-run to resume")
+        if self.execute(argv, env=_EXPORT_ENV):
             return self.check_digests(variant, directory, f"exported to {directory}")
         return Outcome(None, f"run {config.export_command(variant)} when ready")
 
@@ -365,7 +393,9 @@ class Wizard:
         return 1 if self.failed else 0
 
 
-def export_argv(variant: str, directory: Path | None = None) -> list[str]:
+def export_argv(
+    variant: str, directory: Path | None = None, source: Path | str = config.MODEL_ID
+) -> list[str]:
     if variant not in ("npu", "stateful"):
         raise ValueError(f"variant must be 'npu' or 'stateful', got {variant!r}")
     out = directory or (config.MODEL_DIR if variant == "npu" else config.STATEFUL_MODEL_DIR)
@@ -374,7 +404,7 @@ def export_argv(variant: str, directory: Path | None = None) -> list[str]:
         "export",
         "openvino",
         "--model",
-        config.MODEL_ID,
+        str(source),
         "--task",
         EXPORT_TASK,
     ]
