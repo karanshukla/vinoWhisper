@@ -7,7 +7,9 @@ piece of prose in this project that was wrong for a month.
 """
 
 import json
+from types import SimpleNamespace
 
+from tests import pcm
 from vinowhisper import caption, events
 
 _EVERY_EVENT = [
@@ -162,3 +164,58 @@ def test_an_error_record_carries_the_reason(capsys):
         "event": "Error",
         "message": "Capture failed: pw-record exited with status 1",
     }
+
+
+def test_list_targets_does_not_print_control_characters_a_stream_names(monkeypatch, capsys):
+    """media.name is set by the playing app: a browser tab's title, say."""
+    monkeypatch.setattr(
+        caption.capture, "backend", lambda: SimpleNamespace(name="pw", supports_app_capture=True)
+    )
+    monkeypatch.setattr(
+        caption,
+        "playback_streams",
+        lambda: [{"target": "42", "app": "Fire‮fox", "media": "tab\x1b]0;owned\x07 title"}],
+    )
+
+    assert caption._list_targets() == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\x07" not in out and "‮" not in out
+    assert "Firefox" in out and "tab]0;owned title" in out
+
+
+class _OneCycleRecorder:
+    captured_s = 5.0
+
+    def __init__(self, **_kwargs):
+        self._checks = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return None
+
+    def check_alive(self):
+        self._checks += 1
+        if self._checks > 1:
+            raise KeyboardInterrupt
+
+    def window(self, seconds):
+        return pcm.sine(220.0, seconds, amplitude=0.1)
+
+
+class _HostileClient:
+    def wait_ready(self):
+        return {"device": "CPU"}
+
+    def transcribe(self, samples):
+        return "hello\x1b[2J ​world‮", 0.1
+
+
+def test_model_text_is_stripped_of_control_characters_before_any_renderer(monkeypatch):
+    monkeypatch.setattr(caption, "Recorder", _OneCycleRecorder)
+    monkeypatch.setattr(caption, "TranscriptionClient", _HostileClient)
+
+    cycles = [e for e in caption.caption_events("output", None, 4.0) if isinstance(e, events.Cycle)]
+
+    assert cycles[0].transcript == "hello[2J world"

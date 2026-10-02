@@ -1,3 +1,4 @@
+import unicodedata
 from difflib import SequenceMatcher
 
 _ANCHOR_WORDS = 40
@@ -18,6 +19,18 @@ _REDECODE_RATIO = 0.6
 _MIN_REALIGN_WORDS = 2
 
 _COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
+
+
+_CONTROL_CATEGORIES = frozenset({"Cc", "Cf"})
+
+
+def strip_controls(text: str) -> str:
+    # Model text reaches a terminal and a paste; a newline still separates words.
+    return "".join(
+        " " if char.isspace() else char
+        for char in text
+        if char.isspace() or unicodedata.category(char) not in _CONTROL_CATEGORIES
+    )
 
 
 def _norm(word: str) -> str:

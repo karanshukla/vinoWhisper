@@ -5,6 +5,8 @@ as a fixture. The 2026-08-06 and 2026-08-07 reviews found all of them with
 throwaway scripts against a stubbed pipeline; this is those scripts, kept.
 """
 
+import pytest
+
 from vinowhisper.stitch import (
     Stitcher,
     _cut,
@@ -13,6 +15,7 @@ from vinowhisper.stitch import (
     _redecode_len,
     collapse_repeats,
     collapse_word_repeats,
+    strip_controls,
 )
 
 
@@ -461,3 +464,21 @@ def test_a_phrase_that_recurs_in_the_confirmed_text_is_not_an_anchor():
     confirmed, curr = on_screen.split(), decoded.split()
 
     assert _cut(confirmed, curr) == 0
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("plain words, don\u2019t \u2014 change", "plain words, don\u2019t \u2014 change"),
+        ("\x1b]52;c;ZWNobyBoaQ==\x07 hello", "]52;c;ZWNobyBoaQ== hello"),
+        ("\x1b[2Jcleared", "[2Jcleared"),
+        ("rm\x08\x08\x08ls", "rmls"),
+        ("abc\u202edcba", "abcdcba"),
+        ("pass\u200bword\ufeff", "password"),
+        ("\u2066isolate\u2069", "isolate"),
+        ("one\ntwo\tthree\rfour", "one two three four"),
+        ("caf\u00e9 na\u00efve", "caf\u00e9 na\u00efve"),
+    ],
+)
+def test_strip_controls_keeps_text_and_drops_what_a_terminal_would_act_on(raw, expected):
+    assert strip_controls(raw) == expected

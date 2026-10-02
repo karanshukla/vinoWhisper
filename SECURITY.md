@@ -11,7 +11,9 @@ download from Hugging Face, both of which you trigger explicitly and the second
 of which is checked against pinned digests (below).
 
 `--record` writes audio and transcripts to a directory you name. That file is
-as sensitive as whatever was playing; nothing else touches it.
+as sensitive as whatever was playing; nothing else touches it. The files are
+created readable by you alone (0600), and the directory too (0700) when the
+recording creates it.
 
 ## The trust boundary
 
