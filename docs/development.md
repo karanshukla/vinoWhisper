@@ -221,6 +221,24 @@ config names this repo, `release.yml` and the `pypi` environment. Renaming
 either breaks the upload by design, so change the publisher config on PyPI
 first. The `pypi` environment is also where a required reviewer would go.
 
+Only a pushed `v*` tag publishes. There is no manual trigger (it had never
+been used, and a run from a branch could not pass the tag check anyway), and
+`pypi` and `github-release` also check `github.ref`, so adding a trigger later
+cannot publish from a branch by accident. `gh release create --verify-tag`
+fails if the tag is missing rather than creating one at the default branch's
+HEAD.
+
+The tools the release and the Bandit scan run are pinned to exact versions:
+`twine`, `bandit` (in `bandit.yml` and `poe security` alike) and the Rust
+toolchain that builds the overlay. Nothing bumps them automatically; change
+them in a reviewed commit.
+
+Renovate auto-merges only the `dev` dependency group, and only after a
+release has been public for seven days. Cargo crates and Actions always wait
+for review, since crates ship inside the overlay binary and Actions run with
+the release's tokens. Runtime Python dependencies are not touched by Renovate
+at all.
+
 `github-release` has no checkout, so `gh` is told the repo through `GH_REPO`.
 Without it `gh` exits with "not a git repository", which is how v0.3.0 had to
 be released by hand after its PyPI upload had already gone through.
