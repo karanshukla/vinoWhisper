@@ -95,8 +95,8 @@ said into the focused window, one NPU decode per utterance.
 curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
 ```
 
-That installs [uv](https://docs.astral.sh/uv/), clones the repo, builds the
-environment, and hands over to `vinowhisper-setup`, which is where every
+That installs [uv](https://docs.astral.sh/uv/), clones the latest release,
+builds the locked environment, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.

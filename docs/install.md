@@ -7,8 +7,11 @@ installer actually does, and the dependency pin behind it.
 curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
 ```
 
-That installs [uv](https://docs.astral.sh/uv/), clones the repo, builds the
-environment, and hands over to `vinowhisper-setup`, which is where every
+That installs [uv](https://docs.astral.sh/uv/) (a pinned version, only if you
+have none), clones the latest `vX.Y.Z` release tag rather than `main`
+(`--ref main` for unreleased code, `--ref v0.6.1` for a specific one), builds
+the environment with `uv sync --locked`, so exactly what `uv.lock` pins and
+never a fresh resolve, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against the paths
 that actually exist. It prints every command before running it and asks first.
@@ -20,6 +23,14 @@ at Intel's releases instead. The `~/.local/bin` entries are symlinks into the
 checkout, so they follow a `git pull`, and bash completion gets one link per
 command, because bash-completion loads a file lazily on the first Tab for a
 command of the same name.
+
+The whole script is one `main` function called on its last line, so a
+download cut short by the network is a syntax error that runs nothing, rather
+than half an install. The release tag comes from `git ls-remote` on the
+repository, not the GitHub API, so there is no rate limit and no JSON to
+parse. Re-running it on an existing checkout moves that checkout to the
+requested ref (detached), so a checkout installed from `main` goes back to the
+latest release unless you pass `--ref main` again.
 
 From a checkout, or to see what it would do without doing it:
 
