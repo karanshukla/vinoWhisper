@@ -4,8 +4,9 @@ Deliberately **socket-activated**, not a resident systemd service. Same
 lazy-load/idle-unload shape as serverless cold starts, via systemd's own
 primitives:
 
-- `vinowhisper-server.socket` owns the listening port at boot. No model
-  loaded, no Python process running.
+- `vinowhisper-server.socket` owns the listening socket at boot,
+  `$XDG_RUNTIME_DIR/vinowhisper/server.sock`, readable by your user only. No
+  model loaded, no Python process running.
 - Systemd starts `vinowhisper-server.service` on the _first_ connection. That
   is when the NPU model load (~10-30s) happens.
 - The service tracks its own last-request time and self-exits after
@@ -25,7 +26,7 @@ cold start shows up as an explicit "waiting for the transcription server"
 line rather than as the captions appearing to be broken for 30 seconds.
 
 **Stopping it.** There's no daemon to manage day to day. The socket unit
-holds the port with no process behind it until something connects, and the
+holds the socket with no process behind it until something connects, and the
 service self-exits after `IDLE_TIMEOUT_S` regardless. Two commands cover the
 rest:
 
@@ -51,7 +52,15 @@ again on first connection.
 - The device is chosen before the model loads, so a fallback warning reaches
   the journal and `/health` even when loading then fails on a missing export.
 - Started by hand rather than by the socket unit, it never idles out; the
-  unload applies only to a socket-activated start.
+  unload applies only to a socket-activated start. It binds the same path
+  itself (`0600`, in a `0700` directory), refuses to start without
+  `XDG_RUNTIME_DIR`, and refuses if a server is already listening there.
+- It is a Unix socket rather than `127.0.0.1:8099` (the port until 0.6.x)
+  because a localhost port belongs to no user: any local account could
+  connect to it, or bind it first while it was free. `requests` cannot dial a
+  Unix socket, so `client.py` mounts a small adapter that sends every request
+  in its session there. To poke it by hand:
+  `curl --unix-socket "$XDG_RUNTIME_DIR/vinowhisper/server.sock" http://localhost/health`.
 
 ## Why OpenVINO GenAI, not ONNX Runtime
 

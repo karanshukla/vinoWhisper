@@ -62,7 +62,7 @@ second opinion, so the two-cycle commit delay is _visible_ rather than felt as
 a freeze.
 
 **It scales to zero, the systemd way.** The NPU model load costs 10-30s, so
-something has to hold it. A socket unit owns the port at boot with no process
+something has to hold it. A socket unit owns a private Unix socket at boot with no process
 running, systemd spawns the server on the first connection, and the server
 exits itself after 30 minutes idle. Serverless, on your laptop, with no
 framework.
@@ -243,7 +243,7 @@ machine:
 - [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md)
   and [docs/development.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md)
 - [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md):
-  what stays on the machine, and the loopback server's trust boundary
+  what stays on the machine, and the local server's trust boundary
 - [CHANGELOG.md](https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md)
 
 If you run this on hardware that isn't a Wildcat Lake laptop, I want the

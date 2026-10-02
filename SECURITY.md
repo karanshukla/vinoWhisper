@@ -15,16 +15,29 @@ as sensitive as whatever was playing; nothing else touches it.
 
 ## The trust boundary
 
-The transcription server binds `127.0.0.1:8099` and is loopback-only. It is
-two processes rather than one because the NPU model load costs 10-30 seconds
-and something has to hold the loaded model across sessions — not because of
-any isolation goal. Anything running as your user on your machine can talk to
-it and ask it to transcribe audio you send it. That is the same trust level as
+The transcription server listens on a Unix socket,
+`$XDG_RUNTIME_DIR/vinowhisper/server.sock`, mode `0600` inside a `0700`
+directory, so only your own user can connect to it. It is two processes rather
+than one because the NPU model load costs 10-30 seconds and something has to
+hold the loaded model across sessions. Anything running as your user can talk
+to it and ask it to transcribe audio it sends; that is the same trust level as
 anything else running as you, and the endpoint exposes nothing beyond
 transcription and a health check.
 
-If that boundary matters to you, a Unix domain socket in `$XDG_RUNTIME_DIR`
-would be a marginally tighter swap and would be an accepted change.
+Until 0.6.x it listened on `127.0.0.1:8099`, and that was weaker than this
+file used to claim. A localhost port belongs to no user: any local account
+could connect to it, and while it was free (before login without lingering,
+after `systemctl --user stop`, or when the server was started by hand) any
+account could bind it first, receive your microphone or system audio, and
+answer with text that dictation would then type into your focused window. Web
+pages could also send cross-site POSTs to it. None of that reaches a Unix
+socket: other users cannot open it, the runtime directory is yours alone, and
+a browser cannot address it.
+
+The server refuses to start without `XDG_RUNTIME_DIR` rather than fall back to
+a shared directory such as `/tmp`, and it refuses a TCP socket passed by an
+old socket unit. If you installed before the move, re-run `vinowhisper-setup`
+(see the CHANGELOG).
 
 ## The model download is verified
 
