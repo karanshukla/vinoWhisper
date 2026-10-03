@@ -121,9 +121,13 @@ suggests come from a static table in `vinowhisper/distro.py` — they are never
 fetched from anywhere, so a network answer cannot decide what gets installed.
 
 `scripts/install.sh` is a `curl | bash` installer, with the usual caveats.
-Read it first if that matters to you; it is ~150 lines and deliberately
+Read it first if that matters to you; it is ~180 lines and deliberately
 readable, and it installs no system packages itself — it hands that decision to
-the wizard.
+the wizard. What it does to narrow those caveats: everything runs from one
+function called on the last line, so a truncated download runs nothing; it
+installs the latest release tag, not `main`; the uv it installs (only if you
+have none) is a pinned version; and `uv sync --locked` installs exactly what
+`uv.lock` pins.
 
 ## Reporting a vulnerability
 
