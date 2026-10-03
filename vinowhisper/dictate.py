@@ -226,10 +226,12 @@ def _ready(health: dict) -> dict:
 
 
 def _server_error(exc: Exception) -> dict:
-    print(f"[vinowhisper] server not reachable at {config.SERVER_URL}: {exc}", file=sys.stderr)
+    print(
+        f"[vinowhisper] server not reachable at {config.server_address()}: {exc}", file=sys.stderr
+    )
     return {
         "event": "Error",
-        "message": f"The transcription server is not reachable at {config.SERVER_URL}. "
+        "message": f"The transcription server is not reachable at {config.server_address()}. "
         "Run vinowhisper-doctor to see what is missing.",
     }
 

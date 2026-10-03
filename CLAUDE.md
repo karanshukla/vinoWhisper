@@ -312,8 +312,9 @@ vinowhisper/
   failures.py     devices that enumerated and then failed to compile, skipped by auto
   ovfetch.py      optional: `ovfetch detect` -> doctor notes (platform, known-good OpenVINO range)
   distro.py       /etc/os-release -> package names and install commands, per family
-  client.py       TranscriptionClient, streaming HTTP client
-  server.py       Flask, loopback-only (127.0.0.1:8099), socket-activated + self-idle-exit
+  client.py       TranscriptionClient, streaming HTTP over the server's Unix socket
+  server.py       Flask on a Unix socket, socket-activated + self-idle-exit
+  listen.py       the server's socket: systemd's, or bound 0600 under $XDG_RUNTIME_DIR
   transcriber.py  WhisperTranscriber, wraps WhisperPipeline, serialized by a lock
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
   integrity.py    sha256 pins for the model export, and what a mismatch means
@@ -409,14 +410,21 @@ provides it), and PipeWire's `default.audio.sink` metadata is the fallback when
 it isn't.
 
 **Two processes, not one script.** NPU model load takes 10-30s, so something
-has to hold the loaded model across sessions. Loopback HTTP for simplicity,
-not for security. Nothing here is exposed to the network or to another user. A
-Unix domain socket would be a marginally more contained swap but is not a
-meaningful improvement at this trust boundary.
+has to hold the loaded model across sessions. HTTP for simplicity, over a
+Unix socket (`$XDG_RUNTIME_DIR/vinowhisper/server.sock`, 0600 in a 0700 dir)
+since 2026-10-02. It was `127.0.0.1:8099` before that, and the old note here
+("nothing exposed to another user") was wrong: any local account could connect
+to a localhost port, or bind it first while it was free and receive the user's
+audio and feed dictation its text. `requests` has no Unix socket support, so
+`client.UnixSocketAdapter` routes every `http://` URL in the session to the
+socket and mounts nothing for `https://`; the doctor uses the same session.
+The server refuses to run without `XDG_RUNTIME_DIR` (no `/tmp` fallback) and
+refuses a TCP fd from a pre-move socket unit. The GUI never talks HTTP; it
+spawns the Python commands.
 
 **Socket-activated with self-idle-exit, not an always-on daemon.** Deliberate,
 discussed explicitly with the user, worth preserving the reasoning: the socket
-unit owns the port at boot with no process running, systemd spawns the service
+unit owns the socket at boot with no process running, systemd spawns the service
 on first connection (that is when the NPU load cost happens), and the service
 self-exits after `IDLE_TIMEOUT_S` of no requests. This is the systemd-native
 equivalent of serverless scale-to-zero, and the user explicitly wanted it
@@ -847,8 +855,11 @@ ONNX Runtime; `docs/architecture.md` says why.
   restart limit killed the unit (`service-start-limit-hit`). `run_simple` is
   a thin CLI wrapper; `make_server()` is what it calls internally and does
   accept `fd=`. Server now calls `make_server(...).serve_forever()` directly.
-  Confirmed end to end: `vinowhisper-server.socket` → cold NPU spawn on first
-  connection → `/health` → live captions.
+  It takes an AF_UNIX fd too (werkzeug 3.1.8/3.1.9, `unix://` host plus
+  `fd=`), checked 2026-10-02 under `systemd-socket-activate` and a real user
+  socket unit, against a stubbed transcriber, not the NPU. Confirmed end to
+  end (TCP, 2026-08-06): `vinowhisper-server.socket` → cold NPU spawn on
+  first connection → `/health` → live captions.
 
 ## Remaining questions
 

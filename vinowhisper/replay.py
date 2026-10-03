@@ -154,7 +154,7 @@ def main() -> int:
         print(f"could not read session: {exc}", file=sys.stderr)
         return 1
     except requests.RequestException as exc:
-        print(f"server not reachable at {config.SERVER_URL}: {exc}", file=sys.stderr)
+        print(f"server not reachable at {config.server_address()}: {exc}", file=sys.stderr)
         return 1
 
 

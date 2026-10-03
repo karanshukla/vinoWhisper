@@ -26,9 +26,24 @@ DEFAULT_DEVICE = "auto"
 # Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
-SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 8099
-SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+# Relative to $XDG_RUNTIME_DIR, which the socket unit spells %t.
+SERVER_SOCKET_RELPATH = "vinowhisper/server.sock"
+
+
+def server_socket() -> Path | None:
+    # None, never a /tmp fallback: anywhere shared would let another user squat the path.
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "")
+    if not os.path.isabs(runtime_dir):
+        return None
+    return Path(runtime_dir) / SERVER_SOCKET_RELPATH
+
+
+def server_address() -> str:
+    path = server_socket()
+    if path is None:
+        return f"$XDG_RUNTIME_DIR/{SERVER_SOCKET_RELPATH} (XDG_RUNTIME_DIR is not set)"
+    return str(path)
+
 
 SAMPLE_RATE_HZ = 16_000
 

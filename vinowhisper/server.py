@@ -9,7 +9,7 @@ import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import __version__, audio, config, devices, failures
+from . import __version__, audio, config, devices, failures, listen
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
@@ -85,16 +85,6 @@ def _idle_watchdog(timeout_s: float) -> None:
             os._exit(0)
 
 
-def _systemd_socket_fd() -> int | None:
-    if os.environ.get("LISTEN_PID") != str(os.getpid()):
-        return None
-    try:
-        listen_fds = int(os.environ.get("LISTEN_FDS", "0"))
-    except ValueError:
-        return None
-    return 3 if listen_fds >= 1 else None  # SD_LISTEN_FDS_START
-
-
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="vinoWhisper transcription server.")
     parser.add_argument(
@@ -111,6 +101,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Before the model load, so a missing XDG_RUNTIME_DIR or a running server fails in a second.
+    try:
+        sock = listen.listening_socket()
+    except (listen.SocketError, OSError) as exc:
+        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+        return 1
+
     global transcriber
     transcriber = WhisperTranscriber(device=args.device)
 
@@ -145,9 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         daemon=True,
     ).start()
 
-    fd = _systemd_socket_fd()
     # make_server, not run_simple (which has no fd=); threaded so /health answers mid-decode.
-    server = make_server(config.SERVER_HOST, config.SERVER_PORT, app, threaded=True, fd=fd)
+    server = make_server(f"unix://{sock.getsockname()}", 0, app, threaded=True, fd=sock.fileno())
     # The poll only serves shutdown(), which nothing calls; a short one wakes an idle server.
     server.serve_forever(poll_interval=3600)
     return 0

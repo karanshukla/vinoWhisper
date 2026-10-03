@@ -228,12 +228,14 @@ def _digests(variant: str, directory: Path, required: bool) -> Result:
 def _server() -> list[Result]:
     import requests
 
+    from . import client
+
+    address = config.server_address()
     try:
-        # Never through a proxy, like the client (client.py).
-        with requests.Session() as session:
-            session.trust_env = False
+        # The client's transport: the Unix socket, never a proxy.
+        with client.session() as session:
             response = session.get(
-                f"{config.SERVER_URL}/health",
+                f"{client.BASE_URL}/health",
                 timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
             )
         response.raise_for_status()
@@ -243,14 +245,15 @@ def _server() -> list[Result]:
             Result(
                 WARN,
                 "server",
-                f"not reachable ({exc.__class__.__name__}); "
-                "systemctl --user status vinowhisper-server.socket",
+                f"not reachable at {address} ({exc.__class__.__name__}); "
+                "systemctl --user status vinowhisper-server.socket "
+                "(units from 0.6.x and earlier listen on TCP: re-run vinowhisper-setup)",
             )
         ]
     except ValueError:
-        return [Result(FAIL, "server", f"{config.SERVER_URL}/health returned non-JSON")]
+        return [Result(FAIL, "server", f"{address} /health returned non-JSON")]
 
-    results = [Result(OK, "server", f"{config.SERVER_URL} on {payload.get('device', '?')}")]
+    results = [Result(OK, "server", f"{address} on {payload.get('device', '?')}")]
     if payload.get("version") and payload["version"] != __version__:
         results.append(
             Result(

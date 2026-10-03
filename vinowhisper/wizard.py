@@ -225,6 +225,10 @@ class Wizard:
         service, socket = unit_files(device=self.device)
         self.say(f"  Writing {UNIT_DIR}/vinowhisper-server.{{service,socket}}")
         self.say("  ExecStart: " + _exec_start(self.device))
+        self.say(
+            "  Then: systemctl --user daemon-reload, stop vinowhisper-server.service "
+            "(drops a loaded model), reset-failed, enable and restart vinowhisper-server.socket"
+        )
         if not self.confirm("install the systemd units?"):
             return Outcome(None, "units not installed")
 
@@ -232,13 +236,35 @@ class Wizard:
         (UNIT_DIR / "vinowhisper-server.service").write_text(service, encoding="utf-8")
         (UNIT_DIR / "vinowhisper-server.socket").write_text(socket, encoding="utf-8")
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+        # Running units keep their old ExecStart/ListenStream (TCP through 0.6.x) until restarted.
+        subprocess.run(
+            ["systemctl", "--user", "stop", "vinowhisper-server.service"],
+            check=False,
+            capture_output=True,
+        )
+        # A new server refusing an old unit's TCP socket loops into the start limit.
+        subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "reset-failed",
+                "vinowhisper-server.service",
+                "vinowhisper-server.socket",
+            ],
+            check=False,
+            capture_output=True,
+        )
         # The socket, never the service: the service is only ever socket-activated.
         enabled = subprocess.run(
-            ["systemctl", "--user", "enable", "--now", "vinowhisper-server.socket"],
-            check=False,
+            ["systemctl", "--user", "enable", "vinowhisper-server.socket"], check=False
         )
         if enabled.returncode:
             return Outcome(False, "units written but `systemctl --user enable` failed")
+        restarted = subprocess.run(
+            ["systemctl", "--user", "restart", "vinowhisper-server.socket"], check=False
+        )
+        if restarted.returncode:
+            return Outcome(False, "units written but `systemctl --user restart` failed")
         return Outcome(True, "socket unit enabled; the server starts on first use")
 
     def link_binaries(self) -> Outcome:
@@ -489,7 +515,9 @@ Description=vinoWhisper transcription server socket
 Documentation=https://github.com/karanshukla/vinoWhisper
 
 [Socket]
-ListenStream={config.SERVER_HOST}:{config.SERVER_PORT}
+ListenStream=%t/{config.SERVER_SOCKET_RELPATH}
+SocketMode=0600
+DirectoryMode=0700
 Accept=no
 
 [Install]

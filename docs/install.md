@@ -56,6 +56,9 @@ failed to load a model, which is worse than not shipping at all. Stable
 What it gets you: the five commands and the Python dependencies. What it cannot
 get you: an NPU driver, a model export, or systemd units. Run
 `vinowhisper-setup` afterwards for those, exactly as the installer script would.
+Re-run it after upgrading from 0.6.x or earlier too: the server moved from
+`127.0.0.1:8099` to a Unix socket in `$XDG_RUNTIME_DIR`, and the wizard is
+what rewrites the socket unit and restarts it.
 The export tooling (optimum, and torch with it) is the `export` extra, which
 the wizard offers to install when it gets to the model step;
 `pip install 'vinowhisper[export]'` does it up front.
