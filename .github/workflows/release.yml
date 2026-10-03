@@ -5,7 +5,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions: {}
 
@@ -13,10 +12,13 @@ jobs:
   gui:
     # musl, so one static binary runs on any distro. Never goes to PyPI.
     runs-on: ubuntu-latest
+    env:
+      # Pinned, not "stable": the binary ships, so a toolchain change is a reviewed diff.
+      RUST_TOOLCHAIN: "1.98.1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - run: rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl
-      - run: rustup default stable
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-unknown-linux-musl
+      - run: rustup default "$RUST_TOOLCHAIN"
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path gui/Cargo.toml
       - run: cp gui/target/x86_64-unknown-linux-musl/release/vinowhisper-gui vinowhisper-gui-x86_64-linux
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -68,7 +70,7 @@ jobs:
 
       - name: Check the metadata renders on PyPI
         # A rejected upload cannot be retried under the same version
-        run: uvx twine check --strict dist/*
+        run: uvx twine@7.0.0 check --strict dist/*
 
       - name: Extract the release notes from CHANGELOG.md
         env:
@@ -116,6 +118,8 @@ jobs:
 
   pypi:
     needs: build
+    # Belt and braces: only a pushed v* tag may publish, whatever triggers are added later.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Named in PyPI's Trusted Publishing config; renaming it breaks uploads
     environment:
@@ -135,6 +139,7 @@ jobs:
 
   github-release:
     needs: [build, pypi]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write # to create the GitHub Release
@@ -164,4 +169,4 @@ jobs:
           gh release create "v${VERSION}" dist/* \
             --title "v${VERSION}" \
             --notes-file RELEASE_NOTES.md \
-            --verify-tag=false
+            --verify-tag

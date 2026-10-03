@@ -93,7 +93,7 @@ fmt   = "ruff format --check ."
 types = "mypy vinowhisper/"
 test  = "pytest -v --tb=short"
 fix.sequence = [{ cmd = "ruff check --fix ." }, { cmd = "ruff format ." }]
-security.cmd = "uvx --from bandit[toml] bandit -c pyproject.toml -r vinowhisper/"
+security.cmd = "uvx --from bandit[toml]==1.9.4 bandit -c pyproject.toml -r vinowhisper/"
 security.help = "the same Bandit scan the Bandit workflow runs"
 check.sequence = ["lint", "fmt", "types", "test"]
 check.help = "everything CI runs, locally"

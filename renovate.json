@@ -5,14 +5,14 @@
   ],
   "packageRules": [
     {
-      "description": "The OpenVINO stack is pinned to a nightly index and moves on upstream's schedule, not Renovate's — bumping it is a manual, hardware-verified decision. See pyproject.toml and the deps-canary workflow.",
+      "description": "Runtime dependencies are bumped by hand: OpenVINO and the export extra's transformers<5.4 cap have each broken the NPU path on a version change, which no CI runner can catch. See CLAUDE.md and the deps-canary workflow.",
       "matchManagers": [
         "pep621"
       ],
       "enabled": false
     },
     {
-      "description": "Dev tooling is safe to keep current: none of it ships to users.",
+      "description": "Dev tooling (the dev dependency group, the only one) is safe to keep current: none of it ships to users.",
       "matchManagers": [
         "pep621"
       ],
@@ -35,16 +35,31 @@
       ]
     },
     {
-      "description": "Auto-merge non-major updates once required checks pass; majors still get manual review.",
+      "description": "Auto-merge only dev tooling, and only once a release has been public for a week, so a compromised or yanked version has time to be noticed first.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchDepTypes": [
+        "dependency-groups"
+      ],
       "matchUpdateTypes": [
         "patch",
         "minor",
         "digest",
         "pin"
       ],
+      "minimumReleaseAge": "7 days",
       "automerge": true,
       "platformAutomerge": true,
       "automergeStrategy": "squash"
+    },
+    {
+      "description": "Always a human review: crates are compiled into the released overlay binary, and actions run with the release job's PyPI and repo-write tokens.",
+      "matchManagers": [
+        "cargo",
+        "github-actions"
+      ],
+      "automerge": false
     }
   ]
 }
