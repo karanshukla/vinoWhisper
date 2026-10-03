@@ -63,7 +63,7 @@ def test_the_export_runs_the_optimum_cli_it_found(monkeypatch, tmp_path, capsys)
     use_cpu(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "optimum_cli", lambda: "/venv/bin/optimum-cli")
     wizard.Wizard(dry_run=True).check_model()
-    assert "$ /venv/bin/optimum-cli export openvino" in capsys.readouterr().out
+    assert "/venv/bin/optimum-cli export openvino" in capsys.readouterr().out
 
 
 def test_a_checkout_installs_the_extra_with_uv_sync(monkeypatch, tmp_path):

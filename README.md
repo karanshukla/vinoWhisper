@@ -67,9 +67,10 @@ running, systemd spawns the server on the first connection, and the server
 exits itself after 30 minutes idle. Serverless, on your laptop, with no
 framework.
 
-**The model download is verified.** The export is hashed against pins in
-`vinowhisper/model_digests.json` before anything loads it, and the check tells
-a toolchain upgrade apart from bytes changing under a toolchain that did not.
+**The model download is verified.** The Hugging Face source is pinned to a
+commit and every file is sha256-checked before the export reads it, and the
+export is then hashed against pins in `vinowhisper/model_digests.json` before
+anything loads it.
 Details in [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md).
 
 **A missing NPU degrades instead of bricking.** Selection walks NPU, then GPU,

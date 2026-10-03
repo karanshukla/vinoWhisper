@@ -54,29 +54,49 @@ if ! command -v optimum-cli >/dev/null 2>&1; then
     exit 1
 fi
 
+# The interpreter beside optimum-cli is the one that has vinowhisper in a checkout.
+PYTHON="$(dirname "$(command -v optimum-cli)")/python3"
+[[ -x "$PYTHON" ]] || PYTHON="python3"
+if ! "$PYTHON" -c "import vinowhisper" >/dev/null 2>&1; then
+    echo "vinowhisper is not importable by $PYTHON, so the download cannot be checked." >&2
+    echo "Run this as 'uv run $0' from the checkout." >&2
+    exit 1
+fi
+
+# The pinned revision, downloaded and sha256-checked before optimum reads a byte of it.
+set +e
+SOURCE="$("$PYTHON" -m vinowhisper.source --model "$MODEL_ID")"
+status=$?
+set -e
+case "$status" in
+    0) EXPORT_ENV=(HF_HUB_OFFLINE=1) ;;
+    2)
+        echo "==> WARNING: $MODEL_ID has no pinned revision or digests, so this exports" >&2
+        echo "    whatever its default branch holds now, unchecked." >&2
+        SOURCE="$MODEL_ID"
+        EXPORT_ENV=()
+        ;;
+    *) exit 1 ;;
+esac
+
 INTEGRITY_FAILED=0
 
 # Fails only when the pinned toolchain produced different bytes (docs/install.md)
 verify_one() {
     local variant="$1" out="$2"
-    if ! python3 -c "import vinowhisper" >/dev/null 2>&1; then
-        echo "==> skipping digest check: vinowhisper not importable by $(command -v python3)"
-        echo "    (re-run this as 'uv run $0', or check by hand with"
-        echo "     python -m vinowhisper.integrity --variant $variant --dir $out)"
-        return 0
-    fi
     echo "==> verifying digests ($variant)"
-    python3 -m vinowhisper.integrity --variant "$variant" --dir "$out" || INTEGRITY_FAILED=1
+    "$PYTHON" -m vinowhisper.integrity --variant "$variant" --dir "$out" --model "$MODEL_ID" \
+        || INTEGRITY_FAILED=1
 }
 
 export_one() {
     local variant="$1" out="$2"
-    local args=(--model "$MODEL_ID" --task automatic-speech-recognition-with-past)
+    local args=(--model "$SOURCE" --task automatic-speech-recognition-with-past)
     [[ "$variant" == "npu" ]] && args+=(--disable-stateful)
 
     mkdir -p "$(dirname "$out")"
     echo "==> exporting $MODEL_ID ($variant) to $out"
-    optimum-cli export openvino "${args[@]}" "$out"
+    env "${EXPORT_ENV[@]}" optimum-cli export openvino "${args[@]}" "$out"
     echo "==> done: $out"
     verify_one "$variant" "$out"
 }

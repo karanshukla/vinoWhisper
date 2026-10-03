@@ -65,7 +65,7 @@ packages = ["vinowhisper"]
 
 # Dropping either from the wheel fails quietly (docs/development.md)
 [tool.setuptools.package-data]
-vinowhisper = ["model_digests.json", "gui_release.json", "ovfetch_release.json"]
+vinowhisper = ["model_digests.json", "model_sources.json", "gui_release.json", "ovfetch_release.json"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 

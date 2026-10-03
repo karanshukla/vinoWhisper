@@ -61,12 +61,18 @@ if one appears it should fail the scan.
 auto-discovery sees the top-level `systemd/` directory, decides there are two
 packages, and refuses to build (confirmed 2026-08-03).
 
-Two data files ride in the wheel, and both fail quietly if they go missing:
+These data files ride in the wheel:
 
 - **`model_digests.json`**: `integrity.load_pins()` treats a missing file as
   "nothing pinned" rather than crashing, so dropping it from `package-data`
   would degrade silently. `tests/test_integrity.py` checks it is declared and
   readable.
+- **`model_sources.json`**: the Hugging Face commit and per-file sha256 the
+  export is made from. Missing, the wizard refuses to export rather than
+  fetch unchecked. `tests/test_source.py` checks it is declared. Hand-edited,
+  from the Hub API's LFS sha256 and the files' own bytes, never from a guess.
+  `tests/test_integrity.py` also fails when `uv.lock`'s export toolchain moves
+  away from the NPU pin, so drift shows up in CI rather than on install.
 - **`gui_release.json`**: exists only in a release build. `release.yml` writes
   it (the sha256 of the overlay binary on the GitHub Release) with
   `scripts/pin_gui_release.py` just before `uv build`, then checks the wheel

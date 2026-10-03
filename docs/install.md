@@ -92,7 +92,17 @@ transformation`. That reads like a bad export and is not one.
 ## The model export, and what verifies it
 
 Exporting downloads ~1GB from Hugging Face and converts it to OpenVINO IR that
-then runs on your hardware. `vinowhisper/model_digests.json` pins the sha256 of
+then runs on your hardware. The download comes first and is checked first:
+`vinowhisper/model_sources.json` pins the repository to a commit and records
+the sha256 of each file the export reads, `python -m vinowhisper.source`
+fetches exactly those into `models/source/` under the data directory, and any
+difference fails before `optimum-cli` starts. The export then runs from that
+directory with `HF_HUB_OFFLINE=1`. optimum-cli has no `--revision` flag
+(optimum-intel 2.2.0), which is why the snapshot is local rather than in the
+Hugging Face cache. A `--model` with no pinned source is exported unchecked,
+with a warning.
+
+`vinowhisper/model_digests.json` pins the sha256 of
 every file in the export this project has actually run, and both
 `scripts/convert_model.sh` and `vinowhisper-setup` check what came down against
 it. `vinowhisper-doctor` re-checks it on demand, at about 1.2s for 1.5GB, and
@@ -127,11 +137,15 @@ OpenVINO 2026.3.1 / optimum-intel 2.1.0 / transformers 5.5.4 changed 9 of 16
 files, including both decoder `.bin` weights. `openvino_encoder_model.bin` came
 out identical across both. That is why drift is reported separately from a
 real mismatch, and the versions are read out of the export's own `rt_info`
-block rather than from whatever happens to be installed.
+block rather than from whatever happens to be installed. That makes `drift`
+the export's own claim about itself: something able to rewrite the export can
+rewrite every `rt_info` block to match and get `drift` instead of `mismatch`.
+The source check is what guards the download; this one catches accidents.
 
 That block is read from every `.xml` in the export and merged, and any version
 two files disagree on makes the answer unknown, never fine: reading just one
-file would let a single edited graph buy the softer `drift` verdict. The
+file would let a single edited graph buy the softer `drift` verdict (editing
+all of them consistently still does). The
 digest covers every file, not just the weights, because `generation_config.json`
 decides how decoding behaves and `tokenizer.json` decides the text. A missing
 or truncated pin file downgrades to `unpinned` rather than breaking every
