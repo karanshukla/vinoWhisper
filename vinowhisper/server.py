@@ -13,6 +13,10 @@ from . import __version__, audio, config, devices, failures
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
+# One longest window of raw float32 PCM, the wire format client.py sends, plus slack.
+app.config["MAX_CONTENT_LENGTH"] = (
+    int(config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ) * audio.BYTES_PER_SAMPLE + 4096
+)
 transcriber = WhisperTranscriber()
 
 _activity_lock = threading.Lock()

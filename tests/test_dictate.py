@@ -203,6 +203,19 @@ def test_clean_drops_whisper_non_speech_and_runaway_repeats(raw, expected):
     assert dictate.clean(raw) == expected
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("hello\x1b[201~\x1b[200~ world", "hello[201~[200~ world"),
+        ("sudo\u202e rm", "sudo rm"),
+        ("zero\u200bwidth\u200d", "zerowidth"),
+        ("line\none\x00", "line one"),
+    ],
+)
+def test_clean_keeps_control_characters_off_the_clipboard(raw, expected):
+    assert dictate.clean(raw) == expected
+
+
 def test_every_field_the_overlay_reads_is_emitted():
     """gui/src/protocol.rs `Dictate` reads these; renaming one blanks the pill silently."""
     records, _, _ = _run(["start", "stop"])

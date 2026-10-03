@@ -15,7 +15,7 @@ import requests
 from . import __version__, audio, config
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
-from .stitch import collapse_repeats, collapse_word_repeats
+from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
 
 MIN_AUDIO_S = 0.3
 
@@ -48,7 +48,7 @@ class _Client(Protocol):
 
 
 def clean(transcript: str) -> str:
-    words = collapse_word_repeats(collapse_repeats(transcript).split())
+    words = collapse_word_repeats(collapse_repeats(strip_controls(transcript)).split())
     text = " ".join(words)
     return "" if _NON_SPEECH.match(text) else text
 

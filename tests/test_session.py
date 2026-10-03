@@ -89,3 +89,33 @@ def test_the_wav_is_written_at_the_capture_rate(tmp_path):
     with wave.open(str(tmp_path / session.AUDIO_NAME), "rb") as handle:
         assert handle.getframerate() == config.SAMPLE_RATE_HZ
         assert handle.getnchannels() == 1
+
+
+def test_a_recording_is_private_whatever_the_umask(tmp_path):
+    """SECURITY.md calls a recording as sensitive as whatever was playing."""
+    import os
+    import stat
+
+    directory = tmp_path / "session"
+    old_umask = os.umask(0o022)
+    try:
+        writer = session.SessionWriter(directory)
+        writer.close()
+    finally:
+        os.umask(old_umask)
+
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    for name in (session.AUDIO_NAME, session.EVENTS_NAME):
+        assert stat.S_IMODE((directory / name).stat().st_mode) == 0o600
+
+
+def test_an_overwritten_recording_loses_its_old_permissions(tmp_path):
+    for name in (session.AUDIO_NAME, session.EVENTS_NAME):
+        (tmp_path / name).write_bytes(b"old")
+        (tmp_path / name).chmod(0o644)
+
+    writer = session.SessionWriter(tmp_path)
+    writer.close()
+
+    for name in (session.AUDIO_NAME, session.EVENTS_NAME):
+        assert (tmp_path / name).stat().st_mode & 0o777 == 0o600

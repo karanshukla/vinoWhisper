@@ -12,7 +12,7 @@ import requests
 from . import __version__, audio, capture, config, events, session
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
-from .stitch import Stitcher
+from .stitch import Stitcher, strip_controls
 
 _SILENCE_NOTICE_AFTER_S = 45.0
 
@@ -93,6 +93,7 @@ def caption_events(
                 started_at = time.monotonic()
                 transcript, first_piece_s = client.transcribe(window)
                 total_s = time.monotonic() - started_at
+                transcript = strip_controls(transcript)
 
                 confirmed = stitcher.push(transcript)
                 index += 1
@@ -271,6 +272,8 @@ def _list_targets() -> int:
             "application's stream. Install PipeWire for per-application capture.",
             file=sys.stderr,
         )
+    # media.name is whatever the playing app chose, e.g. a browser tab's title.
+    streams = [{key: strip_controls(value) for key, value in stream.items()} for stream in streams]
     width = max(len(stream["app"]) for stream in streams)
     for stream in streams:
         print(f"  --target {stream['target']:<8} {stream['app']:<{width}}  {stream['media']}")

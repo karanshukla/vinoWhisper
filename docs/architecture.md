@@ -43,7 +43,19 @@ again on first connection.
 
 - `/transcribe` takes raw little-endian float32 PCM, 16kHz mono and under 30s,
   with no WAV container, because the client is a rolling buffer that never has
-  a file.
+  a file. A body longer than one `MAX_WINDOW_S` window (plus 4KB) is refused
+  with a 413 before it is read.
+- The service unit carries only the hardening a *user* unit can apply without
+  user namespaces: the seccomp-backed settings, `NoNewPrivileges` and
+  `UMask=0077`. `systemd-analyze security --offline` scores it 7.8, down from
+  9.6 (2026-10-02, systemd 255). The next steps are deliberately not taken:
+  `MemoryDenyWriteExecute` breaks OpenVINO's CPU plugin, which JIT-compiles
+  its kernels; `PrivateDevices` hides `/dev/accel` and `/dev/dri`, so the NPU
+  and GPU vanish and "auto" lands on the CPU; `ProtectClock`, `PrivateTmp`,
+  `ProtectHome` and the rest of the namespace settings turn on `PrivateUsers`
+  in a user unit, which needs unprivileged user namespaces. A CPU
+  `compile_model` ran under the added set on 2026-10-02; the NPU and GPU have
+  not.
 - Calls into the pipeline are serialized by a lock. `WhisperPipeline` is not
   documented as thread-safe, and the NPU static pipeline holds one set of
   compiled requests. The server is threaded only so `/health` answers during

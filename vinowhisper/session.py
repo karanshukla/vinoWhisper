@@ -1,6 +1,8 @@
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import IO
 
 import numpy as np
 
@@ -17,12 +19,13 @@ class SessionWriter:
         import wave
 
         self.directory = directory
-        directory.mkdir(parents=True, exist_ok=True)
-        self._wav = wave.open(str(directory / AUDIO_NAME), "wb")  # noqa: SIM115
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._wav_file = _open_private(directory / AUDIO_NAME, "wb")
+        self._wav = wave.open(self._wav_file, "wb")  # noqa: SIM115
         self._wav.setnchannels(1)
         self._wav.setsampwidth(2)
         self._wav.setframerate(config.SAMPLE_RATE_HZ)
-        self._events = (directory / EVENTS_NAME).open("w", encoding="utf-8")
+        self._events = _open_private(directory / EVENTS_NAME, "w")
 
     def audio_chunk(self, samples: np.ndarray) -> None:
         pcm = np.clip(samples * _PCM_SCALE, -32768, 32767).astype("<i2")
@@ -34,7 +37,18 @@ class SessionWriter:
 
     def close(self) -> None:
         self._wav.close()
+        # wave does not close a file object it was handed.
+        self._wav_file.close()
         self._events.close()
+
+
+def _open_private(path: Path, mode: str) -> IO:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    # The mode above only applies on creation; an overwritten recording keeps its old one.
+    os.fchmod(fd, 0o600)
+    if "b" in mode:
+        return os.fdopen(fd, mode)
+    return os.fdopen(fd, mode, encoding="utf-8")
 
 
 def read_events(directory: Path) -> list[dict]:
