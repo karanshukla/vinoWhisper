@@ -10,7 +10,7 @@ from pathlib import Path
 
 import requests
 
-from . import __version__, capture, config, devices, distro, integrity, overlay, ovfetch
+from . import __version__, capture, config, devices, distro, integrity, overlay, ovfetch, style
 from . import source as model_source
 
 BIN_DIR = Path.home() / ".local/bin"
@@ -40,7 +40,7 @@ class Wizard:
         self.skipped: list[str] = []
 
     def say(self, text: str = "") -> None:
-        print(text, flush=True)
+        style.emit(style.styled_line(text))
 
     def confirm(self, prompt: str) -> bool:
         if self.dry_run:
@@ -51,7 +51,8 @@ class Wizard:
             self.say("  (not a terminal, and no --yes — skipping)")
             return False
         try:
-            answer = input(f"  {prompt} [y/N] ").strip().lower()
+            style.emit("  ", (prompt, style.LABEL), (" [y/N] ", style.MUTED), end="")
+            answer = input().strip().lower()
         except EOFError:
             return False
         return answer in ("y", "yes")
@@ -74,10 +75,17 @@ class Wizard:
         return True
 
     def step(self, title: str, action: Callable[[], Outcome], optional: bool = False) -> None:
-        self.say(f"\n── {title}")
+        style.emit()
+        style.emit(("── ", style.MUTED), (title, style.HEADING))
         outcome = action()
-        marker = {True: "✓", False: "✗", None: "…"}[outcome.ok]
-        self.say(f"  {marker} {outcome.summary}")
+        marker, color = {
+            True: ("✓", style.OK),
+            False: ("✗", style.FAIL),
+            None: ("…", style.WARN),
+        }[outcome.ok]
+        style.emit(
+            "  ", (marker, color), " ", (outcome.summary, color if outcome.ok is False else "")
+        )
         if outcome.ok is False:
             self.failed.append(title)
         elif outcome.ok is None and not optional:
@@ -373,12 +381,18 @@ class Wizard:
             return Outcome(None, f"{path}, but the older {found} comes first on PATH; {fix}")
         return Outcome(True, str(path))
 
-    def run_all(self) -> int:
-        self.say(f"vinowhisper-setup {__version__}")
-        self.say(f"  distro:  {self.distro}")
-        self.say(f"  python:  {sys.executable}")
+    def _announce_dry_run(self) -> None:
         if self.dry_run:
-            self.say("\n  --dry-run: nothing will be changed; every command is printed.")
+            style.emit()
+            style.emit(
+                ("  --dry-run: nothing will be changed; every command is printed.", style.WARN)
+            )
+
+    def run_all(self) -> int:
+        style.emit(("vinowhisper-setup", style.TITLE), " ", (__version__, style.MUTED))
+        style.emit(("  distro:  ", style.MUTED), str(self.distro))
+        style.emit(("  python:  ", style.MUTED), sys.executable)
+        self._announce_dry_run()
 
         self.step("Python version", self.check_python)
         self.step("Audio capture", self.check_audio)
@@ -392,29 +406,47 @@ class Wizard:
         if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
             self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
 
-        self.say("")
+        style.emit()
         if self.failed:
-            self.say(f"✗ {len(self.failed)} step(s) failed: {', '.join(self.failed)}")
-            self.say("  vinowhisper-doctor has the detail.")
+            style.emit(
+                (f"✗ {len(self.failed)} step(s) failed: {', '.join(self.failed)}", style.FAIL)
+            )
+            style.emit(("  vinowhisper-doctor", style.COMMAND), " has the detail.")
             return 1
         if self.skipped:
-            self.say(f"… {len(self.skipped)} step(s) left undone: {', '.join(self.skipped)}")
-            self.say("  Re-run vinowhisper-setup once you have dealt with them.")
+            style.emit(
+                (
+                    f"… {len(self.skipped)} step(s) left undone: {', '.join(self.skipped)}",
+                    style.WARN,
+                )
+            )
+            style.emit(
+                "  Re-run ", ("vinowhisper-setup", style.COMMAND), " once you have dealt with them."
+            )
             return 0
-        self.say("✓ Ready. Run `vinowhisper-caption` with something playing.")
+        style.emit(
+            ("✓ Ready.", style.OK),
+            " Run ",
+            ("vinowhisper-caption", style.COMMAND),
+            " with something playing.",
+        )
         return 0
 
     def run_ovfetch(self) -> int:
-        self.say(f"vinowhisper-setup {__version__}: ovfetch")
-        if self.dry_run:
-            self.say("\n  --dry-run: nothing will be changed; every command is printed.")
+        style.emit(
+            ("vinowhisper-setup", style.TITLE), " ", (f"{__version__}: ovfetch", style.MUTED)
+        )
+        self._announce_dry_run()
         self.step("NPU platform data", self.install_ovfetch)
         return 1 if self.failed else 0
 
     def run_overlay(self) -> int:
-        self.say(f"vinowhisper-setup {__version__}: the desktop overlay")
-        if self.dry_run:
-            self.say("\n  --dry-run: nothing will be changed; every command is printed.")
+        style.emit(
+            ("vinowhisper-setup", style.TITLE),
+            " ",
+            (f"{__version__}: the desktop overlay", style.MUTED),
+        )
+        self._announce_dry_run()
         self.step("Desktop overlay", self.install_overlay)
         return 1 if self.failed else 0
 
