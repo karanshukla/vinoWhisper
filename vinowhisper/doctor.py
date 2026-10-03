@@ -17,6 +17,7 @@ from . import (
     integrity,
     ovfetch,
     recorder,
+    style,
 )
 
 _PROBE_S = 2.0
@@ -433,11 +434,22 @@ def collect(probe: bool = True) -> list[Result]:
     return results
 
 
+_BADGE = {OK: style.OK, WARN: style.WARN, FAIL: style.FAIL, UNKNOWN: style.MUTED}
+_DETAIL = {WARN: "yellow", FAIL: "red", UNKNOWN: style.MUTED}
+
+
 def _print_human(results: list[Result]) -> None:
     width = max(len(result.label) for result in results)
     for result in results:
         detail = result.detail.replace("\n", "\n" + " " * (width + 11))
-        print(f"  [{result.status:>4}] {result.label:<{width}}  {detail}")
+        style.emit(
+            "  [",
+            (f"{result.status:>4}", _BADGE[result.status]),
+            "] ",
+            (f"{result.label:<{width}}", style.LABEL),
+            "  ",
+            (detail, _DETAIL.get(result.status, "")),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -459,9 +471,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not args.json:
-        print(f"vinowhisper-doctor {__version__}\n")
+        style.emit(("vinowhisper-doctor", style.TITLE), " ", (__version__, style.MUTED))
+        style.emit()
         if not args.no_probe:
-            print(f"probing input levels for {_PROBE_S:.0f}s per target...\n", file=sys.stderr)
+            style.emit(
+                (f"probing input levels for {_PROBE_S:.0f}s per target...", style.MUTED),
+                end="\n\n",
+                stderr=True,
+            )
 
     results = collect(probe=not args.no_probe)
     verdict = _verdict(results)
@@ -485,9 +502,20 @@ def main(argv: list[str] | None = None) -> int:
 
     _print_human(results)
     if verdict:
-        print(f"\n{verdict}")
+        style.emit()
+        style.emit((verdict, style.WARN))
+    style.emit()
+    tally = {status: sum(r.status == status for r in results) for status in (OK, WARN, UNKNOWN)}
+    style.emit(
+        (f"{tally[OK]} ok", style.OK),
+        ", ",
+        (f"{tally[WARN]} warn", style.WARN if tally[WARN] else style.MUTED),
+        ", ",
+        (f"{tally[UNKNOWN]} unknown", style.MUTED),
+        ", ",
+        (f"{len(failures)} failed", style.FAIL if failures else style.MUTED),
+    )
     if failures:
-        print(f"\n{len(failures)} check(s) failed.")
         return 1
     return 0
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from . import __version__, audio, capture, config, events, session
+from . import __version__, audio, capture, config, events, session, style
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
@@ -276,7 +276,14 @@ def _list_targets() -> int:
     streams = [{key: strip_controls(value) for key, value in stream.items()} for stream in streams]
     width = max(len(stream["app"]) for stream in streams)
     for stream in streams:
-        print(f"  --target {stream['target']:<8} {stream['app']:<{width}}  {stream['media']}")
+        style.emit(
+            "  ",
+            (f"--target {stream['target']:<8}", style.COMMAND),
+            " ",
+            (f"{stream['app']:<{width}}", style.LABEL),
+            "  ",
+            (stream["media"], style.MUTED),
+        )
     return 0
 
 
