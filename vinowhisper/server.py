@@ -97,23 +97,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--language",
-        default=config.DEFAULT_LANGUAGE,
+        default=None,
         metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
-        help="Spoken language (default en). 'en' loads the English-only model; any other "
+        help=f"Spoken language, overriding {config.LANGUAGE_FILE} (default en). 'en' loads the English-only model; any other "
         "value loads the multilingual whisper-small, which has to be exported first "
         "(vinowhisper-setup --language ...). 'auto' detects per window and can flip "
         "mid-caption, so name the language when you know it.",
     )
     parser.add_argument(
         "--task",
-        default=config.DEFAULT_TASK,
+        default=None,
         choices=config.TASKS,
-        help="'translate' captions foreign speech in English. It is Whisper's own "
+        help="Overrides the task in the language file. 'translate' captions foreign speech in English. It is Whisper's own "
         "translate task, so it needs a spoken language or 'auto', and cannot go "
         "into any other language.",
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
+    args.language, args.task = config.resolve_language(args.language, args.task)
     try:
         config.check_language(args.language, args.task)
     except ValueError as exc:

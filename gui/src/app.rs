@@ -44,7 +44,7 @@ use crate::paste::Paster;
 use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
-use crate::settings::{Position, Settings, Source, TextSize};
+use crate::settings::{Language, Position, Settings, Source, Speech, Task, TextSize};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
 use crate::virtual_keyboard::VirtualKeyboard;
@@ -58,6 +58,9 @@ const QUIT_AFTER: Duration = Duration::from_secs(5);
 
 const TICK: Duration = Duration::from_secs(1);
 
+const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
+const NOTICE_FOR: Duration = Duration::from_secs(3);
+
 #[derive(Debug)]
 pub enum Command {
     Show,
@@ -67,6 +70,9 @@ pub enum Command {
     SetSource(Source),
     SetPosition(Position),
     SetSize(TextSize),
+    SetLanguage(Language),
+    SetTranslate(bool),
+    SpeechApplied,
     ConfigureShortcut,
     SetAutostart(bool),
     Shortcut(shortcut::State),
@@ -147,6 +153,8 @@ pub struct App {
 
     captions: Captions,
     settings: Settings,
+    speech: Speech,
+    speech_pending: u32,
     source_override: Option<Source>,
     visible: bool,
     session: Option<Session>,
@@ -293,6 +301,8 @@ pub fn run(options: Options) -> Result<(), String> {
         captions: Captions::new(),
         ticking: false,
         settings,
+        speech: Speech::load(),
+        speech_pending: 0,
         source_override: options.source,
         visible: false,
         session: None,
@@ -361,6 +371,19 @@ impl App {
                 self.settings.save();
                 self.place();
             }
+            Command::SetLanguage(language) => self.set_speech(Speech {
+                language,
+                task: self.speech.task,
+            }),
+            Command::SetTranslate(translate) => self.set_speech(Speech {
+                language: self.speech.language,
+                task: if translate {
+                    Task::Translate
+                } else {
+                    Task::Transcribe
+                },
+            }),
+            Command::SpeechApplied => self.speech_applied(),
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
             Command::Shortcut(state) => self.shortcut_state = state,
@@ -497,6 +520,53 @@ impl App {
         }
         if changed {
             self.restart_session();
+        }
+    }
+
+    fn set_speech(&mut self, speech: Speech) {
+        let speech = speech.normalised();
+        if speech == self.speech {
+            return;
+        }
+        if self.dictation.is_busy() {
+            self.refuse_speech_switch();
+            return;
+        }
+        self.speech = speech;
+        speech.save();
+        // Captions stop first so nothing is mid-request when the server goes away.
+        self.stop_session();
+        self.speech_pending += 1;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            session::stop_server();
+            let _ = tx.send(Command::SpeechApplied);
+        });
+    }
+
+    // A restart drops the request in flight and the audio recorded so far, so say no.
+    fn refuse_speech_switch(&mut self) {
+        let id = self.dictation.notice(SWITCH_REFUSED);
+        eprintln!("[vinowhisper-gui] language not changed: {SWITCH_REFUSED}");
+        self.show_pill();
+        let _ = self.handle.insert_source(
+            Timer::from_duration(NOTICE_FOR),
+            move |_, _, app: &mut App| {
+                app.dictation.clear_notice(id);
+                app.draw_pill();
+                TimeoutAction::Drop
+            },
+        );
+        // The menu may already show the clicked choice; push the real one back.
+        self.tray_view = None;
+        self.sync_tray();
+    }
+
+    fn speech_applied(&mut self) {
+        self.speech_pending = self.speech_pending.saturating_sub(1);
+        // Only the last of several quick switches restarts, or an earlier stop could hit the new server.
+        if self.speech_pending == 0 && self.visible && !self.quitting {
+            self.start_session();
         }
     }
 
@@ -845,6 +915,8 @@ impl App {
             passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
             autostart: self.autostart,
+            language: self.speech.language,
+            task: self.speech.task,
         }
     }
 

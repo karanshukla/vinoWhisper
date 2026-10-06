@@ -94,9 +94,10 @@ def test_the_token_cap_has_more_room_for_multilingual_speech_and_stays_below_the
     assert config.max_new_tokens(config.MAX_WINDOW_S, True) <= config.WHISPER_MAX_TOKENS
 
 
-def test_the_server_takes_language_and_task():
+def test_the_server_takes_language_and_task(monkeypatch, tmp_path):
     # Flask is a runtime dependency, not a dev one, so CI has no server module.
     server = pytest.importorskip("vinowhisper.server")
+    monkeypatch.setattr(config, "LANGUAGE_FILE", tmp_path / "absent.json")
     args = server._parse_args(["--language", "de", "--task", "translate"])
     assert (args.language, args.task) == ("de", "translate")
     defaults = server._parse_args([])
@@ -110,15 +111,66 @@ def test_the_server_rejects_translating_english(capsys):
     assert "translate" in capsys.readouterr().err
 
 
-def test_an_english_unit_is_unchanged():
-    assert " --language" not in wizard._exec_start("auto")
-    assert " --task" not in wizard._exec_start("auto")
+def test_the_unit_never_carries_the_language():
+    # The choice lives in language.json, so the tray can change it without editing a unit.
+    service, _socket = wizard.unit_files("auto")
+    assert "--language" not in service
+    assert "--task" not in service
 
 
-def test_the_generated_unit_carries_the_language():
-    service, _socket = wizard.unit_files("auto", "fr", "translate")
-    exec_start = next(line for line in service.splitlines() if line.startswith("ExecStart="))
-    assert exec_start.endswith("--device auto --language fr --task translate")
+def test_the_language_file_round_trips(tmp_path):
+    path = tmp_path / "vinowhisper/language.json"
+    config.save_language("fr", "translate", path)
+    assert config.load_language(path) == ("fr", "translate")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "not json", "[]", '{"language": "xx"}', '{"language": "en", "task": "translate"}'],
+)
+def test_a_missing_or_bad_language_file_means_english_not_a_dead_server(tmp_path, text):
+    path = tmp_path / "language.json"
+    if text:
+        path.write_text(text)
+    assert config.load_language(path) == ("en", "transcribe")
+
+
+def test_flags_beat_the_file(monkeypatch, tmp_path):
+    path = tmp_path / "language.json"
+    config.save_language("fr", "translate", path)
+    monkeypatch.setattr(config, "LANGUAGE_FILE", path)
+    assert config.resolve_language(None, None) == ("fr", "translate")
+    assert config.resolve_language("de", None) == ("de", "transcribe")
+    assert config.resolve_language(None, "transcribe") == ("fr", "transcribe")
+    assert config.resolve_language("en", None) == ("en", "transcribe")
+
+
+def test_the_server_reads_the_saved_choice(monkeypatch, tmp_path):
+    server = pytest.importorskip("vinowhisper.server")
+    path = tmp_path / "language.json"
+    config.save_language("es", "translate", path)
+    monkeypatch.setattr(config, "LANGUAGE_FILE", path)
+    args = server._parse_args([])
+    assert (args.language, args.task) == ("es", "translate")
+
+
+def test_setup_writes_the_language_only_when_asked(monkeypatch, tmp_path):
+    path = tmp_path / "language.json"
+    monkeypatch.setattr(config, "LANGUAGE_FILE", path)
+    assert wizard.Wizard(assume_yes=True).save_language().ok is True
+    assert not path.exists()
+    explicit = wizard.Wizard(assume_yes=True, language="de", task="translate")
+    assert explicit.save_language().ok is True
+    assert config.load_language(path) == ("de", "translate")
+    assert explicit.multilingual
+
+
+def test_a_plain_rerun_keeps_what_the_tray_chose(monkeypatch, tmp_path):
+    path = tmp_path / "language.json"
+    config.save_language("fr", "transcribe", path)
+    monkeypatch.setattr(config, "LANGUAGE_FILE", path)
+    rerun = wizard.Wizard()
+    assert (rerun.language, rerun.multilingual) == ("fr", True)
 
 
 def test_the_wizard_exports_the_multilingual_model_for_a_foreign_language(tmp_path):

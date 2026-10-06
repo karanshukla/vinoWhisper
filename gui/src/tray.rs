@@ -7,7 +7,7 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::APP_ID;
 use crate::app::Command;
 use crate::icon;
-use crate::settings::{Position, Source, TextSize};
+use crate::settings::{self, Language, Position, Source, Task, TextSize};
 use crate::shortcut::State as ShortcutState;
 
 pub type Handle = ksni::blocking::Handle<Tray>;
@@ -22,6 +22,8 @@ pub struct View {
     pub shortcut: ShortcutState,
     pub passive: bool,
     pub autostart: bool,
+    pub language: Language,
+    pub task: Task,
 }
 
 pub struct Tray {
@@ -77,6 +79,73 @@ fn size_name(size: TextSize) -> &'static str {
         TextSize::Medium => "Medium",
         TextSize::Large => "Large",
     }
+}
+
+fn language_name(language: Language) -> &'static str {
+    match language {
+        Language::En => "English",
+        Language::Fr => "French",
+        Language::De => "German",
+        Language::Es => "Spanish",
+        Language::Auto => "Detect automatically",
+    }
+}
+
+const SETUP_HINT: &str = "Not set up: run vinowhisper-setup --language auto";
+
+fn language_menu(language: Language, task: Task, installed: bool) -> Vec<MenuItem<Tray>> {
+    let mut items: Vec<MenuItem<Tray>> = vec![
+        SubMenu {
+            label: "Language".into(),
+            submenu: vec![
+                RadioGroup {
+                    selected: Language::ALL
+                        .iter()
+                        .position(|option| *option == language)
+                        .unwrap_or(0),
+                    select: Box::new(|tray: &mut Tray, index| {
+                        if let Some(option) = Language::ALL.get(index) {
+                            tray.send(Command::SetLanguage(*option));
+                        }
+                    }),
+                    options: Language::ALL
+                        .iter()
+                        .map(|option| RadioItem {
+                            label: language_name(*option).into(),
+                            // English needs no extra model.
+                            enabled: installed || *option == Language::En,
+                            ..Default::default()
+                        })
+                        .collect(),
+                }
+                .into(),
+            ],
+            ..Default::default()
+        }
+        .into(),
+        CheckmarkItem {
+            label: "Translate to English".into(),
+            checked: task == Task::Translate,
+            enabled: installed && language != Language::En,
+            activate: Box::new(|tray: &mut Tray| {
+                let translate = tray.view.task != Task::Translate;
+                tray.send(Command::SetTranslate(translate));
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ];
+    if !installed {
+        items.push(
+            StandardItem {
+                label: SETUP_HINT.into(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    items
 }
 
 fn shortcut_label(state: &ShortcutState) -> (String, bool) {
@@ -199,7 +268,13 @@ impl ksni::Tray for Tray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let (shortcut, can_configure) = shortcut_label(&self.view.shortcut);
-        vec![
+        // At menu-open, not in View: running vinowhisper-setup needs no tray restart.
+        let language = language_menu(
+            self.view.language,
+            self.view.task,
+            settings::multilingual_installed(),
+        );
+        let mut menu = vec![
             CheckmarkItem {
                 label: "Show captions".into(),
                 checked: self.view.visible,
@@ -236,6 +311,10 @@ impl ksni::Tray for Tray {
                 Command::SetSize,
             ),
             MenuItem::Separator,
+        ];
+        menu.extend(language);
+        menu.push(MenuItem::Separator);
+        menu.extend([
             StandardItem {
                 label: dictate_label(&self.view.shortcut),
                 enabled: false,
@@ -267,7 +346,8 @@ impl ksni::Tray for Tray {
                 ..Default::default()
             }
             .into(),
-        ]
+        ]);
+        menu
     }
 }
 
@@ -324,6 +404,49 @@ mod tests {
         assert!(dictate_label(&ShortcutState::Pending).contains("vinowhisper-gui dictate"));
     }
 
+    fn labels(items: &[MenuItem<Tray>]) -> Vec<String> {
+        items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Standard(item) => Some(item.label.clone()),
+                MenuItem::Checkmark(item) => Some(item.label.clone()),
+                MenuItem::SubMenu(item) => Some(item.label.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn without_the_multilingual_export_the_tray_says_what_to_run() {
+        let items = language_menu(Language::En, Task::Transcribe, false);
+        assert!(labels(&items).contains(&SETUP_HINT.to_owned()));
+        let MenuItem::Checkmark(translate) = &items[1] else {
+            panic!("second item is the translate checkmark");
+        };
+        assert!(!translate.enabled);
+    }
+
+    #[test]
+    fn translate_needs_a_foreign_language_and_the_export() {
+        let enabled = |language, installed| {
+            let items = language_menu(language, Task::Transcribe, installed);
+            let MenuItem::Checkmark(translate) = &items[1] else {
+                panic!("second item is the translate checkmark");
+            };
+            translate.enabled
+        };
+        assert!(enabled(Language::Fr, true));
+        assert!(enabled(Language::Auto, true));
+        assert!(!enabled(Language::En, true));
+        assert!(!enabled(Language::Fr, false));
+    }
+
+    #[test]
+    fn an_installed_export_drops_the_hint() {
+        let items = language_menu(Language::Fr, Task::Translate, true);
+        assert!(!labels(&items).contains(&SETUP_HINT.to_owned()));
+    }
+
     #[test]
     fn an_idle_overlay_asks_to_be_tucked_away() {
         assert_eq!(tray_status(true), ksni::Status::Passive);
@@ -337,7 +460,9 @@ mod tests {
             .map(source_name)
             .into_iter()
             .chain(Position::ALL.map(position_name))
-            .chain(TextSize::ALL.map(size_name));
+            .chain(TextSize::ALL.map(size_name))
+            .chain(Language::ALL.map(language_name))
+            .chain([SETUP_HINT]);
         for name in names {
             assert!(!name.contains('_'), "{name}");
         }

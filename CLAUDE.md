@@ -730,7 +730,11 @@ ONNX Runtime; `docs/architecture.md` says why.
 ## Multilingual (fr, de, es), added 2026-10-06
 
 `--language en|fr|de|es|auto` and `--task transcribe|translate` on the server
-(and `vinowhisper-setup`, which writes them into the unit). `en` keeps
+(and `vinowhisper-setup`). They default to `~/.config/vinowhisper/language.json`,
+which the tray menu (Language, Translate to English) and setup write, not to the unit;
+the tray stops `vinowhisper-server.service` and socket activation restarts it. Flags
+override the file. The tray switch has unit tests only: it has never run in a live
+session (no NPU, and the tray needs a real Plasma/KDE one). `en` keeps
 whisper-small.en; anything else loads `openai/whisper-small` from its own
 `whisper-small-ov[-stateful]` directories. Translate is Whisper's, into English
 only. `WhisperTranscriber.generate_options()` is the one place the tokens are

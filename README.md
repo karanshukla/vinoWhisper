@@ -211,8 +211,12 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 French, German and Spanish work offline with Whisper's multilingual
 `whisper-small`, the same size and architecture as the default model. It is
 opt-in: `vinowhisper-setup --language fr` exports it beside the English one
-(about 1GB more disk) and starts the server with `--language fr`. `en`, the
-default, keeps `whisper-small.en`.
+(about 1GB more disk) and saves the choice to `~/.config/vinowhisper/language.json`,
+which the server reads at start (`vinowhisper-server --language fr` overrides it).
+The overlay's tray menu switches it too: **Language** and **Translate to English**.
+A switch stops the captions, restarts the server on the new model (the same 10-30s
+load as a cold start) and starts them again. `en`, the default, keeps
+`whisper-small.en`.
 
 - **Translation is Whisper's own, and only goes into English.**
   `--task translate` captions French, German or Spanish speech in English from

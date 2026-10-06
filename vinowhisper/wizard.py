@@ -36,15 +36,16 @@ class Wizard:
         assume_yes: bool = False,
         dry_run: bool = False,
         device: str = "auto",
-        language: str = config.DEFAULT_LANGUAGE,
-        task: str = config.DEFAULT_TASK,
+        language: str | None = None,
+        task: str | None = None,
     ):
         self.assume_yes = assume_yes
         self.dry_run = dry_run
         self.device = device
-        self.language = language
-        self.task = task
-        self.multilingual = config.is_multilingual(language, task)
+        # Only an explicit choice is written; a plain re-run keeps what the tray chose.
+        self.explicit_language = language is not None or task is not None
+        self.language, self.task = config.resolve_language(language, task)
+        self.multilingual = config.is_multilingual(self.language, self.task)
         self.distro = distro.detect()
         self.failed: list[str] = []
         self.skipped: list[str] = []
@@ -236,6 +237,18 @@ class Wizard:
             return Outcome(False, f"{summary}, but {result.summary()}")
         return Outcome(True, f"{summary} ({result.status})")
 
+    def save_language(self) -> Outcome:
+        summary = f"{self.language}, {self.task}"
+        if not self.explicit_language:
+            return Outcome(True, f"{summary} (unchanged; set it with --language)")
+        if self.dry_run:
+            return Outcome(None, f"would write {summary} to {config.LANGUAGE_FILE}")
+        try:
+            config.save_language(self.language, self.task)
+        except OSError as exc:
+            return Outcome(False, f"could not write {config.LANGUAGE_FILE}: {exc}")
+        return Outcome(True, f"{summary}, saved to {config.LANGUAGE_FILE}")
+
     def install_units(self) -> Outcome:
         if not _has_systemd():
             return Outcome(
@@ -244,9 +257,9 @@ class Wizard:
                 "`vinowhisper-server` before captioning",
             )
 
-        service, socket = unit_files(device=self.device, language=self.language, task=self.task)
+        service, socket = unit_files(device=self.device)
         self.say(f"  Writing {UNIT_DIR}/vinowhisper-server.{{service,socket}}")
-        self.say("  ExecStart: " + _exec_start(self.device, self.language, self.task))
+        self.say("  ExecStart: " + _exec_start(self.device))
         self.say(
             "  Then: systemctl --user daemon-reload, stop vinowhisper-server.service "
             "(drops a loaded model), reset-failed, enable and restart vinowhisper-server.socket"
@@ -412,6 +425,7 @@ class Wizard:
         self.step("Audio capture", self.check_audio)
         self.step("Inference device", self.check_device)
         self.step("Model export", self.check_model)
+        self.step("Language", self.save_language)
         self.step("Systemd units", self.install_units)
         self.step("Commands on PATH", self.link_binaries)
         self.step("Bash completion", self.install_completion)
@@ -520,27 +534,14 @@ def _has_systemd() -> bool:
     return Path("/run/systemd/system").exists()
 
 
-def _exec_start(
-    device: str = "auto",
-    language: str = config.DEFAULT_LANGUAGE,
-    task: str = config.DEFAULT_TASK,
-) -> str:
+def _exec_start(device: str = "auto") -> str:
     script = Path(sys.executable).with_name("vinowhisper-server")
-    command = str(script) if script.exists() else f"{sys.executable} -m vinowhisper.server"
-    command += f" --device {device}"
-    # Only when set, so an English install keeps the unit it always had.
-    if language != config.DEFAULT_LANGUAGE:
-        command += f" --language {language}"
-    if task != config.DEFAULT_TASK:
-        command += f" --task {task}"
-    return command
+    if script.exists():
+        return f"{script} --device {device}"
+    return f"{sys.executable} -m vinowhisper.server --device {device}"
 
 
-def unit_files(
-    device: str = "auto",
-    language: str = config.DEFAULT_LANGUAGE,
-    task: str = config.DEFAULT_TASK,
-) -> tuple[str, str]:
+def unit_files(device: str = "auto") -> tuple[str, str]:
     service = f"""\
 [Unit]
 Description=vinoWhisper transcription server
@@ -548,7 +549,7 @@ Documentation=https://github.com/karanshukla/vinoWhisper
 Requires=vinowhisper-server.socket
 
 [Service]
-ExecStart={_exec_start(device, language, task)}
+ExecStart={_exec_start(device)}
 Restart=on-failure
 RestartSec=2
 # Only seccomp-backed hardening: the namespace kind (ProtectClock, PrivateTmp,
@@ -615,14 +616,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--language",
-        default=config.DEFAULT_LANGUAGE,
+        default=None,
         metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
         help="Spoken language. 'en' (the default) uses the English-only model; anything "
-        "else sets up the multilingual whisper-small and passes the choice to the server.",
+        f"else sets up the multilingual whisper-small. Saved to {config.LANGUAGE_FILE}, "
+        "which the server and the tray read; without it the saved choice is kept.",
     )
     parser.add_argument(
         "--task",
-        default=config.DEFAULT_TASK,
+        default=None,
         choices=config.TASKS,
         help="'translate' captions foreign speech in English (needs a spoken language or 'auto').",
     )
@@ -649,12 +651,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
     try:
-        config.check_language(args.language, args.task)
+        config.check_language(*config.resolve_language(args.language, args.task))
     except ValueError as exc:
         parser.error(str(exc))
 
     if args.print_units:
-        service, socket = unit_files(args.device, args.language, args.task)
+        service, socket = unit_files(args.device)
         print(f"# {UNIT_DIR}/vinowhisper-server.service\n{service}")
         print(f"# {UNIT_DIR}/vinowhisper-server.socket\n{socket}")
         return 0
