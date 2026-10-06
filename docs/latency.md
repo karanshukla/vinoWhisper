@@ -176,7 +176,8 @@ reference words against 123. Two of its extra words are a wrong early flip ("the
 for "decoding") that the looser agreement committed.
 
 It trims the typical gap, most of all with translate, and does not touch the long
-freezes after a language switch (the longest stall is unchanged on 3 of 6 rows). A third
+freezes after a language switch (the longest stall is unchanged on 2 of 6 rows and
+slightly worse on one, 10.1s to 10.9s). A third
 earlier decode helped a little more on some rows and was not adopted. Holding back the
 last committed word (Hold-n) did nothing useful. Fuzzy word matching and tolerating one
 differing word were tried first and either gained nothing or committed nonsense
