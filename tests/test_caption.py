@@ -144,7 +144,7 @@ def test_the_fields_the_gui_reads_are_on_the_wire(capsys):
     because a field was renamed, protocol.rs needs the same rename.
     """
     reads = {
-        "Ready": {"device", "degraded", "warnings"},
+        "Ready": {"device", "degraded", "warnings", "language", "task"},
         "Cycle": {"confirmed", "pending", "total_s"},
         "Silence": {"elapsed_s", "sink_muted"},
         "Stopped": {"flushed"},
@@ -219,3 +219,9 @@ def test_model_text_is_stripped_of_control_characters_before_any_renderer(monkey
     cycles = [e for e in caption.caption_events("output", None, 4.0) if isinstance(e, events.Cycle)]
 
     assert cycles[0].transcript == "hello[2J world"
+
+
+def test_the_speech_label_shows_the_language_and_translation():
+    assert events.speech_label("fr", "transcribe") == "fr"
+    assert events.speech_label("auto", "translate") == "auto → en"
+    assert events.speech_label("", "translate") == ""

@@ -9,6 +9,10 @@ pub enum Event {
         degraded: bool,
         #[serde(default)]
         warnings: Vec<String>,
+        #[serde(default)]
+        language: String,
+        #[serde(default)]
+        task: String,
     },
     Cycle {
         #[serde(default)]
@@ -78,6 +82,8 @@ mod tests {
                 device: "NPU".into(),
                 degraded: false,
                 warnings: vec![],
+                language: String::new(),
+                task: String::new(),
             })
         );
     }

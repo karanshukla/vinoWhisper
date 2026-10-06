@@ -52,6 +52,8 @@ def caption_events(
         degraded=bool(health.get("degraded", False)),
         warnings=[str(warning) for warning in health.get("warnings", [])],
         server_version=str(health.get("version", "")),
+        language=str(health.get("language", "")),
+        task=str(health.get("task", "")),
     )
 
     stitcher = Stitcher()
@@ -131,7 +133,9 @@ class TerminalRenderer:
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
             device = f"{event.device} ({event.device_full})" if event.device_full else event.device
-            print(f"[vinowhisper] ready on {device}. Ctrl+C to stop.", file=sys.stderr)
+            speech = events.speech_label(event.language, event.task)
+            heard = f", language {speech}" if speech else ""
+            print(f"[vinowhisper] ready on {device}{heard}. Ctrl+C to stop.", file=sys.stderr)
             for warning in event.warnings:
                 print(f"[vinowhisper] WARNING: {warning}", file=sys.stderr)
             print(file=sys.stderr)
