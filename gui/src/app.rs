@@ -58,6 +58,9 @@ const QUIT_AFTER: Duration = Duration::from_secs(5);
 
 const TICK: Duration = Duration::from_secs(1);
 
+const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
+const NOTICE_FOR: Duration = Duration::from_secs(3);
+
 #[derive(Debug)]
 pub enum Command {
     Show,
@@ -525,6 +528,10 @@ impl App {
         if speech == self.speech {
             return;
         }
+        if self.dictation.is_busy() {
+            self.refuse_speech_switch();
+            return;
+        }
         self.speech = speech;
         speech.save();
         // Captions stop first so nothing is mid-request when the server goes away.
@@ -535,6 +542,24 @@ impl App {
             session::stop_server();
             let _ = tx.send(Command::SpeechApplied);
         });
+    }
+
+    // A restart drops the request in flight and the audio recorded so far, so say no.
+    fn refuse_speech_switch(&mut self) {
+        let id = self.dictation.notice(SWITCH_REFUSED);
+        eprintln!("[vinowhisper-gui] language not changed: {SWITCH_REFUSED}");
+        self.show_pill();
+        let _ = self.handle.insert_source(
+            Timer::from_duration(NOTICE_FOR),
+            move |_, _, app: &mut App| {
+                app.dictation.clear_notice(id);
+                app.draw_pill();
+                TimeoutAction::Drop
+            },
+        );
+        // The menu may already show the clicked choice; push the real one back.
+        self.tray_view = None;
+        self.sync_tray();
     }
 
     fn speech_applied(&mut self) {

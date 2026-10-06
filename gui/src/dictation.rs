@@ -45,6 +45,8 @@ pub struct Dictation {
     level: f32,
     device: Option<(String, bool)>,
     epoch: u64,
+    notice: Option<(u64, String)>,
+    notices: u64,
 }
 
 impl Dictation {
@@ -56,6 +58,8 @@ impl Dictation {
             level: 0.0,
             device: None,
             epoch: 0,
+            notice: None,
+            notices: 0,
         }
     }
 
@@ -65,6 +69,29 @@ impl Dictation {
 
     pub fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    /// Recording, waiting on the server, or holding text not yet pasted: anything that a
+    /// server restart would lose.
+    pub fn is_busy(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Listening { .. } | Phase::Transcribing | Phase::Typed { pasted: None, .. }
+        )
+    }
+
+    /// A refusal shown on the pill in place of its text, so it never disturbs the phase.
+    /// Returns an id for `clear_notice`, so a stale timer cannot remove a newer notice.
+    pub fn notice(&mut self, message: impl Into<String>) -> u64 {
+        self.notices += 1;
+        self.notice = Some((self.notices, message.into()));
+        self.notices
+    }
+
+    pub fn clear_notice(&mut self, id: u64) {
+        if self.notice.as_ref().is_some_and(|(held, _)| *held == id) {
+            self.notice = None;
+        }
     }
 
     fn set(&mut self, phase: Phase) {
@@ -239,7 +266,14 @@ impl Dictation {
             Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
             Phase::Failed(message) => (Tone::Bad, message.clone(), None),
         };
-        Some(Pill { tone, text, level })
+        match &self.notice {
+            Some((_, message)) => Some(Pill {
+                tone: Tone::Warn,
+                text: message.clone(),
+                level,
+            }),
+            None => Some(Pill { tone, text, level }),
+        }
     }
 
     fn transcribing_text(&self) -> String {
@@ -265,6 +299,50 @@ mod tests {
 
     fn at(ms: u64, base: Instant) -> Instant {
         base + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn dictation_is_busy_from_the_key_press_until_the_text_is_pasted() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        assert!(!d.is_busy());
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        assert!(d.is_busy());
+        d.key(false, at(500, t));
+        assert!(d.is_busy(), "transcribing");
+        d.event(Dictate::Dictated {
+            text: "hello".into(),
+        });
+        assert!(d.is_busy(), "typed, not yet pasted");
+        d.pasted(Ok(()));
+        assert!(!d.is_busy());
+    }
+
+    #[test]
+    fn a_notice_replaces_the_pill_text_without_changing_the_phase() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        let id = d.notice("Finish dictating first");
+        let pill = d.pill().unwrap();
+        assert_eq!(pill.text, "Finish dictating first");
+        assert_eq!(pill.tone, Tone::Warn);
+        assert!(matches!(d.phase(), Phase::Listening { .. }));
+        d.clear_notice(id);
+        assert_eq!(d.pill().unwrap().text, "Listening, release to type");
+    }
+
+    #[test]
+    fn a_stale_timer_does_not_clear_a_newer_notice() {
+        let mut d = Dictation::new();
+        let old = d.notice("one");
+        let new = d.notice("two");
+        d.clear_notice(old);
+        assert!(d.notice.is_some());
+        d.clear_notice(new);
+        assert!(d.notice.is_none());
     }
 
     #[test]

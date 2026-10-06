@@ -126,7 +126,7 @@ timer, and the icon never tucked away. A timer that expires during suspend
 fires on resume, and it never wakes the machine (that would be
 `CLOCK_BOOTTIME_ALARM`).
 
-Tray choices are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. An
+Tray choices are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
 unreadable one is reported and ignored, and every field has a default, so a
 bad settings file never stops captions from starting. The top position is for
 video that burns its own subtitles into the bottom of the frame.
