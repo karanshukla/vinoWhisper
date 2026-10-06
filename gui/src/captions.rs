@@ -60,6 +60,7 @@ pub struct Captions {
     phase: Phase,
     started_at: Instant,
     device: Option<String>,
+    speech: String,
     degraded: bool,
     warning: Option<String>,
     cycles: VecDeque<f64>,
@@ -81,6 +82,7 @@ impl Captions {
             phase: Phase::Starting,
             started_at: Instant::now(),
             device: None,
+            speech: String::new(),
             degraded: false,
             warning: None,
             cycles: VecDeque::new(),
@@ -114,8 +116,11 @@ impl Captions {
                 device,
                 degraded,
                 warnings,
+                language,
+                task,
             } => {
                 self.device = Some(device);
+                self.speech = speech_label(&language, &task);
                 self.degraded = degraded;
                 self.warning = warnings.into_iter().next();
                 self.phase = Phase::Live;
@@ -256,6 +261,9 @@ impl Captions {
             let tone = if self.degraded { Tone::Warn } else { Tone::Dim };
             spans.push(Span::new(device.clone(), tone));
         }
+        if !self.speech.is_empty() {
+            spans.push(Span::new(format!(" · {}", self.speech), Tone::Dim));
+        }
         if self.phase == Phase::Live
             && let Some(lag) = self.lag_s()
         {
@@ -278,6 +286,14 @@ impl Captions {
             ));
         }
         (dot, spans)
+    }
+}
+
+fn speech_label(language: &str, task: &str) -> String {
+    match (language, task) {
+        ("", _) => String::new(),
+        (language, "translate") => format!("{language} → en"),
+        (language, _) => language.to_owned(),
     }
 }
 
@@ -447,6 +463,8 @@ mod tests {
             device: "CPU".into(),
             degraded: true,
             warnings: vec!["No NPU found; captions will lag far more than on the NPU.".into()],
+            language: String::new(),
+            task: String::new(),
         });
         let (_, status) = captions.status();
         assert!(
@@ -463,12 +481,38 @@ mod tests {
     }
 
     #[test]
+    fn the_configured_language_and_translate_show_after_the_device() {
+        let status = |language: &str, task: &str| {
+            let mut captions = Captions::new();
+            captions.apply(Event::Ready {
+                device: "NPU".into(),
+                degraded: false,
+                warnings: vec![],
+                language: language.into(),
+                task: task.into(),
+            });
+            let text: String = captions
+                .status()
+                .1
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect();
+            text
+        };
+        assert_eq!(status("fr", "transcribe"), "live · NPU · fr");
+        assert_eq!(status("auto", "translate"), "live · NPU · auto → en");
+        assert_eq!(status("", ""), "live · NPU");
+    }
+
+    #[test]
     fn the_npu_is_not_a_warning() {
         let mut captions = Captions::new();
         captions.apply(Event::Ready {
             device: "NPU".into(),
             degraded: false,
             warnings: vec![],
+            language: String::new(),
+            task: String::new(),
         });
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Good);
@@ -494,6 +538,8 @@ mod tests {
             device: "NPU".into(),
             degraded: false,
             warnings: vec![],
+            language: String::new(),
+            task: String::new(),
         });
         captions.apply(silence(1.0));
         assert_eq!(captions.status().0, Tone::Good, "a breath is not a fault");

@@ -88,6 +88,7 @@ class RichRenderer:
         self._live: Live | None = None
 
         self._device = "?"
+        self._speech = ""
         self._degraded = False
         self._device_warning = ""
         self._state = ("starting", "yellow")
@@ -134,6 +135,7 @@ class RichRenderer:
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
             self._device = event.device
+            self._speech = events.speech_label(event.language, event.task)
             self._degraded = event.degraded
             self._device_warning = event.warnings[0] if event.warnings else ""
             self._state = ("live", "green")
@@ -250,9 +252,10 @@ class RichRenderer:
             if self._degraded
             else f"[bold]{self._device}[/bold]"
         )
+        speech = f" [dim]· {self._speech}[/dim]" if self._speech else ""
         return Panel(
             Group(*rows),
-            title=f"[dim]vinoWhisper[/dim] {badge}",
+            title=f"[dim]vinoWhisper[/dim] {badge}{speech}",
             title_align="left",
             border_style="red" if self._degraded else "dim",
             padding=(0, 1),

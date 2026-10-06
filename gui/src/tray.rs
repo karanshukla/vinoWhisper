@@ -318,14 +318,12 @@ impl ksni::Tray for Tray {
             StandardItem {
                 label: dictate_label(&self.view.shortcut),
                 enabled: false,
-                icon_name: "audio-input-microphone".into(),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: shortcut,
                 enabled: can_configure,
-                icon_name: "preferences-desktop-keyboard-shortcuts".into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Command::ConfigureShortcut)),
                 ..Default::default()
             }
@@ -341,7 +339,6 @@ impl ksni::Tray for Tray {
             .into(),
             StandardItem {
                 label: "Quit".into(),
-                icon_name: "application-exit".into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Command::Quit)),
                 ..Default::default()
             }

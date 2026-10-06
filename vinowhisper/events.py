@@ -8,6 +8,8 @@ class Ready:
     degraded: bool = False
     warnings: list[str] = field(default_factory=list)
     server_version: str = ""
+    language: str = ""
+    task: str = ""
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,12 @@ class Stopped:
 
 
 Event = Ready | Cycle | Silence | Stopped
+
+
+def speech_label(language: str, task: str) -> str:
+    if not language:
+        return ""
+    return f"{language} → en" if task == "translate" else language
 
 
 def to_dict(event: Event) -> dict:

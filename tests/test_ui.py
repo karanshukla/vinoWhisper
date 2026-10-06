@@ -158,6 +158,17 @@ def test_the_panel_shows_the_device_and_the_live_stats():
     assert "lag ~2.4s" in panel
 
 
+def test_the_panel_names_the_language_and_whether_it_translates():
+    def title(language, task):
+        renderer = RichRenderer(console=make_console())
+        renderer.handle(events.Ready(device="NPU", language=language, task=task))
+        return render_panel(renderer)
+
+    assert "NPU · fr" in title("fr", "transcribe")
+    assert "NPU · auto → en" in title("auto", "translate")
+    assert "·" not in title("", "").splitlines()[0]
+
+
 def test_a_degraded_device_is_impossible_to_miss():
     renderer = RichRenderer(console=make_console(width=100))
     renderer.handle(
