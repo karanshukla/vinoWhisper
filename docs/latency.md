@@ -145,6 +145,45 @@ matching words, and each rule below came from a real failure:
   seen being "do things that make you" (2026-09-01). It errs short, because a
   false positive deletes words that can never be restored.
 
+## Translate drift, and agreeing with either of the last two decodes
+
+Measured 2026-10-06 on the multilingual `whisper-small`, replaying saved decodes of real
+LibriVox speech (French, German, Spanish and English joined, a switch every 10-30s;
+two recordings of 160s and 155s) through the stitcher. Translate lags transcribe: on one
+recording the mean gap between commits was 1.9s against 1.4s, p90 4.0s against 2.3s, and
+68% of cycles committed nothing. Decode time was no different (0.57s against 0.61s), and
+trimming the window did not help it. What differs is wording: translated text flips
+between two forms across overlapping windows ("on the ship", "on the crowd", "on the
+ship"), and agreeing only with the decode just before resets on every flip.
+
+The stitcher now commits a word when the new decode agrees with either of the last two
+(`_LOOKBACK_DECODES`), not only the last. Cycles still need one earlier decode to agree,
+so nothing prints on a single decode. Replaying the same saved decodes:
+
+| recording | task | mean gap | p90 gap | longest stall | words committed |
+|---|---|---|---|---|---|
+| mixed 1 | translate | 1.5s to 1.4s | 2.9s to 2.3s | 13.3s to 12.3s | 469 to 475 |
+| mixed 2 | translate | 1.9s to 1.5s | 4.0s to 2.5s | 7.6s to 7.6s | 366 to 395 |
+| mixed 1 | transcribe | 1.5s to 1.4s | 3.2s to 2.8s | 10.1s to 10.9s | 414 to 422 |
+| mixed 2 | transcribe | 1.4s to 1.3s | 2.3s to 1.7s | 11.0s to 11.0s | 382 to 385 |
+| English-only, 240s, 1x | transcribe | 1.06s to 1.01s | 2.0s to 1.6s | 5.8s to 4.3s | 828 to 828 |
+| English-only, 160s, 1.5x | transcribe | 1.46s to 1.31s | 2.7s to 1.7s | 8.8s to 6.9s | 796 to 798 |
+
+Accuracy against a reference of Whisper decoding each clip with its language forced
+moved by 0.00 to 0.02 either way, within noise, and the share of repeated trigrams stayed
+at 0.00 to 0.02. On the 77-decode espeak fixture the stitcher now matches 126 of 141
+reference words against 123. Two of its extra words are a wrong early flip ("the coding"
+for "decoding") that the looser agreement committed.
+
+It trims the typical gap, most of all with translate, and does not touch the long
+freezes after a language switch (the longest stall is unchanged on 3 of 6 rows). A third
+earlier decode helped a little more on some rows and was not adopted. Holding back the
+last committed word (Hold-n) did nothing useful. Fuzzy word matching and tolerating one
+differing word were tried first and either gained nothing or committed nonsense
+("go go go go").
+
+The English-only recordings are 240s and 160s of one reader, one run per setting.
+
 ## Fast speech
 
 Measured 2026-09-21: the same five minutes of the LibriVox reading,

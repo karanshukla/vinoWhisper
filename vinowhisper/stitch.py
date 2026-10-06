@@ -18,6 +18,8 @@ _REDECODE_RATIO = 0.6
 
 _MIN_REALIGN_WORDS = 2
 
+_LOOKBACK_DECODES = 2
+
 _COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
 
 
@@ -159,10 +161,21 @@ def _realign(pending: list[str], curr: list[str]) -> tuple[int, int]:
     return max(offset, 0), max(-offset, 0)
 
 
+def _agreeing_prefix(earlier: list[str], candidate: list[str]) -> int:
+    # Different lengths by design: this cycle's words against an earlier one's.
+    length = 0
+    for old_word, new_word in zip(earlier, candidate, strict=False):
+        if _norm(old_word) != _norm(new_word):
+            break
+        length += 1
+    return length
+
+
 class Stitcher:
     def __init__(self) -> None:
         self._confirmed: list[str] = []
         self._pending: list[str] = []
+        self._earlier: list[list[str]] = []
 
     @property
     def pending(self) -> list[str]:
@@ -179,17 +192,16 @@ class Stitcher:
             # The confirmed tail left the window; the pending words are the only anchor left.
             cut, drop = _realign(self._pending, curr)
             del self._pending[:drop]
+            self._earlier = [tail[drop:] for tail in self._earlier]
         candidate = curr[cut:]
 
-        agree_len = 0
-        # Different lengths by design: this cycle's words against the last one's.
-        for old_word, new_word in zip(self._pending, candidate, strict=False):
-            if _norm(old_word) != _norm(new_word):
-                break
-            agree_len += 1
+        agree_len = max((_agreeing_prefix(tail, candidate) for tail in self._earlier), default=0)
 
         newly_confirmed = candidate[:agree_len]
         self._pending = candidate[agree_len:]
+        self._earlier = [tail[agree_len:] for tail in (*self._earlier, candidate)][
+            -_LOOKBACK_DECODES:
+        ]
         self._commit(newly_confirmed)
         return newly_confirmed
 
