@@ -60,6 +60,8 @@ const TICK: Duration = Duration::from_secs(1);
 
 const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
 const NOTICE_FOR: Duration = Duration::from_secs(3);
+// Each applied switch costs a model load, so wait out a burst of menu clicks.
+const SPEECH_SETTLE: Duration = Duration::from_millis(1500);
 
 #[derive(Debug)]
 pub enum Command {
@@ -155,6 +157,7 @@ pub struct App {
     settings: Settings,
     speech: Speech,
     speech_pending: u32,
+    speech_debounce: u64,
     source_override: Option<Source>,
     visible: bool,
     session: Option<Session>,
@@ -303,6 +306,7 @@ pub fn run(options: Options) -> Result<(), String> {
         settings,
         speech: Speech::load(),
         speech_pending: 0,
+        speech_debounce: 0,
         source_override: options.source,
         visible: false,
         session: None,
@@ -536,6 +540,20 @@ impl App {
         speech.save();
         // Captions stop first so nothing is mid-request when the server goes away.
         self.stop_session();
+        self.speech_debounce += 1;
+        let ticket = self.speech_debounce;
+        let _ = self.handle.insert_source(
+            Timer::from_duration(SPEECH_SETTLE),
+            move |_, _, app: &mut App| {
+                if app.speech_debounce == ticket && !app.quitting {
+                    app.apply_speech();
+                }
+                TimeoutAction::Drop
+            },
+        );
+    }
+
+    fn apply_speech(&mut self) {
         self.speech_pending += 1;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
