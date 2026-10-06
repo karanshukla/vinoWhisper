@@ -64,7 +64,7 @@ a freeze.
 **It scales to zero, the systemd way.** The NPU model load costs 10-30s, so
 something has to hold it. A socket unit owns a private Unix socket at boot with no process
 running, systemd spawns the server on the first connection, and the server
-exits itself after 30 minutes idle. Serverless, on your laptop, with no
+exits itself after 5 minutes idle. Serverless, on your laptop, with no
 framework.
 
 **The model download is verified.** The Hugging Face source is pinned to a
