@@ -38,6 +38,12 @@ _SILENCE_NOTICE = """
 _MUTED_LINE = "\n  (The default sink is muted. On this machine that does not silence the monitor.)"
 
 
+def stall_window_s(window_s: float, stalled_for_s: float, task: str) -> float:
+    if task == "translate" or stalled_for_s < config.STALL_AFTER_S:
+        return window_s
+    return min(window_s, config.STALL_WINDOW_S)
+
+
 def caption_events(
     source: str,
     target: str | None,
@@ -59,6 +65,7 @@ def caption_events(
     stitcher = Stitcher()
     index = 0
     last_cycle_at_s = 0.0
+    last_commit_at_s = 0.0
     silent_since: float | None = None
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
@@ -77,13 +84,17 @@ def caption_events(
                     time.sleep(config.MIN_HOP_S - hop_s)
                     continue
 
-                window = recorder.window(window_s)
+                stalled_for_s = recorder.captured_s - last_commit_at_s
+                window = recorder.window(
+                    stall_window_s(window_s, stalled_for_s, health.get("task", ""))
+                )
                 last_cycle_at_s = recorder.captured_s
 
                 level = audio.rms(window)
                 if level < config.SILENCE_RMS_THRESHOLD:
                     now = time.monotonic()
                     silent_since = now if silent_since is None else silent_since
+                    last_commit_at_s = last_cycle_at_s
                     elapsed_s = now - silent_since
                     muted = sink_muted() if elapsed_s >= _SILENCE_NOTICE_AFTER_S else None
                     yield events.Silence(elapsed_s=elapsed_s, rms=level, sink_muted=muted)
@@ -98,6 +109,8 @@ def caption_events(
                 transcript = strip_controls(transcript)
 
                 confirmed = stitcher.push(transcript)
+                if confirmed:
+                    last_commit_at_s = last_cycle_at_s
                 index += 1
                 yield events.Cycle(
                     index=index,

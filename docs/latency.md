@@ -201,3 +201,38 @@ It fixes fast speech and costs one to two points at normal speed. The likely
 cause is context: the buffer averages 8.5s against a fixed 12s, the same
 shortfall that made the 8s window about 10% worse. Worth another look if
 something shows more context closing that gap.
+
+## Language switches and the stall breaker
+
+Measured 2026-10-06 on the NPU with the multilingual `whisper-small`, auto language, by
+replaying public-domain LibriVox readings (French, German, Spanish, English, 20s clips
+joined, a switch every 10-30s) through the real stitcher at the loop's own pacing. Two
+recordings, 160s and 155s, one run per setting. Decode time was 0.57-0.65s per 12s window
+for both tasks.
+
+After a switch, captions freeze for 5-13s (4-5 stalls over 5s per recording), because the
+12s window still holds the old language. Cutting the window to start at each known switch
+(an oracle, not buildable: the NPU pipeline returns no detected language) took the
+transcribe longest stall from 10.1s and 11.0s to 9.4s and 3.4s.
+
+`caption.stall_window_s` is the buildable version. When nothing has committed for 4s
+(`STALL_AFTER_S`) it asks for the last 6s (`STALL_WINDOW_S`) until a commit lands. Silence
+resets the clock, so a pause does not shrink the next window.
+
+| transcribe | longest stall | stalls over 5s | differs from forced-language reference |
+|---|---|---|---|
+| recording 1, today | 10.1s | 5 | 0.10 |
+| recording 1, breaker | 5.6s | 3 | 0.12 |
+| recording 2, today | 11.0s | 4 | 0.11 |
+| recording 2, breaker | 5.6s | 3 | 0.09 |
+
+It trims the worst freezes and leaves the typical gap alone (mean 1.4s to 1.3s on recording 2).
+The accuracy column compares against Whisper decoding each clip with its language forced,
+so differences of 0.02 are noise. A more aggressive 3s to 5s setting removed every long
+stall on recording 1 but cost accuracy elsewhere.
+
+**It is off when translating.** With translate on the same trick did nothing on one
+recording (stalls 3 to 4) and cost words and accuracy on the other (0.32 to 0.41 with
+the aggressive setting), and the oracle did not fix it either. Translate lags for a
+different reason: translated wording drifts more between overlapping decodes, so fewer
+cycles agree (mean gap 1.9s against 1.4s on recording 2).

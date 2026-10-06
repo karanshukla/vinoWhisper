@@ -225,3 +225,65 @@ def test_the_speech_label_shows_the_language_and_translation():
     assert events.speech_label("fr", "transcribe") == "fr"
     assert events.speech_label("auto", "translate") == "auto → en"
     assert events.speech_label("", "translate") == ""
+
+
+def test_a_stalled_transcription_window_shrinks_and_translate_is_left_alone():
+    stall = caption.stall_window_s
+    assert stall(12.0, 3.9, "transcribe") == 12.0
+    assert stall(12.0, 4.0, "transcribe") == 6.0
+    assert stall(12.0, 30.0, "") == 6.0
+    assert stall(5.0, 30.0, "transcribe") == 5.0
+    assert stall(12.0, 30.0, "translate") == 12.0
+
+
+class _AdvancingRecorder:
+    def __init__(self, **_kwargs):
+        self.checks = 0
+        self.asked: list[float] = []
+
+    @property
+    def captured_s(self):
+        return 1.0 + self.checks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return None
+
+    def check_alive(self):
+        self.checks += 1
+        if self.checks > 6:
+            raise KeyboardInterrupt
+
+    def window(self, seconds):
+        self.asked.append(seconds)
+        return pcm.sine(220.0, 2.0, amplitude=0.1)
+
+
+def _windows_asked_for(monkeypatch, task):
+    recorders = []
+
+    def make(**kwargs):
+        recorders.append(_AdvancingRecorder(**kwargs))
+        return recorders[-1]
+
+    class Client:
+        def wait_ready(self):
+            return {"device": "NPU", "task": task}
+
+        def transcribe(self, samples):
+            return "", 0.1
+
+    monkeypatch.setattr(caption, "Recorder", make)
+    monkeypatch.setattr(caption, "TranscriptionClient", Client)
+    list(caption.caption_events("output", None, 12.0))
+    return recorders[0].asked
+
+
+def test_nothing_committing_for_seconds_shrinks_the_window_the_loop_asks_for(monkeypatch):
+    assert _windows_asked_for(monkeypatch, "transcribe") == [12.0, 12.0, 6.0, 6.0, 6.0, 6.0]
+
+
+def test_translate_keeps_the_full_window_while_stalled(monkeypatch):
+    assert set(_windows_asked_for(monkeypatch, "translate")) == {12.0}
