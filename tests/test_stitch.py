@@ -432,7 +432,16 @@ def test_a_real_session_prints_no_phrase_twice():
     148 words for a 141-word text, among them "Whispers Whisper's encoder" and
     "out 12s rather 12's rather than". After it, 143: the two extra are Whisper
     hearing "short-form" and "threshold-lowering" as two words each.
+
+    2026-10-06, when agreement widened to any of the last two decodes: 145
+    words, with 126 of the 141 reference words matched against 123 before.
+    The bound on length moved from +2 to +4 for that, deliberately: the two
+    extra words are "the coding" for "decoding" and a four-word split of
+    "pass per token. A" that the old stitcher had as "pastor token a".
     """
+    import re
+    from difflib import SequenceMatcher
+
     transcripts, reference = _fixture_session()
     stitcher = Stitcher()
     printed = push_all(stitcher, *transcripts) + stitcher.flush()
@@ -440,7 +449,31 @@ def test_a_real_session_prints_no_phrase_twice():
 
     assert "Whispers Whisper's" not in text
     assert "rather 12's rather" not in text
-    assert len(printed) <= len(reference) + 2
+    assert len(printed) <= len(reference) + 4
+    heard = [re.sub(r"[^a-z0-9']", "", word.lower()) for word in printed]
+    matched = SequenceMatcher(None, reference, [w for w in heard if w], autojunk=False)
+    assert sum(block.size for block in matched.get_matching_blocks()) >= 126
+
+
+def test_a_word_that_flips_and_settles_back_commits_on_the_earlier_decode_that_agrees():
+    """Translated wording alternates between two forms across overlapping
+    windows ("on the ship" / "on the crowd" / "on the ship"). Agreeing only
+    with the decode just before resets on every flip, so nothing commits
+    while it alternates, which is most of why translate lags transcribe.
+    Agreeing with either of the last two decodes lets the third one commit.
+    """
+    stitcher = Stitcher()
+    assert stitcher.push("we sat on the ship today") == []
+    assert stitcher.push("we sat on the crowd today") == ["we", "sat", "on", "the"]
+    assert stitcher.push("we sat on the ship today") == ["ship", "today"]
+
+
+def test_a_word_only_an_older_decode_had_does_not_commit_without_agreement():
+    stitcher = Stitcher()
+    stitcher.push("we sat on the ship")
+    stitcher.push("we sat on a crowd")
+    assert stitcher.push("we sat on a boat") == ["a"]
+    assert stitcher.pending == ["boat"]
 
 
 def test_a_phrase_that_recurs_in_the_confirmed_text_is_not_an_anchor():
