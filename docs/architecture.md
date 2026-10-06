@@ -10,16 +10,25 @@ primitives:
 - Systemd starts `vinowhisper-server.service` on the _first_ connection. That
   is when the NPU model load (~10-30s) happens.
 - The service tracks its own last-request time and self-exits after
-  `config.IDLE_TIMEOUT_S` (30 min). The socket unit is untouched, so the next
+  `config.IDLE_TIMEOUT_S` (5 min). The socket unit is untouched, so the next
   caption session respawns it.
 
 Why bother on a 16GB machine for a ~500MB model: the always-on version holds
 that RAM resident regardless of use, and relying on the kernel to swap it to
 zram does not reliably help, since 500MB rarely generates enough pressure on
 16GB to get reclaimed. Scale-to-zero is the deterministic version of the same
-idea. Whether 30 minutes is the right window, or whether this is solving a
-problem too small to matter at ~3% of 16GB, is still open. It is a conscious
-choice, not a default that snuck in.
+idea. It is a conscious choice, not a default that snuck in.
+
+**Measured 2026-10-06, which is why the window is 5 minutes and not 30.** The
+loaded multilingual server is 1.17-1.24GB resident, and 1.06GB of that is
+file-backed: the NPU driver's compiled model blobs, mapped from
+`~/.cache/ze_intel_npu_cache`. Only 100-170MB is anonymous memory. So swap and
+zram cannot help (they hold anonymous pages; zram was on and held nothing), and
+the blobs are clean cache the kernel can drop anyway. What helps is unloading.
+With the blob cache warm, a stopped server answered its first `/health` with
+the model loaded in 0.69s (once, on this laptop, to `/health` and not to the
+first decoded caption). The 40-70s cold load is the first compile, or the first
+one after an OpenVINO or driver upgrade changes the cache key.
 
 `vinowhisper-caption` health-checks the server before starting the loop, so a
 cold start shows up as an explicit "waiting for the transcription server"
