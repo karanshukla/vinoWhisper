@@ -74,6 +74,27 @@ pub fn not_found_message() -> String {
     )
 }
 
+const SERVER_UNIT: &str = "vinowhisper-server.service";
+
+/// Stops the server so the next connection starts it on the new language: the socket
+/// unit stays up and starts it again. Blocks until systemd has stopped it.
+pub fn stop_server() {
+    match Process::new("systemctl")
+        .args(["--user", "stop", SERVER_UNIT])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!(
+            "[vinowhisper-gui] could not stop {SERVER_UNIT} ({status}); if you started \
+             vinowhisper-server by hand, restart it to pick up the new language"
+        ),
+        Err(err) => eprintln!(
+            "[vinowhisper-gui] could not run systemctl ({err}); restart vinowhisper-server \
+             to pick up the new language"
+        ),
+    }
+}
+
 pub struct Session {
     pub generation: u64,
     pid: Pid,

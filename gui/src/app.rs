@@ -44,7 +44,7 @@ use crate::paste::Paster;
 use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
-use crate::settings::{Position, Settings, Source, TextSize};
+use crate::settings::{Language, Position, Settings, Source, Speech, Task, TextSize};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
 use crate::virtual_keyboard::VirtualKeyboard;
@@ -67,6 +67,9 @@ pub enum Command {
     SetSource(Source),
     SetPosition(Position),
     SetSize(TextSize),
+    SetLanguage(Language),
+    SetTranslate(bool),
+    SpeechApplied,
     ConfigureShortcut,
     SetAutostart(bool),
     Shortcut(shortcut::State),
@@ -147,6 +150,8 @@ pub struct App {
 
     captions: Captions,
     settings: Settings,
+    speech: Speech,
+    speech_pending: u32,
     source_override: Option<Source>,
     visible: bool,
     session: Option<Session>,
@@ -293,6 +298,8 @@ pub fn run(options: Options) -> Result<(), String> {
         captions: Captions::new(),
         ticking: false,
         settings,
+        speech: Speech::load(),
+        speech_pending: 0,
         source_override: options.source,
         visible: false,
         session: None,
@@ -361,6 +368,19 @@ impl App {
                 self.settings.save();
                 self.place();
             }
+            Command::SetLanguage(language) => self.set_speech(Speech {
+                language,
+                task: self.speech.task,
+            }),
+            Command::SetTranslate(translate) => self.set_speech(Speech {
+                language: self.speech.language,
+                task: if translate {
+                    Task::Translate
+                } else {
+                    Task::Transcribe
+                },
+            }),
+            Command::SpeechApplied => self.speech_applied(),
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
             Command::Shortcut(state) => self.shortcut_state = state,
@@ -497,6 +517,31 @@ impl App {
         }
         if changed {
             self.restart_session();
+        }
+    }
+
+    fn set_speech(&mut self, speech: Speech) {
+        let speech = speech.normalised();
+        if speech == self.speech {
+            return;
+        }
+        self.speech = speech;
+        speech.save();
+        // Captions stop first so nothing is mid-request when the server goes away.
+        self.stop_session();
+        self.speech_pending += 1;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            session::stop_server();
+            let _ = tx.send(Command::SpeechApplied);
+        });
+    }
+
+    fn speech_applied(&mut self) {
+        self.speech_pending = self.speech_pending.saturating_sub(1);
+        // Only the last of several quick switches restarts, or an earlier stop could hit the new server.
+        if self.speech_pending == 0 && self.visible && !self.quitting {
+            self.start_session();
         }
     }
 
@@ -845,6 +890,8 @@ impl App {
             passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
             autostart: self.autostart,
+            language: self.speech.language,
+            task: self.speech.task,
         }
     }
 

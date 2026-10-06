@@ -45,6 +45,44 @@ def check_language(language: str, task: str) -> None:
         raise ValueError("translate turns speech into English; give the spoken language or auto")
 
 
+# Shared with vinowhisper-gui, whose tray writes it. Not baked into the systemd unit, so a
+# switch needs a server restart and no edited unit. A flag on the server overrides it.
+LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
+
+
+def load_language(path: Path | None = None) -> tuple[str, str]:
+    import json
+
+    try:
+        raw = json.loads((path or LANGUAGE_FILE).read_text(encoding="utf-8"))
+        language = str(raw.get("language", DEFAULT_LANGUAGE))
+        task = str(raw.get("task", DEFAULT_TASK))
+        check_language(language, task)
+    except (OSError, ValueError, AttributeError):
+        # A missing, hand-broken or contradictory file is English, never a dead server.
+        return DEFAULT_LANGUAGE, DEFAULT_TASK
+    return language, task
+
+
+def save_language(language: str, task: str, path: Path | None = None) -> None:
+    import json
+
+    check_language(language, task)
+    target = path or LANGUAGE_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"language": language, "task": task}, indent=2) + "\n")
+
+
+def resolve_language(language: str | None, task: str | None) -> tuple[str, str]:
+    """A flag beats the file; a flag on one half replaces the file's whole choice."""
+    saved_language, saved_task = load_language()
+    if language is None and task is None:
+        return saved_language, saved_task
+    language = language or saved_language
+    # `--language en` must not be undone by a saved translate, which English cannot do.
+    return language, task or (saved_task if language == saved_language else DEFAULT_TASK)
+
+
 def is_multilingual(language: str, task: str = DEFAULT_TASK) -> bool:
     # English alone keeps the English-only model: smaller vocabulary, better English.
     return language != "en" or task == "translate"

@@ -61,6 +61,102 @@ impl TextSize {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    #[default]
+    En,
+    Fr,
+    De,
+    Es,
+    Auto,
+}
+
+impl Language {
+    pub const ALL: [Language; 5] = [
+        Language::En,
+        Language::Fr,
+        Language::De,
+        Language::Es,
+        Language::Auto,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Task {
+    #[default]
+    Transcribe,
+    Translate,
+}
+
+/// What the server listens for. Not in gui.json: `vinowhisper-server` and
+/// `vinowhisper-setup` read and write the same file (config.LANGUAGE_FILE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Speech {
+    pub language: Language,
+    pub task: Task,
+}
+
+impl Speech {
+    pub fn path() -> PathBuf {
+        config_home().join("vinowhisper/language.json")
+    }
+
+    pub fn load() -> Speech {
+        Self::load_from(&Self::path())
+    }
+
+    pub fn load_from(path: &Path) -> Speech {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Speech::default();
+        };
+        // The server falls back to English on a bad file too, so both agree on what is live.
+        serde_json::from_str::<Speech>(&text)
+            .map(Speech::normalised)
+            .unwrap_or_default()
+    }
+
+    /// English audio has nothing to translate; the server rejects that pair.
+    pub fn normalised(mut self) -> Speech {
+        if self.language == Language::En {
+            self.task = Task::Transcribe;
+        }
+        self
+    }
+
+    pub fn save(&self) {
+        let path = Self::path();
+        if let Err(err) = self.save_to(&path) {
+            eprintln!("[vinowhisper-gui] could not save {}: {err}", path.display());
+        }
+    }
+
+    pub fn save_to(&self, path: &Path) -> io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
+        std::fs::write(path, text + "\n")
+    }
+}
+
+/// Whether the multilingual export exists (either variant), so the tray can say what to run
+/// instead of offering a language the server could not load.
+pub fn multilingual_installed() -> bool {
+    ["whisper-small-ov", "whisper-small-ov-stateful"]
+        .into_iter()
+        .map(|name| data_home().join("vinowhisper/models").join(name))
+        .any(|dir| {
+            std::fs::read_dir(dir).is_ok_and(|mut entries| {
+                entries.any(|entry| {
+                    entry.is_ok_and(|entry| entry.path().extension().is_some_and(|e| e == "xml"))
+                })
+            })
+        })
+}
+
 pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
 pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
@@ -206,6 +302,43 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(Settings::load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn speech_matches_the_file_the_server_reads() {
+        let path = scratch("speech");
+        let speech = Speech {
+            language: Language::Fr,
+            task: Task::Translate,
+        };
+        speech.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .replace([' ', '\n'], ""),
+            r#"{"language":"fr","task":"translate"}"#
+        );
+        assert_eq!(Speech::load_from(&path), speech);
+    }
+
+    #[test]
+    fn speech_falls_back_to_english_like_the_server() {
+        let path = scratch("speech-bad");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        assert_eq!(Speech::load_from(&path), Speech::default());
+        std::fs::write(&path, r#"{"language": "xx"}"#).unwrap();
+        assert_eq!(Speech::load_from(&path), Speech::default());
+        std::fs::write(&path, r#"{"language": "en", "task": "translate"}"#).unwrap();
+        assert_eq!(Speech::load_from(&path), Speech::default());
+    }
+
+    #[test]
+    fn choosing_english_drops_translate() {
+        let speech = Speech {
+            language: Language::En,
+            task: Task::Translate,
+        };
+        assert_eq!(speech.normalised().task, Task::Transcribe);
     }
 
     #[test]
