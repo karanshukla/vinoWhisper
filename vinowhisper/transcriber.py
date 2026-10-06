@@ -15,7 +15,13 @@ class WhisperTranscriber:
         self,
         model_dir: Path | None = None,
         device: str | None = None,
+        language: str = config.DEFAULT_LANGUAGE,
+        task: str = config.DEFAULT_TASK,
     ) -> None:
+        config.check_language(language, task)
+        self.language = language
+        self.task = task
+        self.multilingual = config.is_multilingual(language, task)
         self._requested_device = device
         self._model_dir_override = model_dir
         self.selection: devices.Selection | None = None
@@ -30,7 +36,12 @@ class WhisperTranscriber:
 
     def describe(self) -> dict:
         if self.selection is None:
-            return {"device": self._requested_device or config.DEFAULT_DEVICE, "loaded": False}
+            return {
+                "device": self._requested_device or config.DEFAULT_DEVICE,
+                "loaded": False,
+                "language": self.language,
+                "task": self.task,
+            }
         return {
             "device": self.selection.device.name,
             "device_kind": self.selection.kind,
@@ -38,6 +49,8 @@ class WhisperTranscriber:
             "degraded": self.selection.degraded,
             "warnings": list(self.selection.warnings),
             "model_dir": str(self.model_dir) if self.model_dir else "",
+            "language": self.language,
+            "task": self.task,
             "loaded": self._pipeline is not None,
         }
 
@@ -52,7 +65,7 @@ class WhisperTranscriber:
 
         selection = self.selection or self.select_device()
         kind = selection.kind
-        model_dir = self._model_dir_override or config.model_dir(kind)
+        model_dir = self._model_dir_override or config.model_dir(kind, self.multilingual)
         self.model_dir = model_dir
         self._check_export(kind, model_dir)
 
@@ -72,7 +85,8 @@ class WhisperTranscriber:
         variant = "npu" if kind == "NPU" else "stateful"
         if not model_dir.is_dir():
             raise FileNotFoundError(
-                f"no {variant} model export at {model_dir}\n  run: {config.export_command(variant)}"
+                f"no {variant} model export at {model_dir}\n"
+                f"  run: {config.export_command(variant, self.multilingual)}"
             )
 
         has_with_past = any(model_dir.glob("*decoder_with_past*.xml"))
@@ -81,14 +95,24 @@ class WhisperTranscriber:
                 f"the export at {model_dir} has no decoder_with_past submodel, so it "
                 "was not exported with --disable-stateful and the NPU static pipeline "
                 "cannot build it.\n"
-                f"  run: {config.export_command('npu')}"
+                f"  run: {config.export_command('npu', self.multilingual)}"
             )
         if kind != "NPU" and has_with_past:
             raise RuntimeError(
                 f"the export at {model_dir} is the --disable-stateful (NPU) export, "
                 f"which fails on {kind} with a beam_idx port error.\n"
-                f"  run: {config.export_command('stateful')}"
+                f"  run: {config.export_command('stateful', self.multilingual)}"
             )
+
+    def generate_options(self) -> dict[str, str]:
+        # The English-only model has no language or task tokens, and refuses them.
+        if not self.multilingual:
+            return {}
+        options = {"task": self.task}
+        if self.language != config.AUTO_LANGUAGE:
+            # Fixed per server: auto-detect per 12s window can flip language mid-caption.
+            options["language"] = f"<|{self.language}|>"
+        return options
 
     def transcribe_stream(self, samples: np.ndarray) -> Iterator[str]:
         pipeline = self._pipeline
@@ -107,7 +131,10 @@ class WhisperTranscriber:
                     pipeline.generate(  # type: ignore[attr-defined]
                         samples,
                         streamer=streamer,
-                        max_new_tokens=config.max_new_tokens(samples.size / config.SAMPLE_RATE_HZ),
+                        max_new_tokens=config.max_new_tokens(
+                            samples.size / config.SAMPLE_RATE_HZ, self.multilingual
+                        ),
+                        **self.generate_options(),
                     )
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)

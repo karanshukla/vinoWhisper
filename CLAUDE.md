@@ -727,6 +727,25 @@ working", never "fails past"). The doctor runs `ovfetch detect` when it is on
 PATH and reports platform + range, never as FAIL. vinoWhisper does not use
 ONNX Runtime; `docs/architecture.md` says why.
 
+## Multilingual (fr, de, es), added 2026-10-06
+
+`--language en|fr|de|es|auto` and `--task transcribe|translate` on the server
+(and `vinowhisper-setup`, which writes them into the unit). `en` keeps
+whisper-small.en; anything else loads `openai/whisper-small` from its own
+`whisper-small-ov[-stateful]` directories. Translate is Whisper's, into English
+only. `WhisperTranscriber.generate_options()` is the one place the tokens are
+built, and the English-only model gets none (it refuses them).
+
+Checked on the CPU device with `OpenVINO/whisper-small-int8-ov` and espeak-ng
+speech: all three transcribe, a forced language and auto both work, translate
+works. **Not done, needs the real laptop:** the NPU export of the multilingual
+model (`./scripts/convert_model.sh --model openai/whisper-small`), its latency,
+its `update_digests.py` pins (it reports `unpinned` until then), and anything
+with real speech. The source revision and sha256s *are* pinned. Forcing a language
+on the wrong audio makes Whisper answer in that language, not fail. The token
+cap has a x1.25 multilingual margin that is a guess (synthetic speech peaked at
+4.9 tok/s); measure it on real speech.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
