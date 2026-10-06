@@ -9,7 +9,7 @@ been built, so the pins in model_digests.json do not cover it yet.
 
 import pytest
 
-from vinowhisper import config, doctor, integrity, server, wizard
+from vinowhisper import config, doctor, integrity, wizard
 from vinowhisper import source as model_source
 from vinowhisper.transcriber import WhisperTranscriber
 
@@ -95,6 +95,8 @@ def test_the_token_cap_has_more_room_for_multilingual_speech_and_stays_below_the
 
 
 def test_the_server_takes_language_and_task():
+    # Flask is a runtime dependency, not a dev one, so CI has no server module.
+    server = pytest.importorskip("vinowhisper.server")
     args = server._parse_args(["--language", "de", "--task", "translate"])
     assert (args.language, args.task) == ("de", "translate")
     defaults = server._parse_args([])
@@ -102,6 +104,7 @@ def test_the_server_takes_language_and_task():
 
 
 def test_the_server_rejects_translating_english(capsys):
+    server = pytest.importorskip("vinowhisper.server")
     with pytest.raises(SystemExit):
         server._parse_args(["--language", "en", "--task", "translate"])
     assert "translate" in capsys.readouterr().err
