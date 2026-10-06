@@ -169,6 +169,9 @@ vinowhisper-caption --record ~/sess       # save the session for replay
 vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
 vinowhisper-caption --json                # one event per line, what the overlay reads
 
+vinowhisper-setup --language fr           # French (de, es, auto): sets up the multilingual model
+vinowhisper-setup --language auto --task translate   # foreign speech, captioned in English
+
 vinowhisper-gui                           # the floating overlay and tray icon
 vinowhisper-gui toggle                    # show/hide it; Meta+Alt+C does the same
 vinowhisper-gui dictate                   # start/finish dictating; hold Meta+H does the same
@@ -202,6 +205,29 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 | [Debugging](https://github.com/karanshukla/vinoWhisper/blob/main/docs/debugging.md) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
 | [Architecture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/architecture.md) | Socket activation and scale-to-zero, and how to stop it |
 | [Development](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md) | Tests without the hardware, the build config, CI and releases |
+
+## Other languages
+
+French, German and Spanish work offline with Whisper's multilingual
+`whisper-small`, the same size and architecture as the default model. It is
+opt-in: `vinowhisper-setup --language fr` exports it beside the English one
+(about 1GB more disk) and starts the server with `--language fr`. `en`, the
+default, keeps `whisper-small.en`.
+
+- **Translation is Whisper's own, and only goes into English.**
+  `--task translate` captions French, German or Spanish speech in English from
+  the same model, at no extra cost. Translating into any other language needs a
+  separate translation model, which this does not do.
+- **Name the language when you know it.** `--language auto` detects it on every
+  window and can flip mid-caption. A forced language on the wrong audio does
+  not fail: Whisper answers in that language anyway.
+- **Not verified on the NPU.** The checks (2026-10-06) ran on the CPU device
+  with an int8 multilingual small and synthetic speech: transcription, forced
+  language, auto-detect and translate all worked. The NPU export of the
+  multilingual model has not been built or benchmarked, so latency is
+  unmeasured, and its digests are not pinned yet (the doctor reports it
+  unpinned). Accuracy on real speech and accents is untested, and small is
+  noticeably weaker than English-only small.en.
 
 ## Honest limits
 

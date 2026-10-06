@@ -31,10 +31,20 @@ class Outcome:
 
 
 class Wizard:
-    def __init__(self, assume_yes: bool = False, dry_run: bool = False, device: str = "auto"):
+    def __init__(
+        self,
+        assume_yes: bool = False,
+        dry_run: bool = False,
+        device: str = "auto",
+        language: str = config.DEFAULT_LANGUAGE,
+        task: str = config.DEFAULT_TASK,
+    ):
         self.assume_yes = assume_yes
         self.dry_run = dry_run
         self.device = device
+        self.language = language
+        self.task = task
+        self.multilingual = config.is_multilingual(language, task)
         self.distro = distro.detect()
         self.failed: list[str] = []
         self.skipped: list[str] = []
@@ -170,11 +180,13 @@ class Wizard:
         except devices.DeviceError:
             kind = "NPU"
         variant = "npu" if kind == "NPU" else "stateful"
-        directory = config.model_dir(kind)
+        directory = config.model_dir(kind, self.multilingual)
+        model_id = config.model_id(self.multilingual)
+        export = config.export_command(variant, self.multilingual)
 
         if directory.is_dir() and any(directory.glob("*.xml")):
             return self.check_digests(
-                variant, directory, f"{variant} export present at {directory}"
+                variant, directory, f"{variant} export present at {directory}", model_id
             )
 
         self.say(f"  No {variant} export at {directory}.")
@@ -187,9 +199,9 @@ class Wizard:
             if cli is None:
                 return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
 
-        source = model_source.load(config.MODEL_ID)
+        source = model_source.load(model_id)
         if source is None:
-            return Outcome(False, f"no pinned source for {config.MODEL_ID}; reinstall vinowhisper")
+            return Outcome(False, f"no pinned source for {model_id}; reinstall vinowhisper")
         argv = [cli, *export_argv(variant, directory, source.directory)[1:]]
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
         self.say(
@@ -201,7 +213,7 @@ class Wizard:
             + " ".join(argv)
         )
         if not self.confirm("download and export it now?"):
-            return Outcome(None, f"run {config.export_command(variant)} when ready")
+            return Outcome(None, f"run {export} when ready")
         try:
             model_source.fetch(source, say=lambda line: self.say(f"  {line}"))
         except model_source.SourceError as exc:
@@ -209,11 +221,13 @@ class Wizard:
         except (requests.RequestException, OSError) as exc:
             return Outcome(None, f"download failed ({exc}); re-run to resume")
         if self.execute(argv, env=_EXPORT_ENV):
-            return self.check_digests(variant, directory, f"exported to {directory}")
-        return Outcome(None, f"run {config.export_command(variant)} when ready")
+            return self.check_digests(variant, directory, f"exported to {directory}", model_id)
+        return Outcome(None, f"run {export} when ready")
 
-    def check_digests(self, variant: str, directory: Path, summary: str) -> Outcome:
-        result = integrity.verify(directory, variant)
+    def check_digests(
+        self, variant: str, directory: Path, summary: str, model_id: str = config.MODEL_ID
+    ) -> Outcome:
+        result = integrity.verify(directory, variant, model_id)
         if result.status == integrity.VERIFIED:
             return Outcome(True, f"{summary}, digests verified")
         for line in result.lines()[1:]:
@@ -230,9 +244,9 @@ class Wizard:
                 "`vinowhisper-server` before captioning",
             )
 
-        service, socket = unit_files(device=self.device)
+        service, socket = unit_files(device=self.device, language=self.language, task=self.task)
         self.say(f"  Writing {UNIT_DIR}/vinowhisper-server.{{service,socket}}")
-        self.say("  ExecStart: " + _exec_start(self.device))
+        self.say("  ExecStart: " + _exec_start(self.device, self.language, self.task))
         self.say(
             "  Then: systemctl --user daemon-reload, stop vinowhisper-server.service "
             "(drops a loaded model), reset-failed, enable and restart vinowhisper-server.socket"
@@ -452,11 +466,15 @@ class Wizard:
 
 
 def export_argv(
-    variant: str, directory: Path | None = None, source: Path | str = config.MODEL_ID
+    variant: str,
+    directory: Path | None = None,
+    source: Path | str | None = None,
+    multilingual: bool = False,
 ) -> list[str]:
     if variant not in ("npu", "stateful"):
         raise ValueError(f"variant must be 'npu' or 'stateful', got {variant!r}")
-    out = directory or (config.MODEL_DIR if variant == "npu" else config.STATEFUL_MODEL_DIR)
+    out = directory or config.model_dir("NPU" if variant == "npu" else "CPU", multilingual)
+    source = source or config.model_id(multilingual)
     argv = [
         "optimum-cli",
         "export",
@@ -502,14 +520,27 @@ def _has_systemd() -> bool:
     return Path("/run/systemd/system").exists()
 
 
-def _exec_start(device: str = "auto") -> str:
+def _exec_start(
+    device: str = "auto",
+    language: str = config.DEFAULT_LANGUAGE,
+    task: str = config.DEFAULT_TASK,
+) -> str:
     script = Path(sys.executable).with_name("vinowhisper-server")
-    if script.exists():
-        return f"{script} --device {device}"
-    return f"{sys.executable} -m vinowhisper.server --device {device}"
+    command = str(script) if script.exists() else f"{sys.executable} -m vinowhisper.server"
+    command += f" --device {device}"
+    # Only when set, so an English install keeps the unit it always had.
+    if language != config.DEFAULT_LANGUAGE:
+        command += f" --language {language}"
+    if task != config.DEFAULT_TASK:
+        command += f" --task {task}"
+    return command
 
 
-def unit_files(device: str = "auto") -> tuple[str, str]:
+def unit_files(
+    device: str = "auto",
+    language: str = config.DEFAULT_LANGUAGE,
+    task: str = config.DEFAULT_TASK,
+) -> tuple[str, str]:
     service = f"""\
 [Unit]
 Description=vinoWhisper transcription server
@@ -517,7 +548,7 @@ Documentation=https://github.com/karanshukla/vinoWhisper
 Requires=vinowhisper-server.socket
 
 [Service]
-ExecStart={_exec_start(device)}
+ExecStart={_exec_start(device, language, task)}
 Restart=on-failure
 RestartSec=2
 # Only seccomp-backed hardening: the namespace kind (ProtectClock, PrivateTmp,
@@ -583,6 +614,19 @@ def main(argv: list[str] | None = None) -> int:
         "what the generated systemd unit passes to the server.",
     )
     parser.add_argument(
+        "--language",
+        default=config.DEFAULT_LANGUAGE,
+        metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
+        help="Spoken language. 'en' (the default) uses the English-only model; anything "
+        "else sets up the multilingual whisper-small and passes the choice to the server.",
+    )
+    parser.add_argument(
+        "--task",
+        default=config.DEFAULT_TASK,
+        choices=config.TASKS,
+        help="'translate' captions foreign speech in English (needs a spoken language or 'auto').",
+    )
+    parser.add_argument(
         "--print-units",
         action="store_true",
         help="Print the systemd units that would be generated, then exit.",
@@ -604,9 +648,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
+    try:
+        config.check_language(args.language, args.task)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.print_units:
-        service, socket = unit_files(args.device)
+        service, socket = unit_files(args.device, args.language, args.task)
         print(f"# {UNIT_DIR}/vinowhisper-server.service\n{service}")
         print(f"# {UNIT_DIR}/vinowhisper-server.socket\n{socket}")
         return 0
@@ -615,7 +663,13 @@ def main(argv: list[str] | None = None) -> int:
         print("--yes and --dry-run contradict each other", file=sys.stderr)
         return 2
 
-    wizard = Wizard(assume_yes=args.yes, dry_run=args.dry_run, device=args.device)
+    wizard = Wizard(
+        assume_yes=args.yes,
+        dry_run=args.dry_run,
+        device=args.device,
+        language=args.language,
+        task=args.task,
+    )
     try:
         if args.gui:
             return wizard.run_overlay()

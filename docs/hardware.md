@@ -62,6 +62,7 @@ doctor and the server all check which one you have against the device you got.
 ./scripts/convert_model.sh --variant npu        # ~/.local/share/vinowhisper/models/whisper-small.en-ov
 ./scripts/convert_model.sh --variant stateful   # ...-ov-stateful
 ./scripts/convert_model.sh --variant both
+./scripts/convert_model.sh --model openai/whisper-small   # multilingual, ...whisper-small-ov
 ```
 
 **The model is whisper-small.en, on purpose.** Benchmarked against base.en and
@@ -69,6 +70,12 @@ tiny.en on this NPU (2026-08-03, same clip): base.en was 2.6x faster and
 tiny.en 3.8x, and both made real transcription errors (garbled and misheard
 words, and tiny.en repeated itself at the end). small.en was the only one with
 none.
+
+French, German and Spanish use the multilingual `whisper-small` instead
+(`vinowhisper-server --language fr|de|es|auto`, and `--task translate` for
+English captions). It lives in its own directories, so both exports can sit
+side by side. Only the CPU device has run it (2026-10-06); the NPU static
+pipeline has not been tried on it.
 
 ## When the GPU doesn't show up
 

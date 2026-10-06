@@ -8,6 +8,7 @@
 #   ./scripts/convert_model.sh                      # npu variant (default)
 #   ./scripts/convert_model.sh --variant stateful   # cpu/gpu variant
 #   ./scripts/convert_model.sh --variant both
+#   ./scripts/convert_model.sh --model openai/whisper-small   # multilingual (fr, de, es, ...)
 #   ./scripts/convert_model.sh --model openai/whisper-base.en --out /tmp/x
 set -euo pipefail
 
@@ -23,7 +24,9 @@ Export openai/whisper-small.en to OpenVINO IR.
   --variant npu|stateful|both   npu (default) uses --disable-stateful, which the
                                 NPU static pipeline requires; stateful is the
                                 CPU/GPU export. They are not interchangeable.
-  --model <hf-id>               model to export (default openai/whisper-small.en)
+  --model <hf-id>               model to export (default openai/whisper-small.en);
+                                openai/whisper-small is the multilingual one that
+                                `vinowhisper-server --language fr|de|es|auto` loads
   --out <dir>                   output directory (default: the XDG data dir)
 EOF
     exit "${1:-0}"
@@ -104,9 +107,9 @@ export_one() {
 for variant in npu stateful; do
     [[ "$VARIANT" == "both" || "$VARIANT" == "$variant" ]] || continue
     if [[ "$variant" == "npu" ]]; then
-        export_one npu "${OUT_DIR:-$DATA_HOME/vinowhisper/models/whisper-small.en-ov}"
+        export_one npu "${OUT_DIR:-$DATA_HOME/vinowhisper/models/${MODEL_ID#*/}-ov}"
     else
-        export_one stateful "${OUT_DIR:-$DATA_HOME/vinowhisper/models/whisper-small.en-ov-stateful}"
+        export_one stateful "${OUT_DIR:-$DATA_HOME/vinowhisper/models/${MODEL_ID#*/}-ov-stateful}"
     fi
 done
 

@@ -178,47 +178,66 @@ def _models() -> list[Result]:
         needed_kind = "NPU"
 
     results = []
-    for kind, variant, directory in (
-        ("NPU", "npu", config.MODEL_DIR),
-        ("CPU/GPU", "stateful", config.STATEFUL_MODEL_DIR),
-    ):
-        required = (needed_kind == "NPU") if kind == "NPU" else (needed_kind != "NPU")
-        label = f"model ({variant})"
-        if not directory.is_dir():
-            results.append(
-                Result(
-                    FAIL if required else UNKNOWN,
-                    label,
-                    f"not exported at {directory}"
-                    + (
-                        f" — run {config.export_command(variant)}"
-                        if required
-                        else " (only needed if you run on this device class)"
-                    ),
-                )
-            )
+    # The multilingual export is opt-in (`--language`), so it is only checked once it exists.
+    for multilingual in (False, True):
+        npu_dir = config.model_dir("NPU", multilingual)
+        stateful_dir = config.model_dir("CPU", multilingual)
+        if multilingual and not (npu_dir.is_dir() or stateful_dir.is_dir()):
             continue
-
-        has_with_past = any(directory.glob("*decoder_with_past*.xml"))
-        wrong = has_with_past if kind != "NPU" else not has_with_past
-        if wrong:
-            results.append(
-                Result(
-                    FAIL if required else WARN,
-                    label,
-                    f"{directory} is the wrong export for {kind} — "
-                    f"re-run {config.export_command(variant)}",
-                )
-            )
-        else:
-            results.append(Result(OK, label, str(directory)))
-            results.append(_digests(variant, directory, required))
+        for kind, variant, directory in (
+            ("NPU", "npu", npu_dir),
+            ("CPU/GPU", "stateful", stateful_dir),
+        ):
+            results += _model(kind, variant, directory, needed_kind, multilingual)
     return results
 
 
-def _digests(variant: str, directory: Path, required: bool) -> Result:
-    result = integrity.verify(directory, variant)
-    label = f"model ({variant}) digests"
+def _model(
+    kind: str, variant: str, directory: Path, needed_kind: str, multilingual: bool
+) -> list[Result]:
+    required = (needed_kind == "NPU") if kind == "NPU" else (needed_kind != "NPU")
+    required = required and not multilingual
+    label = f"model ({variant}{', multilingual' if multilingual else ''})"
+    if not directory.is_dir():
+        return [
+            Result(
+                FAIL if required else UNKNOWN,
+                label,
+                f"not exported at {directory}"
+                + (
+                    f" — run {config.export_command(variant, multilingual)}"
+                    if required
+                    else " (only needed if you run on this device class)"
+                ),
+            )
+        ]
+
+    has_with_past = any(directory.glob("*decoder_with_past*.xml"))
+    wrong = has_with_past if kind != "NPU" else not has_with_past
+    if wrong:
+        return [
+            Result(
+                FAIL if required else WARN,
+                label,
+                f"{directory} is the wrong export for {kind} — "
+                f"re-run {config.export_command(variant, multilingual)}",
+            )
+        ]
+    return [
+        Result(OK, label, str(directory)),
+        _digests(variant, directory, required, config.model_id(multilingual), label),
+    ]
+
+
+def _digests(
+    variant: str,
+    directory: Path,
+    required: bool,
+    model_id: str = config.MODEL_ID,
+    model_label: str | None = None,
+) -> Result:
+    result = integrity.verify(directory, variant, model_id)
+    label = f"{model_label or f'model ({variant})'} digests"
     if result.status == integrity.VERIFIED:
         return Result(OK, label, result.summary())
     if result.severe:

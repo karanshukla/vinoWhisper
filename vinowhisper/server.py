@@ -95,8 +95,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         f"{'>'.join(devices.PREFERENCE)} and warns when it lands below NPU; an "
         "explicit device is refused rather than downgraded if it is unavailable.",
     )
+    parser.add_argument(
+        "--language",
+        default=config.DEFAULT_LANGUAGE,
+        metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
+        help="Spoken language (default en). 'en' loads the English-only model; any other "
+        "value loads the multilingual whisper-small, which has to be exported first "
+        "(vinowhisper-setup --language ...). 'auto' detects per window and can flip "
+        "mid-caption, so name the language when you know it.",
+    )
+    parser.add_argument(
+        "--task",
+        default=config.DEFAULT_TASK,
+        choices=config.TASKS,
+        help="'translate' captions foreign speech in English. It is Whisper's own "
+        "translate task, so it needs a spoken language or 'auto', and cannot go "
+        "into any other language.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        config.check_language(args.language, args.task)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     global transcriber
-    transcriber = WhisperTranscriber(device=args.device)
+    transcriber = WhisperTranscriber(device=args.device, language=args.language, task=args.task)
 
     try:
         selection = transcriber.select_device()
