@@ -17,6 +17,7 @@ from . import (
     integrity,
     ovfetch,
     recorder,
+    replacements,
     style,
 )
 
@@ -168,6 +169,17 @@ def _failed_devices() -> list[Result]:
         )
         for failure in cleared
     ]
+
+
+def _replacements() -> list[Result]:
+    table, problem = replacements.read()
+    if problem is not None:
+        return [
+            Result(WARN, "replacements", f"{config.REPLACEMENTS_FILE}: invalid, ignored: {problem}")
+        ]
+    if not config.REPLACEMENTS_FILE.exists():
+        return [Result(OK, "replacements", "absent")]
+    return [Result(OK, "replacements", f"{len(table)} entries")]
 
 
 def _models() -> list[Result]:
@@ -444,6 +456,7 @@ def collect(probe: bool = True) -> list[Result]:
     results += _devices()
     results += _ovfetch()
     results += _failed_devices()
+    results += _replacements()
     results += _models()
     results += _server()
     results += _audio_tools()

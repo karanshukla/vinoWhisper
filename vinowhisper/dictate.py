@@ -12,7 +12,7 @@ from typing import Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, config
+from . import __version__, audio, config, replacements
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
@@ -76,6 +76,7 @@ class Dictation:
         self._captured = 0
         self._full_sent = False
         self._generation = 0
+        self._replacements: dict[str, str] = {}
 
     def feed(self, lines: Iterable[str]) -> threading.Thread:
         def read() -> None:
@@ -117,6 +118,7 @@ class Dictation:
         self._generation += 1
         self._captured = 0
         self._full_sent = False
+        self._replacements = replacements.load()
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
@@ -196,7 +198,7 @@ class Dictation:
         self._emit(
             {
                 "event": "Dictated",
-                "text": clean(transcript),
+                "text": replacements.apply(clean(transcript), self._replacements),
                 "audio_s": audio_s,
                 "total_s": time.monotonic() - started_at,
                 "rms": level,
