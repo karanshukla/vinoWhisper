@@ -292,6 +292,11 @@ and the traps found building it:
 - **The clipboard is cleared after the paste reads it**, at the user's
   request, and the text carries `x-kde-passwordManagerHint: secret` so
   Klipper never records it; Klipper then restores the previous item.
+- **Hands-free stops itself after silence** (2026-10-07, issue #56): 0.5s of
+  speech then 2.5s under `SILENCE_RMS_THRESHOLD`, counted in Python from the
+  tap's chunks. The mode is only known at the key's release, after `start`,
+  so the overlay sends `hands-free` then (not a `start` argument). The 2.5s
+  is a guess, untested on hardware.
 - `VINOWHISPER_GUI_TRACE=1` logs every key and state change (not the text).
   One unreproduced report of a tap doing nothing; a press during
   Transcribing is ignored by design, which is the likely cause.

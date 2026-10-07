@@ -163,6 +163,25 @@ The overlay also types what you say into whatever window has focus.
 
 - **Hold** the dictation key, talk, release: the text is typed on release.
 - **Tap** it (shorter than 350ms) to start hands-free, talk, tap again to finish.
+  Or just stop talking: after at least 0.5s of speech and then 2.5s of quiet,
+  it finishes by itself. Quiet before you have said anything never ends it, and
+  a held key never auto-stops. Added 2026-10-07, from
+  [issue #56](https://github.com/karanshukla/vinoWhisper/issues/56).
+
+**The 2.5s timeout is a guess.** It was picked from how other dictation tools
+feel, not measured, and nobody has dictated with it on the laptop yet. "Quiet"
+is `config.SILENCE_RMS_THRESHOLD`, the same level captions use, so a noisy room
+may never read as quiet and a soft talker may read as quiet mid-sentence. The
+tests are logic only (chunk counts, no microphone). The constants are
+`HANDS_FREE_MIN_SPEECH_S` and `HANDS_FREE_SILENCE_S` in `config.py`.
+
+**Why it lives in Python.** `vinowhisper-dictate` already sees every 100ms
+chunk in its tap, so the rule is counted in samples and tested without a clock;
+the overlay would only see `Level` events at an irregular ~10/s. Python cannot
+tell hold from tap, though, and the recording starts on the press, before the
+overlay knows which it is. So `start` takes no argument: on a tap's release
+the overlay sends a separate `hands-free` command, and only then can the
+silence rule stop it. Speech heard before that still counts.
 
 It asks the portal for **Meta+H**, which is what the dictation key on this
 laptop's F-row sends, after Windows' Win+H. A small pill shows what it is

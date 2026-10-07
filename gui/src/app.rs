@@ -807,6 +807,7 @@ impl App {
     fn dictate(&mut self, action: Option<Action>) {
         match action {
             Some(Action::Start) => self.tell_dictator("start"),
+            Some(Action::HandsFree) => self.tell_dictator("hands-free"),
             Some(Action::Stop) => self.tell_dictator("stop"),
             Some(Action::Paste(text)) => match &mut self.clipboard {
                 Some(clipboard) => clipboard.set(&text, &self.qh),
