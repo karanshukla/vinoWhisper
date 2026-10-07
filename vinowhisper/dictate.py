@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import queue
 import re
 import sys
@@ -42,6 +43,16 @@ class _Recording(Protocol):
     def window(self, seconds: float) -> np.ndarray: ...
 
 
+@dataclass
+class _Trace:
+    started: float
+    first_s: float | None = None
+    loud_s: float | None = None
+    first_rms: float = 0.0
+    chunks: int = 0
+    loud_index: int = 0
+
+
 class _Client(Protocol):
     def wait_ready(self) -> dict: ...
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]: ...
@@ -66,7 +77,14 @@ class Dictation:
         emit: Emit,
         client: _Client | None = None,
         recorder: Callable[[Callable[[np.ndarray], None]], _Recording] | None = None,
+        trace: bool | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._trace_on = (
+            os.environ.get("VINOWHISPER_DICTATE_TRACE") == "1" if trace is None else trace
+        )
+        self._clock = clock
+        self._trace: _Trace | None = None
         self._emit = emit
         self._client = client or TranscriptionClient()
         self._recorder = recorder or (lambda tap: Recorder(source="mic", tap=tap))
@@ -117,6 +135,7 @@ class Dictation:
         self._generation += 1
         self._captured = 0
         self._full_sent = False
+        self._trace = _Trace(self._clock()) if self._trace_on else None
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
@@ -141,16 +160,50 @@ class Dictation:
         return warmup
 
     def _tap(self, samples: np.ndarray) -> None:
+        self._note_chunk(samples)
         self._captured += samples.size
         self._emit({"event": "Level", "rms": audio.rms(samples)})
         if not self._full_sent and self._captured >= config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ:
             self._full_sent = True
             self._commands.put(f"{_FULL} {self._generation}")
 
+    def _note_chunk(self, samples: np.ndarray) -> None:
+        trace = self._trace
+        if trace is None:
+            return
+        elapsed = self._clock() - trace.started
+        trace.chunks += 1
+        if trace.first_s is None:
+            trace.first_s = elapsed
+            trace.first_rms = audio.rms(samples)
+        if trace.loud_s is None and audio.rms(samples) >= config.SILENCE_RMS_THRESHOLD:
+            trace.loud_s = elapsed
+            trace.loud_index = trace.chunks
+
+    def _report_trace(self) -> None:
+        trace, self._trace = self._trace, None
+        if trace is None:
+            return
+        if trace.first_s is None:
+            print("[vinowhisper] dictate-trace: no audio chunk arrived", file=sys.stderr)
+            return
+        loud = (
+            "none"
+            if trace.loud_s is None
+            else f"{trace.loud_s * 1000:.0f}ms (chunk {trace.loud_index})"
+        )
+        print(
+            f"[vinowhisper] dictate-trace: first_chunk={trace.first_s * 1000:.0f}ms "
+            f"first_loud={loud} first_rms={trace.first_rms:.4f} "
+            f"threshold={config.SILENCE_RMS_THRESHOLD}",
+            file=sys.stderr,
+        )
+
     def _stop(self, transcribe: bool) -> None:
         recording, self._active = self._active, None
         if recording is None:
             return
+        self._report_trace()
         try:
             recording.check_alive()
             if transcribe:
