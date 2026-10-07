@@ -12,6 +12,7 @@ def _config_home() -> Path:
 
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
+TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
 
 MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"

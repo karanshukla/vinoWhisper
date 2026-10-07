@@ -7,6 +7,7 @@ piece of prose in this project that was wrong for a month.
 """
 
 import json
+import sys
 from types import SimpleNamespace
 
 from tests import pcm
@@ -287,3 +288,38 @@ def test_nothing_committing_for_seconds_shrinks_the_window_the_loop_asks_for(mon
 
 def test_translate_keeps_the_full_window_while_stalled(monkeypatch):
     assert set(_windows_asked_for(monkeypatch, "translate")) == {12.0}
+
+
+def _scripted(monkeypatch, tmp_path, *flags):
+    def fake_events(**_kwargs):
+        yield events.Ready(device="NPU")
+        yield events.Cycle(
+            index=1,
+            captured_s=2.0,
+            window_s=2.0,
+            hop_s=1.0,
+            rms=0.1,
+            gain=1.0,
+            first_piece_s=0.1,
+            total_s=0.5,
+            transcript="hello world",
+            confirmed=["hello", "world"],
+        )
+        yield events.Stopped()
+
+    monkeypatch.setattr(caption, "caption_events", fake_events)
+    monkeypatch.setattr(sys, "argv", ["vinowhisper-caption", "--json", *flags])
+    return caption.main()
+
+
+def test_transcript_flag_writes_beside_the_json_renderer(monkeypatch, tmp_path, capsys):
+    assert _scripted(monkeypatch, tmp_path, "--transcript", str(tmp_path / "t")) == 0
+    [saved] = (tmp_path / "t").iterdir()
+    assert "[00:00] hello world" in saved.read_text(encoding="utf-8")
+    assert '"event": "Cycle"' in capsys.readouterr().out
+
+
+def test_transcript_is_off_unless_asked_for(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert _scripted(monkeypatch, tmp_path) == 0
+    assert list(tmp_path.iterdir()) == []

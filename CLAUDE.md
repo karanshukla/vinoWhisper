@@ -132,7 +132,7 @@ consumers, that switch is a swap, not a rewrite.
 - **The loop emits events, it does not print.** `caption.caption_events` is a
   generator of `events.Ready` / `Cycle` / `Silence` / `Stopped`. `ui.RichRenderer`
   is one consumer, `caption.TerminalRenderer` another, `session.SessionWriter`
-  a third. Do not add prints to the loop; add fields to the events.
+  a third, and `session.TranscriptWriter` (`--transcript`, issue #36, opt-in) a fifth. Do not add prints to the loop; add fields to the events.
 - **Every stat on the bar comes off an event.** `Cycle` carries index,
   captured_s, window_s, hop_s, rms, gain, first_piece_s, total_s, the raw
   transcript, and confirmed/pending word lists. `Silence` carries elapsed
@@ -323,7 +323,8 @@ vinowhisper/
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
   ui.py           RichRenderer, the pinned status bar
-  session.py      --record writer, and reading a session back
+  paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
+  session.py      --record writer, --transcript writer (TranscriptWriter), reading a session back
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install

@@ -77,6 +77,7 @@ pub enum Command {
     SpeechApplied,
     ConfigureShortcut,
     SetAutostart(bool),
+    SetSaveTranscripts(bool),
     Shortcut(shortcut::State),
     DictateKey {
         down: bool,
@@ -390,6 +391,10 @@ impl App {
             Command::SpeechApplied => self.speech_applied(),
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
+            Command::SetSaveTranscripts(save) => {
+                self.settings.save_transcripts = save;
+                self.settings.save();
+            }
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
                 let action = self.dictation.key(down, Instant::now());
@@ -608,7 +613,13 @@ impl App {
         match &self.caption_program {
             None => self.captions.fail(session::not_found_message()),
             Some(program) => {
-                match Session::start(program, self.source(), self.generation, self.tx.clone()) {
+                match Session::start(
+                    program,
+                    self.source(),
+                    self.settings.save_transcripts,
+                    self.generation,
+                    self.tx.clone(),
+                ) {
                     Ok(session) => self.session = Some(session),
                     Err(err) => self
                         .captions
@@ -935,6 +946,7 @@ impl App {
             autostart: self.autostart,
             language: self.speech.language,
             task: self.speech.task,
+            save_transcripts: self.settings.save_transcripts,
         }
     }
 
