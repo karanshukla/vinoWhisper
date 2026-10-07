@@ -34,7 +34,7 @@ use smithay_client_toolkit::{delegate_registry, registry_handlers};
 
 use crate::captions::{Captions, Phase};
 use crate::clipboard::Clipboard;
-use crate::dictation::{Action, Dictation};
+use crate::dictation::{Action, Dictation, Recent};
 use crate::dictator::Dictator;
 use crate::idle::{self, IdleTimer};
 use crate::install;
@@ -59,6 +59,8 @@ const QUIT_AFTER: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_secs(1);
 
 const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
+const COPIED: &str = "Copied";
+const COPY_REFUSED: &str = "Finish dictating before copying";
 const NOTICE_FOR: Duration = Duration::from_secs(3);
 // Each applied switch costs a model load, so wait out a burst of menu clicks.
 const SPEECH_SETTLE: Duration = Duration::from_millis(1500);
@@ -75,6 +77,8 @@ pub enum Command {
     SetLanguage(Language),
     SetTranslate(bool),
     SpeechApplied,
+    CopyRecent(u64),
+    ClearRecent,
     ConfigureShortcut,
     SetAutostart(bool),
     Shortcut(shortcut::State),
@@ -178,6 +182,7 @@ pub struct App {
     shortcut_state: shortcut::State,
 
     dictation: Dictation,
+    recent: Recent,
     dictator: Option<Dictator>,
     dictator_generation: u64,
     dictate_program: Option<PathBuf>,
@@ -325,6 +330,7 @@ pub fn run(options: Options) -> Result<(), String> {
         shortcut,
         shortcut_state: shortcut::State::Pending,
         dictation: Dictation::new(),
+        recent: Recent::default(),
         dictator: None,
         dictator_generation: 0,
         clipboard,
@@ -388,6 +394,8 @@ impl App {
                 },
             }),
             Command::SpeechApplied => self.speech_applied(),
+            Command::CopyRecent(id) => self.copy_recent(id),
+            Command::ClearRecent => self.recent.clear(),
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
             Command::Shortcut(state) => self.shortcut_state = state,
@@ -411,6 +419,9 @@ impl App {
                         event => trace(format_args!("dictate says {event:?}")),
                     }
                     let action = self.dictation.event(event);
+                    if let Some(Action::Paste(text)) = &action {
+                        self.recent.push(text);
+                    }
                     self.dictate(action);
                 }
             }
@@ -564,8 +575,15 @@ impl App {
 
     // A restart drops the request in flight and the audio recorded so far, so say no.
     fn refuse_speech_switch(&mut self) {
-        let id = self.dictation.notice(SWITCH_REFUSED);
         eprintln!("[vinowhisper-gui] language not changed: {SWITCH_REFUSED}");
+        self.flash(SWITCH_REFUSED);
+        // The menu may already show the clicked choice; push the real one back.
+        self.tray_view = None;
+        self.sync_tray();
+    }
+
+    fn flash(&mut self, message: &str) {
+        let id = self.dictation.notice(message);
         self.show_pill();
         let _ = self.handle.insert_source(
             Timer::from_duration(NOTICE_FOR),
@@ -575,9 +593,22 @@ impl App {
                 TimeoutAction::Drop
             },
         );
-        // The menu may already show the clicked choice; push the real one back.
-        self.tray_view = None;
-        self.sync_tray();
+    }
+
+    fn copy_recent(&mut self, id: u64) {
+        if self.dictation.is_busy() {
+            self.flash(COPY_REFUSED);
+            return;
+        }
+        let Some(text) = self.recent.get(id) else {
+            return;
+        };
+        let Some(clipboard) = &mut self.clipboard else {
+            self.flash("This desktop gives no clipboard access");
+            return;
+        };
+        clipboard.restore(text, &self.qh);
+        self.flash(COPIED);
     }
 
     fn speech_applied(&mut self) {
@@ -823,7 +854,7 @@ impl App {
         self.clipboard.as_mut()
     }
 
-    fn clear_clipboard_after_paste(&mut self) {
+    pub fn clear_clipboard_after_paste(&mut self) {
         let Some(clipboard) = &mut self.clipboard else {
             return;
         };
@@ -935,6 +966,7 @@ impl App {
             autostart: self.autostart,
             language: self.speech.language,
             task: self.speech.task,
+            recent: self.recent.clone(),
         }
     }
 

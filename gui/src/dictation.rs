@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::captions::Tone;
@@ -6,8 +8,9 @@ use crate::protocol::Dictate;
 pub const TAP: Duration = Duration::from_millis(350);
 
 const PREVIEW_CHARS: usize = 64;
+pub const RECENT: usize = 5;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Phase {
     Idle,
     Listening {
@@ -23,11 +26,84 @@ pub enum Phase {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl fmt::Debug for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Phase::Idle => f.write_str("Idle"),
+            Phase::Listening { hands_free, live } => f
+                .debug_struct("Listening")
+                .field("hands_free", hands_free)
+                .field("live", live)
+                .finish(),
+            Phase::Transcribing => f.write_str("Transcribing"),
+            Phase::Typed { text, pasted } => f
+                .debug_struct("Typed")
+                .field("chars", &text.chars().count())
+                .field("pasted", pasted)
+                .finish(),
+            Phase::Nothing => f.write_str("Nothing"),
+            Phase::Failed(message) => f.debug_tuple("Failed").field(message).finish(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Action {
     Start,
     Stop,
     Paste(String),
+}
+
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Action::Start => f.write_str("Start"),
+            Action::Stop => f.write_str("Stop"),
+            Action::Paste(text) => write!(f, "Paste({} chars)", text.chars().count()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Default)]
+pub struct Recent {
+    entries: VecDeque<(u64, String)>,
+    next: u64,
+}
+
+impl fmt::Debug for Recent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Recent({} entries)", self.entries.len())
+    }
+}
+
+impl Recent {
+    pub fn push(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        self.entries.push_front((self.next, text.to_owned()));
+        self.next += 1;
+        self.entries.truncate(RECENT);
+    }
+
+    pub fn items(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.entries.iter().map(|(id, text)| (*id, text.as_str()))
+    }
+
+    pub fn get(&self, id: u64) -> Option<&str> {
+        self.items()
+            .find(|(held, _)| *held == id)
+            .map(|(_, text)| text)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -495,5 +571,58 @@ mod tests {
         let shown = preview(text.trim());
         assert_eq!(shown.chars().count(), PREVIEW_CHARS);
         assert!(shown.starts_with('…'));
+    }
+
+    #[test]
+    fn recent_keeps_five_newest_first() {
+        let mut recent = Recent::default();
+        for n in 0..7 {
+            recent.push(&format!("text {n}"));
+        }
+        let texts: Vec<&str> = recent.items().map(|(_, text)| text).collect();
+        assert_eq!(texts, ["text 6", "text 5", "text 4", "text 3", "text 2"]);
+    }
+
+    #[test]
+    fn recent_skips_empty_text_and_trims() {
+        let mut recent = Recent::default();
+        recent.push("");
+        recent.push("  \n ");
+        assert!(recent.is_empty());
+        recent.push("  hello \n");
+        assert_eq!(recent.items().next().map(|(_, text)| text), Some("hello"));
+    }
+
+    #[test]
+    fn recent_clear_empties_it_and_ids_are_not_reused() {
+        let mut recent = Recent::default();
+        recent.push("one");
+        let old = recent.items().next().map(|(id, _)| id).unwrap();
+        recent.clear();
+        assert!(recent.is_empty());
+        recent.push("two");
+        assert_eq!(recent.get(old), None);
+        assert_eq!(recent.items().count(), 1);
+    }
+
+    #[test]
+    fn recent_looks_an_entry_up_by_id_even_after_newer_ones_arrive() {
+        let mut recent = Recent::default();
+        recent.push("first");
+        let id = recent.items().next().map(|(id, _)| id).unwrap();
+        recent.push("second");
+        assert_eq!(recent.get(id), Some("first"));
+    }
+
+    #[test]
+    fn debug_output_never_carries_the_text() {
+        let mut d = Dictation::new();
+        let action = d.event(Dictate::Dictated {
+            text: "hunter2 secret words".into(),
+        });
+        let mut recent = Recent::default();
+        recent.push("hunter2 secret words");
+        let shown = format!("{:?} {:?} {:?}", action, d.phase(), recent);
+        assert!(!shown.contains("hunter2"), "{shown}");
     }
 }
