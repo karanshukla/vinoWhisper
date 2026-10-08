@@ -31,10 +31,15 @@ impl fmt::Debug for Phase {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Phase::Idle => f.write_str("Idle"),
-            Phase::Listening { hands_free, live } => f
+            Phase::Listening {
+                hands_free,
+                live,
+                text,
+            } => f
                 .debug_struct("Listening")
                 .field("hands_free", hands_free)
                 .field("live", live)
+                .field("chars", &text.chars().count())
                 .finish(),
             Phase::Transcribing => f.write_str("Transcribing"),
             Phase::Typed { text, pasted } => f

@@ -7,6 +7,8 @@ verdict, which is the one place the doctor draws a conclusion rather than
 reporting a fact.
 """
 
+import json
+
 import pytest
 
 from vinowhisper import config, devices, doctor, failures, integrity
@@ -189,3 +191,22 @@ def test_digests_are_only_checked_on_an_export_of_the_right_shape(model_dirs, mo
     labels = [result.label for result in doctor._models()]
     assert "model (npu)" in labels
     assert "model (npu) digests" not in labels
+
+
+def test_replacements_check_reports_absent():
+    result = doctor._replacements()[0]
+    assert (result.status, result.detail) == (doctor.OK, "absent")
+
+
+def test_replacements_check_counts_entries():
+    config.REPLACEMENTS_FILE.write_text(json.dumps({"a": "b", "c": "d"}))
+    result = doctor._replacements()[0]
+    assert (result.status, result.detail) == (doctor.OK, "2 entries")
+
+
+def test_replacements_check_names_the_error():
+    config.REPLACEMENTS_FILE.write_text('{"a": 1}')
+    result = doctor._replacements()[0]
+    assert result.status == doctor.WARN
+    assert "'a'" in result.detail
+    assert str(config.REPLACEMENTS_FILE) in result.detail

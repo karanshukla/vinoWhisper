@@ -331,6 +331,31 @@ recording 250ms past the release so a key let go on the last syllable does
 not cut it off. The key also wakes the server, so a cold model load overlaps
 the speech.
 
+**Word replacements, added 2026-10-07**, from [issue #58](https://github.com/karanshukla/vinoWhisper/issues/58).
+`~/.config/vinowhisper/replacements.json` (under `$XDG_CONFIG_HOME` if set)
+maps what Whisper writes to what you want typed:
+
+```json
+{"open vino": "OpenVINO", "vino whisper": "vinoWhisper", "k8s": "Kubernetes"}
+```
+
+It is post-processing because on the NPU `initial_prompt` is refused outright
+(CLAUDE.md, Known gotchas), so the model cannot be biased toward a vocabulary.
+Matching is case-insensitive and on whole words, so "vino" leaves "vinous"
+alone, with the longest key first and any punctuation left where it was
+("open vino." becomes "OpenVINO."). Spaces inside a key match any run of
+whitespace. The value is inserted exactly as written. The file is read on
+every start, so an edit applies to the next dictation with no restart. A
+missing file means no replacements. A file that is not valid JSON, not an
+object, or has a non-string value is ignored whole, with a warning on stderr
+naming the file and the problem; dictation carries on. `vinowhisper-doctor`
+reports `replacements` as absent, N entries, or invalid with the error.
+
+Captions are left out on purpose. They go through the stitcher, which compares
+words across cycles, and replacing words before stitching would interact with
+its normalisation and anchors. Not run on hardware or in the overlay; the
+Python side is unit-tested only.
+
 **Does the `pw-record` startup delay clip the first word? Not measured yet**
 ([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
 above is when audio arrives, not whether speech is lost. Keeping the mic open

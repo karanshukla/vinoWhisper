@@ -13,7 +13,7 @@ from typing import Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, config
+from . import __version__, audio, config, replacements
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
@@ -134,18 +134,30 @@ class _Segmenter:
 
 
 class _Decoder:
-    def __init__(self, client: _Client, warmup: _Warmup, emit: Emit) -> None:
+    def __init__(
+        self,
+        client: _Client,
+        warmup: _Warmup,
+        emit: Emit,
+        table: dict[str, str] | None = None,
+    ) -> None:
         self.texts: list[str] = []
         self.error: Exception | None = None
         self._client = client
         self._warmup = warmup
         self._emit = emit
+        self._table = table or {}
         self._live = True
         self._gate = threading.Lock()
         self._pending: queue.Queue[np.ndarray | None] = queue.Queue()
         self._cancelled = threading.Event()
         self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
         self._thread.start()
+
+    def joined(self) -> str:
+        # Replacements run on the joined text, not per piece, so a phrase split
+        # across two segments still matches.
+        return replacements.apply(clean(" ".join(self.texts)), self._table)
 
     def submit(self, samples: np.ndarray) -> None:
         self._pending.put(samples)
@@ -184,7 +196,7 @@ class _Decoder:
                         continue
                     self.texts.append(text)
                     if self._live:
-                        self._emit({"event": "Partial", "text": clean(" ".join(self.texts))})
+                        self._emit({"event": "Partial", "text": self.joined()})
 
 
 class Dictation:
@@ -266,7 +278,7 @@ class Dictation:
         self._speech = 0
         self._quiet = 0
         self._segmenter = _Segmenter()
-        self._decoder = _Decoder(self._client, warmup, self._emit)
+        self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
@@ -433,7 +445,7 @@ class Dictation:
         self._emit(
             {
                 "event": "Dictated",
-                "text": clean(" ".join(decoder.texts)),
+                "text": decoder.joined(),
                 "audio_s": audio_s,
                 "total_s": time.monotonic() - released_at,
                 "rms": level,

@@ -14,7 +14,7 @@ from collections import namedtuple
 
 import pytest
 
-from vinowhisper import devices
+from vinowhisper import config, devices
 
 _Version = namedtuple("_Version", "major minor micro releaselevel serial")
 
@@ -30,6 +30,13 @@ def no_real_hardware(monkeypatch, tmp_path_factory):
     empty = tmp_path_factory.mktemp("sys")
     monkeypatch.setattr(devices, "PCI_DIR", empty / "pci")
     monkeypatch.setattr(devices, "OPENCL_VENDORS_DIR", empty / "icd")
+
+
+@pytest.fixture(autouse=True)
+def no_user_replacements(monkeypatch, tmp_path_factory):
+    monkeypatch.setattr(
+        config, "REPLACEMENTS_FILE", tmp_path_factory.mktemp("cfg") / "replacements.json"
+    )
 
 
 @pytest.fixture

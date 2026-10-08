@@ -50,6 +50,8 @@ def check_language(language: str, task: str) -> None:
 # switch needs a server restart and no edited unit. A flag on the server overrides it.
 LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
+REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
+
 
 def load_language(path: Path | None = None) -> tuple[str, str]:
     import json
