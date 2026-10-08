@@ -25,6 +25,11 @@ def fake_version(major: int, minor: int, micro: int = 0) -> _Version:
 
 
 @pytest.fixture(autouse=True)
+def no_dictation_preview(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 1e9)
+
+
+@pytest.fixture(autouse=True)
 def no_real_hardware(monkeypatch, tmp_path_factory):
     """The PCI bus and OpenCL ICDs of whatever machine runs the suite are not fixtures."""
     empty = tmp_path_factory.mktemp("sys")

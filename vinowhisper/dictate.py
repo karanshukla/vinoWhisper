@@ -116,6 +116,11 @@ class _Segmenter:
     def finish(self) -> np.ndarray:
         return self._cut(len(self._chunks))
 
+    def peek(self) -> np.ndarray:
+        if not self._chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate([chunk for chunk, _ in self._chunks])
+
     def _quietest_in_tail(self) -> int:
         wanted = config.SEGMENT_FALLBACK_S * config.SAMPLE_RATE_HZ
         best, seen = len(self._chunks) - 1, 0
@@ -156,7 +161,8 @@ class _Decoder:
         self._table = table or {}
         self._live = True
         self._gate = threading.Lock()
-        self._pending: queue.Queue[np.ndarray | None] = queue.Queue()
+        self._pending: queue.Queue[tuple[np.ndarray, int | None] | None] = queue.Queue()
+        self._busy = False
         self._cancelled = threading.Event()
         self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
         self._thread.start()
@@ -166,8 +172,16 @@ class _Decoder:
         # across two segments still matches.
         return replacements.apply(clean(" ".join(self.texts)), self._table)
 
+    def joined_with(self, tail: str) -> str:
+        return replacements.apply(clean(" ".join([*self.texts, tail])), self._table)
+
     def submit(self, samples: np.ndarray) -> None:
-        self._pending.put(samples)
+        self._pending.put((samples, None))
+
+    def preview(self, samples: np.ndarray) -> None:
+        # Only when the decoder is idle, so a preview never delays a real piece by more than one.
+        if self._live and self._pending.empty() and not self._busy:
+            self._pending.put((samples, len(self.texts)))
 
     def finish(self) -> None:
         self._pending.put(None)
@@ -184,26 +198,39 @@ class _Decoder:
             self._live = False
 
     def _run(self) -> None:
-        while (samples := self._pending.get()) is not None:
-            if self._cancelled.is_set() or self.error is not None:
-                continue
-            self._warmup.done.wait()
-            if self._warmup.error is not None or self._cancelled.is_set():
-                continue
-            normalized, _gain = audio.normalize(samples, config.TARGET_RMS, config.MAX_GAIN)
+        while (job := self._pending.get()) is not None:
+            samples, tag = job
+            self._busy = True
             try:
-                transcript, _first = self._client.transcribe(normalized)
-            except requests.RequestException as exc:
+                self._decode(samples, tag)
+            finally:
+                self._busy = False
+
+    def _decode(self, samples: np.ndarray, tag: int | None) -> None:
+        if self._cancelled.is_set() or self.error is not None:
+            return
+        self._warmup.done.wait()
+        if self._warmup.error is not None or self._cancelled.is_set():
+            return
+        normalized, _gain = audio.normalize(samples, config.TARGET_RMS, config.MAX_GAIN)
+        try:
+            transcript, _first = self._client.transcribe(normalized)
+        except requests.RequestException as exc:
+            if tag is None:
                 self.error = exc
-                continue
-            text = clean(transcript)
-            if text:
-                with self._gate:
-                    if self._cancelled.is_set():
-                        continue
-                    self.texts.append(text)
-                    if self._live:
-                        self._emit({"event": "Partial", "text": self.joined()})
+            return
+        text = clean(transcript)
+        if not text:
+            return
+        with self._gate:
+            if self._cancelled.is_set():
+                return
+            if tag is None:
+                self.texts.append(text)
+                if self._live:
+                    self._emit({"event": "Partial", "text": self.joined()})
+            elif self._live and len(self.texts) == tag:
+                self._emit({"event": "Partial", "text": self.joined_with(text)})
 
 
 class Dictation:
@@ -235,6 +262,7 @@ class Dictation:
         self._hands_free = False
         self._speech = 0
         self._quiet = 0
+        self._since_preview = 0
 
     def feed(self, lines: Iterable[str]) -> threading.Thread:
         def read() -> None:
@@ -284,6 +312,7 @@ class Dictation:
         self._hands_free = False
         self._speech = 0
         self._quiet = 0
+        self._since_preview = 0
         self._segmenter = _Segmenter()
         self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
         recording = self._recorder(self._tap)
@@ -346,6 +375,15 @@ class Dictation:
             if segment is not None:
                 _submit(decoder, segment)
             self._stop_if_quiet()
+            self._since_preview += samples.size
+            if self._since_preview >= config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ:
+                self._since_preview = 0
+                tail = segmenter.peek()
+                if (
+                    tail.size >= config.PREVIEW_MIN_S * config.SAMPLE_RATE_HZ
+                    and audio.rms(tail) >= segmenter.threshold
+                ):
+                    decoder.preview(tail)
             if (
                 not self._stop_sent
                 and self._captured >= config.DICTATION_MAX_S * config.SAMPLE_RATE_HZ
