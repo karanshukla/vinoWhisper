@@ -167,6 +167,9 @@ def max_new_tokens(duration_s: float, multilingual: bool = False) -> int:
 
 SILENCE_RMS_THRESHOLD = 0.002
 
+NOISE_FLOOR_MARGIN = 2.0
+NOISE_FLOOR_MAX_RMS = 0.05
+
 HANDS_FREE_MIN_SPEECH_S = 0.5
 HANDS_FREE_SILENCE_S = 2.5
 

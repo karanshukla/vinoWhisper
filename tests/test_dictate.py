@@ -226,6 +226,38 @@ def test_hands_free_speech_then_the_silence_timeout_stops_and_decodes():
     assert len(client.decoded) == 1
 
 
+def _room(seconds: float) -> np.ndarray:
+    return pcm.sine(97.0, seconds, amplitude=0.03)
+
+
+def test_hands_free_stops_in_a_room_whose_noise_is_above_the_fixed_threshold():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_room(0.5))
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S - 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_room(0.2))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+
+
+def test_a_noisy_room_with_no_speech_never_stops():
+    dictation, recording, _, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_room(10.0))
+    assert dictation._commands.empty()
+
+
+def test_speech_that_opens_the_recording_does_not_become_the_noise_floor():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+
+
 def test_a_held_key_never_stops_on_silence():
     dictation, recording, _, _ = _live()
     recording.feed(_talk(1.0))

@@ -79,6 +79,12 @@ class _Segmenter:
         self._quiet = 0
         self._total = 0
         self._energy = 0.0
+        self._floor = float("inf")
+
+    @property
+    def threshold(self) -> float:
+        floor = self._floor if self._floor <= config.NOISE_FLOOR_MAX_RMS else 0.0
+        return max(config.SILENCE_RMS_THRESHOLD, floor * config.NOISE_FLOOR_MARGIN)
 
     @property
     def total_s(self) -> float:
@@ -92,11 +98,12 @@ class _Segmenter:
         if chunk.size == 0:
             return None
         level = audio.rms(chunk)
+        self._floor = min(self._floor, level)
         self._chunks.append((chunk, level))
         self._samples += chunk.size
         self._total += chunk.size
         self._energy += level * level * chunk.size
-        self._quiet = self._quiet + chunk.size if level < config.SILENCE_RMS_THRESHOLD else 0
+        self._quiet = self._quiet + chunk.size if level < self.threshold else 0
         rate = config.SAMPLE_RATE_HZ
         if self._samples >= config.SEGMENT_MIN_S * rate and self._quiet >= (
             config.SEGMENT_PAUSE_S * rate
@@ -125,7 +132,7 @@ class _Segmenter:
         self._samples = sum(chunk.size for chunk, _ in self._chunks)
         self._quiet = 0
         for chunk, level in reversed(self._chunks):
-            if level >= config.SILENCE_RMS_THRESHOLD:
+            if level >= self.threshold:
                 break
             self._quiet += chunk.size
         if not head:
@@ -330,12 +337,12 @@ class Dictation:
             if segmenter is None or decoder is None:
                 return
             self._captured += samples.size
-            if level >= config.SILENCE_RMS_THRESHOLD:
+            segment = segmenter.add(samples)
+            if level >= segmenter.threshold:
                 self._speech += samples.size
                 self._quiet = 0
             else:
                 self._quiet += samples.size
-            segment = segmenter.add(samples)
             if segment is not None:
                 _submit(decoder, segment)
             self._stop_if_quiet()
