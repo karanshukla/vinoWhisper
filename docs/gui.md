@@ -260,6 +260,9 @@ measured yet; that needs the NPU.
   hands-free stop (#56) never fired. The segmenter now tracks the quietest
   chunk as the floor and treats under 2x of it as quiet (`NOISE_FLOOR_MARGIN`),
   never below the fixed threshold, ignoring a floor above `NOISE_FLOOR_MAX_RMS`.
+  A chunk under half the fixed threshold is not taken as the floor (2026-10-08):
+  one near-silent chunk as the mic opens would otherwise pin it below the room's
+  noise for the whole dictation, and a floor that low changes nothing anyway.
 - **Capitalisation.** Whisper capitalises the start of each piece and may end
   it with a full stop, so a cut mid-sentence can read "...the report. And
   then...". Nothing repairs this.

@@ -242,6 +242,17 @@ def test_hands_free_stops_in_a_room_whose_noise_is_above_the_fixed_threshold():
     assert records[-1]["event"] == "Dictated"
 
 
+def test_a_silent_chunk_as_the_mic_opens_does_not_become_the_noise_floor():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_quiet(0.1))
+    recording.feed(_room(0.5))
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+
+
 def test_a_noisy_room_with_no_speech_never_stops():
     dictation, recording, _, _ = _live()
     dictation.handle("hands-free")
@@ -697,3 +708,14 @@ def test_silence_alone_is_not_previewed(monkeypatch):
     recording.feed(_quiet(4.0))
     time.sleep(0.3)
     assert client.decoded == []
+
+
+class BrokenClient(FakeClient):
+    def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+
+def test_a_decode_that_raises_reports_an_error_instead_of_typing_part_of_the_text():
+    records, _, _ = _run(["start", "stop"], client=BrokenClient())
+    assert records[-1]["event"] == "Error"
+    assert "Transcription failed" in records[-1]["message"]

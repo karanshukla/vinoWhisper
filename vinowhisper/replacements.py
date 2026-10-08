@@ -37,6 +37,12 @@ def apply(text: str, table: dict[str, str]) -> str:
         return text
     spoken = {" ".join(key.lower().split()): value for key, value in table.items()}
     keys = sorted(spoken, key=len, reverse=True)
-    pattern = "|".join(r"\s+".join(re.escape(word) for word in key.split(" ")) for key in keys)
+    # A group per key: IGNORECASE folds "İ" to "i" but "İ".lower() is two characters,
+    # so looking the match back up by its lowercased text can miss.
+    pattern = "|".join(
+        f"(?P<k{index}>" + r"\s+".join(re.escape(word) for word in key.split(" ")) + ")"
+        for index, key in enumerate(keys)
+    )
     matcher = re.compile(rf"(?<!\w)(?:{pattern})(?!\w)", re.IGNORECASE)
-    return matcher.sub(lambda m: spoken[" ".join(m.group().lower().split())], text)
+    values = {f"k{index}": spoken[key] for index, key in enumerate(keys)}
+    return matcher.sub(lambda m: values[m.lastgroup or ""], text)

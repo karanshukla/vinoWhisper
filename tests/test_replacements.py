@@ -65,6 +65,11 @@ def test_keys_with_symbols_match_whole():
     )
 
 
+def test_a_match_whose_lowercase_differs_from_the_key_does_not_crash():
+    # IGNORECASE matches "İ" against "i", but "İ".lower() is "i" plus a combining dot.
+    assert replacements.apply("İ said hi", {"i": "I"}) == "I said hi"
+
+
 def test_an_empty_table_or_text_is_a_no_op():
     assert replacements.apply("hello", {}) == "hello"
     assert replacements.apply("", {"a": "b"}) == ""
