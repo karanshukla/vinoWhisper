@@ -356,6 +356,30 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
+**Does the `pw-record` startup delay clip the first word? Not measured yet**
+([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
+above is when audio arrives, not whether speech is lost. Keeping the mic open
+for a pre-roll would hold Plasma's microphone indicator on permanently, so
+measure before deciding anything. `VINOWHISPER_DICTATE_TRACE=1` makes
+`vinowhisper-dictate` print one line per dictation to stderr (no text, no
+audio):
+
+    [vinowhisper] dictate-trace: first_chunk=190ms first_loud=390ms (chunk 3) first_rms=0.0004 threshold=0.002
+
+`first_chunk` is the time from the `start` command to the first audio chunk,
+`first_loud` the time to the first chunk at or above `SILENCE_RMS_THRESHOLD`
+(and its position), `first_rms` the level of the first 100ms chunk. The example
+line only shows the format; it is not a measurement.
+
+To measure, on the laptop: start the overlay with the variable set
+(`VINOWHISPER_DICTATE_TRACE=1 vinowhisper-gui`; its stderr is the journal if
+it runs as a service; the overlay forwards the lines prefixed `[dictate]`), then do about 20 dictations the way you normally do,
+pressing the key and starting to speak at once. Collect the lines. If
+`first_loud` is usually chunk 1, speech is already under way when capture
+starts and the first word is probably clipped. If it is usually chunk 3 or
+later, there is headroom. Write the result here with the date; the instrument
+was added 2026-10-07 and has not been run on hardware.
+
 ## Where it works
 
 The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what
