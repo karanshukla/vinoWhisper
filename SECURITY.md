@@ -15,6 +15,10 @@ as sensitive as whatever was playing; nothing else touches it. The files are
 created readable by you alone (0600), and the directory too (0700) when the
 recording creates it.
 
+`--transcript` (off unless asked for) writes the confirmed words to a text file
+with the same permissions. It is as sensitive as what was playing, and nothing
+deletes it.
+
 ## The trust boundary
 
 The transcription server listens on a Unix socket,

@@ -102,7 +102,7 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
-| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Change shortcut… and Quit |
+| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Change shortcut…, Save transcripts and Quit |
 | **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
@@ -125,6 +125,14 @@ a laptop that suspended often, three hours on the clock were 23 minutes to the
 timer, and the icon never tucked away. A timer that expires during suspend
 fires on resume, and it never wakes the machine (that would be
 `CLOCK_BOOTTIME_ALARM`).
+
+**Save transcripts** is a checkmark, off by default, stored as `save_transcripts`
+in `gui.json`. When it is set the overlay adds `--transcript` to the caption
+command, and Python does all the writing: see [terminal.md](terminal.md) for the
+file and where it goes. It applies from the next time the captions start, so
+toggling it while they are showing changes nothing until they are hidden and
+shown again. Not run against a live overlay as of 2026-10-07; the argv and the
+settings file are covered by unit tests.
 
 Tray choices are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
 unreadable one is reported and ignored, and every field has a default, so a

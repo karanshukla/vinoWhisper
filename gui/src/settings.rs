@@ -169,6 +169,7 @@ pub struct Settings {
     pub size: TextSize,
     pub shortcut: String,
     pub tray_idle_minutes: u64,
+    pub save_transcripts: bool,
 }
 
 impl Default for Settings {
@@ -179,6 +180,7 @@ impl Default for Settings {
             size: TextSize::default(),
             shortcut: DEFAULT_SHORTCUT.to_owned(),
             tray_idle_minutes: DEFAULT_TRAY_IDLE_MINUTES,
+            save_transcripts: false,
         }
     }
 }
@@ -263,6 +265,7 @@ mod tests {
             size: TextSize::Large,
             shortcut: "CTRL+ALT+K".into(),
             tray_idle_minutes: 5,
+            save_transcripts: true,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -286,6 +289,16 @@ mod tests {
         assert_eq!(settings.source, Source::Output);
         assert_eq!(settings.shortcut, DEFAULT_SHORTCUT);
         assert_eq!(settings.tray_idle_minutes, DEFAULT_TRAY_IDLE_MINUTES);
+        assert!(!settings.save_transcripts);
+    }
+
+    #[test]
+    fn saving_transcripts_is_off_until_the_file_says_so() {
+        assert!(!Settings::default().save_transcripts);
+        let path = scratch("transcripts");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"save_transcripts": true}"#).unwrap();
+        assert!(Settings::load_from(&path).save_transcripts);
     }
 
     #[test]
