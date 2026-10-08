@@ -41,6 +41,7 @@ pub struct Clipboard {
     ours: Vec<ExtDataControlSourceV1>,
     last_read: Option<Instant>,
     armed_at: Option<Instant>,
+    waiting: bool,
 }
 
 // A paste before this arrives gets the old selection.
@@ -64,10 +65,21 @@ impl Clipboard {
             ours: Vec::new(),
             last_read: None,
             armed_at: None,
+            waiting: false,
         })
     }
 
     pub fn set(&mut self, text: &str, qh: &QueueHandle<App>) {
+        self.offer(text, qh);
+        self.display.sync(qh, Taken);
+    }
+
+    pub fn restore(&mut self, text: &str, qh: &QueueHandle<App>) {
+        self.offer(text, qh);
+        self.waiting = true;
+    }
+
+    fn offer(&mut self, text: &str, qh: &QueueHandle<App>) {
         self.drop_sources();
         let text: Arc<str> = Arc::from(text);
         let source = |text: &Arc<str>| {
@@ -83,7 +95,7 @@ impl Clipboard {
         self.ours = vec![clipboard, primary];
         self.last_read = None;
         self.armed_at = None;
-        self.display.sync(qh, Taken);
+        self.waiting = false;
     }
 
     pub fn arm(&mut self, now: Instant) {
@@ -118,10 +130,13 @@ impl Clipboard {
         self.armed_at = None;
     }
 
-    fn read(&mut self, source: &ExtDataControlSourceV1, now: Instant) {
-        if self.ours.contains(source) {
-            self.last_read = Some(now);
+    // True for the first read of a restored text, which is when its clearing starts.
+    fn read(&mut self, source: &ExtDataControlSourceV1, now: Instant) -> bool {
+        if !self.ours.contains(source) {
+            return false;
         }
+        self.last_read = Some(now);
+        std::mem::take(&mut self.waiting)
     }
 
     // Someone else copied since: theirs, not ours to clear.
@@ -157,8 +172,10 @@ impl Dispatch<ExtDataControlSourceV1, Arc<str>> for App {
                 let bytes = if mime_type == PASSWORD_HINT {
                     b"secret".as_slice()
                 } else {
-                    if let Some(clipboard) = app.clipboard_mut() {
-                        clipboard.read(source, Instant::now());
+                    if let Some(clipboard) = app.clipboard_mut()
+                        && clipboard.read(source, Instant::now())
+                    {
+                        app.clear_clipboard_after_paste();
                     }
                     text.as_bytes()
                 };

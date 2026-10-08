@@ -102,7 +102,7 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
-| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Change shortcut…, Save transcripts and Quit |
+| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut…, Save transcripts and Quit |
 | **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
@@ -262,7 +262,21 @@ desktops in the table below do so out of the box.
 **Where the text goes is not checked.** Wayland does not say what has focus,
 so it pastes into whatever does. If typing failed outright, the text is left
 on the clipboard and the pill says so; after a paste that went to the wrong
-window it is gone, and the pill is the only place it still shows.
+window, recover it from the tray's **Recent dictations** submenu.
+
+**Recent dictations** holds the last five texts that were dictated and
+non-empty, newest first, as labels cut to 40 characters. Clicking one puts
+the full text back on the clipboard and the primary selection with the same
+secret hint, and shows "Copied" on the pill; it does not paste. Nothing
+is about to read it, so the clearing in step 5 above starts at the first
+read, whenever that is, not when you click; until then the text stays put. A click
+while a dictation is in progress is refused, so it cannot replace the text
+about to be pasted. **Clear** empties the list. The list lives only in the
+overlay's memory: never written to disk or to logs, and absent from
+`VINOWHISPER_GUI_TRACE` output (the debug formatting of the dictation state
+now prints a character count, not the text; it printed the text before).
+Quitting the overlay loses the list, on purpose. Not run against a live Plasma
+tray yet: only the history and the menu labels have unit tests; the copy-back and its clearing do not.
 
 The microphone is recorded by `vinowhisper-dictate --json`, which the
 overlay keeps running idle (reading its stdin, not the microphone) so that
