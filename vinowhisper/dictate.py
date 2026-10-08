@@ -26,6 +26,8 @@ _TAIL_WAIT_S = 1.0
 _NON_SPEECH = re.compile(r"^\s*[\[(][^\])]*[\])]\s*$")
 
 _FULL = "full"
+_QUIET = "quiet"
+_HANDS_FREE = "hands-free"
 _EOF = "eof"
 
 
@@ -74,8 +76,11 @@ class Dictation:
         self._active: _Recording | None = None
         self._warmup: _Warmup | None = None
         self._captured = 0
-        self._full_sent = False
+        self._stop_sent = False
         self._generation = 0
+        self._hands_free = False
+        self._speech = 0
+        self._quiet = 0
 
     def feed(self, lines: Iterable[str]) -> threading.Thread:
         def read() -> None:
@@ -102,7 +107,11 @@ class Dictation:
             self._start()
         elif command in ("stop", f"{_FULL} {self._generation}"):
             self._stop(transcribe=True)
-        elif command.startswith(_FULL):
+        elif command == _HANDS_FREE:
+            self._latch_hands_free()
+        elif command == f"{_QUIET} {self._generation}":
+            self._stop(transcribe=True)
+        elif command.startswith((_FULL, _QUIET)):
             pass
         elif command == "cancel":
             self._stop(transcribe=False)
@@ -116,7 +125,10 @@ class Dictation:
         self._warmup = self._warm()
         self._generation += 1
         self._captured = 0
-        self._full_sent = False
+        self._stop_sent = False
+        self._hands_free = False
+        self._speech = 0
+        self._quiet = 0
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
@@ -140,11 +152,35 @@ class Dictation:
         threading.Thread(target=run, name="dictate-warmup", daemon=True).start()
         return warmup
 
+    def _latch_hands_free(self) -> None:
+        if self._active is not None:
+            self._hands_free = True
+            self._stop_if_quiet()
+
+    def _stop_if_quiet(self) -> None:
+        wanted = config.HANDS_FREE_SILENCE_S * config.SAMPLE_RATE_HZ
+        heard = config.HANDS_FREE_MIN_SPEECH_S * config.SAMPLE_RATE_HZ
+        if (
+            self._hands_free
+            and not self._stop_sent
+            and self._speech >= heard
+            and self._quiet >= wanted
+        ):
+            self._stop_sent = True
+            self._commands.put(f"{_QUIET} {self._generation}")
+
     def _tap(self, samples: np.ndarray) -> None:
         self._captured += samples.size
-        self._emit({"event": "Level", "rms": audio.rms(samples)})
-        if not self._full_sent and self._captured >= config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ:
-            self._full_sent = True
+        level = audio.rms(samples)
+        self._emit({"event": "Level", "rms": level})
+        if level >= config.SILENCE_RMS_THRESHOLD:
+            self._speech += samples.size
+            self._quiet = 0
+        else:
+            self._quiet += samples.size
+        self._stop_if_quiet()
+        if not self._stop_sent and self._captured >= config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ:
+            self._stop_sent = True
             self._commands.put(f"{_FULL} {self._generation}")
 
     def _stop(self, transcribe: bool) -> None:
@@ -257,7 +293,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         required=True,
         help="One JSON object per event on stdout. Commands, one per line on stdin: "
-        "start, stop (and transcribe), cancel.",
+        "start, hands-free (a tap latched it: stop after silence), stop (and transcribe), cancel.",
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     return parser.parse_args(argv)

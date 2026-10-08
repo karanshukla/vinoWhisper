@@ -26,6 +26,7 @@ pub enum Phase {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Start,
+    HandsFree,
     Stop,
     Paste(String),
 }
@@ -145,7 +146,7 @@ impl Dictation {
                     hands_free: true,
                     live,
                 });
-                None
+                Some(Action::HandsFree)
             } else {
                 self.set(Phase::Transcribing);
                 Some(Action::Stop)
@@ -360,7 +361,7 @@ mod tests {
         let t = Instant::now();
         let mut d = Dictation::new();
         assert_eq!(d.key(true, t), Some(Action::Start));
-        assert_eq!(d.key(false, at(60, t)), None);
+        assert_eq!(d.key(false, at(60, t)), Some(Action::HandsFree));
         assert!(matches!(
             d.phase(),
             Phase::Listening {
@@ -382,7 +383,10 @@ mod tests {
         let t = Instant::now();
         let mut d = Dictation::new();
         d.key(true, t);
-        assert_eq!(d.key(false, t + TAP - Duration::from_millis(1)), None);
+        assert_eq!(
+            d.key(false, t + TAP - Duration::from_millis(1)),
+            Some(Action::HandsFree)
+        );
         assert!(matches!(
             d.phase(),
             Phase::Listening {
