@@ -1,12 +1,15 @@
 import json
 import os
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import IO
 
 import numpy as np
 
 from . import config, events
+from .paragraphs import ParagraphBreaker
 
 AUDIO_NAME = "audio.wav"
 EVENTS_NAME = "events.jsonl"
@@ -43,12 +46,98 @@ class SessionWriter:
 
 
 def _open_private(path: Path, mode: str) -> IO:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    mode_flag = os.O_APPEND if "a" in mode else os.O_TRUNC
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | mode_flag | os.O_CLOEXEC, 0o600)
     # The mode above only applies on creation; an overwritten recording keeps its old one.
     os.fchmod(fd, 0o600)
     if "b" in mode:
         return os.fdopen(fd, mode)
     return os.fdopen(fd, mode, encoding="utf-8")
+
+
+_SOURCE_LABELS = {"output": "system audio", "mic": "microphone"}
+
+
+class TranscriptWriter:
+    def __init__(
+        self,
+        target: Path,
+        source: str,
+        clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] = datetime.now,
+    ) -> None:
+        self.path: Path | None = None
+        self._target = target
+        self._source = _SOURCE_LABELS.get(source, source)
+        self._clock = clock
+        self._now = now
+        self._started_at = clock()
+        self._started = now()
+        self._device = "?"
+        self._breaker = ParagraphBreaker()
+        self._file: IO | None = None
+        self._first = True
+        self._closed = False
+
+    def event(self, event: events.Event) -> None:
+        if self._closed:
+            return
+        if isinstance(event, events.Ready):
+            self._device = event.device
+            self._started_at = self._clock()
+            self._started = self._now()
+        elif isinstance(event, events.Cycle):
+            self._words(event.confirmed)
+        elif isinstance(event, events.Silence):
+            self._breaker.silence(event.elapsed_s)
+        elif isinstance(event, events.Stopped):
+            self._words(event.flushed)
+            self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        file, self._file = self._file, None
+        if file is not None:
+            try:
+                file.write("\n")
+                file.close()
+            except OSError:
+                pass
+
+    def _words(self, words: list[str]) -> None:
+        if not words:
+            return
+        file = self._file or self._open()
+        for word in words:
+            if self._breaker.word(word):
+                file.write("\n\n" + self._stamp() + word)
+            elif self._first:
+                file.write(self._stamp() + word)
+            else:
+                file.write(" " + word)
+            self._first = False
+        file.flush()
+
+    def _stamp(self) -> str:
+        seconds = int(self._clock() - self._started_at)
+        return f"[{seconds // 60:02d}:{seconds % 60:02d}] "
+
+    def _open(self) -> IO:
+        target = self._target
+        if target.is_dir() or (not target.exists() and not target.suffix):
+            target.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target = target / self._started.strftime("%Y-%m-%d-%H%M%S.txt")
+        else:
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.path = target
+        self._file = _open_private(target, "a")
+        if os.fstat(self._file.fileno()).st_size:
+            self._file.write("\n")
+        stamp = f"{self._started:%Y-%m-%d %H:%M}"
+        self._file.write(f"vinoWhisper transcript, {stamp}, {self._source}, {self._device}\n\n")
+        return self._file
 
 
 def read_events(directory: Path) -> list[dict]:

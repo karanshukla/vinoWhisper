@@ -81,6 +81,7 @@ pub enum Command {
     ClearRecent,
     ConfigureShortcut,
     SetAutostart(bool),
+    SetSaveTranscripts(bool),
     Shortcut(shortcut::State),
     DictateKey {
         down: bool,
@@ -398,6 +399,10 @@ impl App {
             Command::ClearRecent => self.recent.clear(),
             Command::ConfigureShortcut => self.shortcut.configure(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
+            Command::SetSaveTranscripts(save) => {
+                self.settings.save_transcripts = save;
+                self.settings.save();
+            }
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
                 let action = self.dictation.key(down, Instant::now());
@@ -639,7 +644,13 @@ impl App {
         match &self.caption_program {
             None => self.captions.fail(session::not_found_message()),
             Some(program) => {
-                match Session::start(program, self.source(), self.generation, self.tx.clone()) {
+                match Session::start(
+                    program,
+                    self.source(),
+                    self.settings.save_transcripts,
+                    self.generation,
+                    self.tx.clone(),
+                ) {
                     Ok(session) => self.session = Some(session),
                     Err(err) => self
                         .captions
@@ -838,6 +849,7 @@ impl App {
     fn dictate(&mut self, action: Option<Action>) {
         match action {
             Some(Action::Start) => self.tell_dictator("start"),
+            Some(Action::HandsFree) => self.tell_dictator("hands-free"),
             Some(Action::Stop) => self.tell_dictator("stop"),
             Some(Action::Paste(text)) => match &mut self.clipboard {
                 Some(clipboard) => clipboard.set(&text, &self.qh),
@@ -967,6 +979,7 @@ impl App {
             language: self.speech.language,
             task: self.speech.task,
             recent: self.recent.clone(),
+            save_transcripts: self.settings.save_transcripts,
         }
     }
 

@@ -102,7 +102,7 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
-| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut… and Quit |
+| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut…, Save transcripts and Quit |
 | **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
@@ -125,6 +125,14 @@ a laptop that suspended often, three hours on the clock were 23 minutes to the
 timer, and the icon never tucked away. A timer that expires during suspend
 fires on resume, and it never wakes the machine (that would be
 `CLOCK_BOOTTIME_ALARM`).
+
+**Save transcripts** is a checkmark, off by default, stored as `save_transcripts`
+in `gui.json`. When it is set the overlay adds `--transcript` to the caption
+command, and Python does all the writing: see [terminal.md](terminal.md) for the
+file and where it goes. It applies from the next time the captions start, so
+toggling it while they are showing changes nothing until they are hidden and
+shown again. Not run against a live overlay as of 2026-10-07; the argv and the
+settings file are covered by unit tests.
 
 Tray choices are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
 unreadable one is reported and ignored, and every field has a default, so a
@@ -163,6 +171,25 @@ The overlay also types what you say into whatever window has focus.
 
 - **Hold** the dictation key, talk, release: the text is typed on release.
 - **Tap** it (shorter than 350ms) to start hands-free, talk, tap again to finish.
+  Or just stop talking: after at least 0.5s of speech and then 2.5s of quiet,
+  it finishes by itself. Quiet before you have said anything never ends it, and
+  a held key never auto-stops. Added 2026-10-07, from
+  [issue #56](https://github.com/karanshukla/vinoWhisper/issues/56).
+
+**The 2.5s timeout is a guess.** It was picked from how other dictation tools
+feel, not measured, and nobody has dictated with it on the laptop yet. "Quiet"
+is `config.SILENCE_RMS_THRESHOLD`, the same level captions use, so a noisy room
+may never read as quiet and a soft talker may read as quiet mid-sentence. The
+tests are logic only (chunk counts, no microphone). The constants are
+`HANDS_FREE_MIN_SPEECH_S` and `HANDS_FREE_SILENCE_S` in `config.py`.
+
+**Why it lives in Python.** `vinowhisper-dictate` already sees every 100ms
+chunk in its tap, so the rule is counted in samples and tested without a clock;
+the overlay would only see `Level` events at an irregular ~10/s. Python cannot
+tell hold from tap, though, and the recording starts on the press, before the
+overlay knows which it is. So `start` takes no argument: on a tap's release
+the overlay sends a separate `hands-free` command, and only then can the
+silence rule stop it. Speech heard before that still counts.
 
 It asks the portal for **Meta+H**, which is what the dictation key on this
 laptop's F-row sends, after Windows' Win+H. A small pill shows what it is

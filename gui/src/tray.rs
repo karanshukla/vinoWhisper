@@ -26,6 +26,7 @@ pub struct View {
     pub language: Language,
     pub task: Task,
     pub recent: Recent,
+    pub save_transcripts: bool,
 }
 
 pub struct Tray {
@@ -382,6 +383,15 @@ impl ksni::Tray for Tray {
                 label: shortcut,
                 enabled: can_configure,
                 activate: Box::new(|tray: &mut Self| tray.send(Command::ConfigureShortcut)),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Save transcripts".into(),
+                checked: self.view.save_transcripts,
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send(Command::SetSaveTranscripts(!tray.view.save_transcripts))
+                }),
                 ..Default::default()
             }
             .into(),

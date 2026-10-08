@@ -252,6 +252,17 @@ def _parse_args() -> argparse.Namespace:
         "vinowhisper-replay. Costs ~2MB per minute.",
     )
     parser.add_argument(
+        "--transcript",
+        nargs="?",
+        type=Path,
+        const=config.TRANSCRIPT_DIR,
+        metavar="PATH",
+        help="Also write the confirmed words to a text file, with a [MM:SS] stamp "
+        "per paragraph. A directory gets a new file per session; a file is "
+        f"appended to. Default {config.TRANSCRIPT_DIR}. Private (0600), and "
+        "nothing is written until the first word.",
+    )
+    parser.add_argument(
         "--plain",
         action="store_true",
         help="Plain stdout instead of the status bar. Implied when stdout is "
@@ -330,6 +341,7 @@ def main() -> int:
     plain = args.plain or args.debug or not sys.stdout.isatty()
     json_out = JsonRenderer() if args.json else None
     writer = session.SessionWriter(args.record) if args.record else None
+    transcript = session.TranscriptWriter(args.transcript, args.source) if args.transcript else None
     try:
         stream = caption_events(
             source=args.source,
@@ -341,6 +353,13 @@ def main() -> int:
             for event in stream:
                 if writer is not None:
                     writer.event(event)
+                if transcript is not None:
+                    try:
+                        transcript.event(event)
+                    except OSError as exc:
+                        print(f"\n[vinowhisper] transcript not saved: {exc}", file=sys.stderr)
+                        transcript.close()
+                        transcript = None
                 renderer.handle(event)
     except CaptureError as exc:
         print(f"\n[vinowhisper] capture failed: {exc}", file=sys.stderr)
@@ -371,6 +390,10 @@ def main() -> int:
         if writer is not None:
             writer.close()
             print(f"\n[vinowhisper] session saved to {args.record}", file=sys.stderr)
+        if transcript is not None:
+            transcript.close()
+            if transcript.path is not None:
+                print(f"\n[vinowhisper] transcript saved to {transcript.path}", file=sys.stderr)
     return 0
 
 

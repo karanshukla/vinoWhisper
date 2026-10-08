@@ -50,6 +50,7 @@ impl fmt::Debug for Phase {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     Start,
+    HandsFree,
     Stop,
     Paste(String),
 }
@@ -58,6 +59,7 @@ impl fmt::Debug for Action {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Action::Start => f.write_str("Start"),
+            Action::HandsFree => f.write_str("HandsFree"),
             Action::Stop => f.write_str("Stop"),
             Action::Paste(text) => write!(f, "Paste({} chars)", text.chars().count()),
         }
@@ -221,7 +223,7 @@ impl Dictation {
                     hands_free: true,
                     live,
                 });
-                None
+                Some(Action::HandsFree)
             } else {
                 self.set(Phase::Transcribing);
                 Some(Action::Stop)
@@ -436,7 +438,7 @@ mod tests {
         let t = Instant::now();
         let mut d = Dictation::new();
         assert_eq!(d.key(true, t), Some(Action::Start));
-        assert_eq!(d.key(false, at(60, t)), None);
+        assert_eq!(d.key(false, at(60, t)), Some(Action::HandsFree));
         assert!(matches!(
             d.phase(),
             Phase::Listening {
@@ -458,7 +460,10 @@ mod tests {
         let t = Instant::now();
         let mut d = Dictation::new();
         d.key(true, t);
-        assert_eq!(d.key(false, t + TAP - Duration::from_millis(1)), None);
+        assert_eq!(
+            d.key(false, t + TAP - Duration::from_millis(1)),
+            Some(Action::HandsFree)
+        );
         assert!(matches!(
             d.phase(),
             Phase::Listening {
