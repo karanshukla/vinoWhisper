@@ -260,9 +260,18 @@ measured yet; that needs the NPU.
   hands-free stop (#56) never fired. The segmenter now tracks the quietest
   chunk as the floor and treats under 2x of it as quiet (`NOISE_FLOOR_MARGIN`),
   never below the fixed threshold, ignoring a floor above `NOISE_FLOOR_MAX_RMS`.
-  A chunk under half the fixed threshold is not taken as the floor (2026-10-08):
-  one near-silent chunk as the mic opens would otherwise pin it below the room's
-  noise for the whole dictation, and a floor that low changes nothing anyway.
+  The first `NOISE_FLOOR_SETTLE_S` (0.5s) never sets the floor (2026-10-08):
+  mics fade in when capture starts, and the floor is a minimum, so one faded
+  chunk would hold it under the room's noise for the whole dictation. Intel's
+  DMIC firmware (Zephyr `drivers/dai/intel/dmic`, which SOF runs on Meteor Lake
+  and later) ramps -90 dB to 0 dB over 100ms at 48 kHz, 200ms at 16 kHz, on
+  every start, and WirePlumber suspends an idle mic after 5s, so nearly every
+  dictation opens with it. A full ramp averages about a quarter of the room's
+  level: simulated through `_Segmenter`, a 0.021 room read as 0.005 and never
+  went quiet. Speech and silence in that opening are scored once the floor is
+  known, so room noise there is not counted as speech. A chunk under half the
+  fixed threshold (a dropout) is not taken as the floor either. Read from the
+  firmware source and simulated, not measured on hardware.
 - **Capitalisation.** Whisper capitalises the start of each piece and may end
   it with a full stop, so a cut mid-sentence can read "...the report. And
   then...". Nothing repairs this.

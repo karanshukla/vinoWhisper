@@ -87,6 +87,10 @@ class _Segmenter:
         return max(config.SILENCE_RMS_THRESHOLD, floor * config.NOISE_FLOOR_MARGIN)
 
     @property
+    def settled(self) -> bool:
+        return self._total > config.NOISE_FLOOR_SETTLE_S * config.SAMPLE_RATE_HZ
+
+    @property
     def total_s(self) -> float:
         return self._total / config.SAMPLE_RATE_HZ
 
@@ -98,9 +102,10 @@ class _Segmenter:
         if chunk.size == 0:
             return None
         level = audio.rms(chunk)
-        # A near-silent chunk (a source starting up) would pin the floor under real room
-        # noise; any floor this low yields the fixed threshold anyway.
-        if level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
+        # A near-silent chunk (a dropout) would pin the floor under real room noise;
+        # any floor this low yields the fixed threshold anyway.
+        settling = self._total < config.NOISE_FLOOR_SETTLE_S * config.SAMPLE_RATE_HZ
+        if not settling and level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
             self._floor = min(self._floor, level)
         self._chunks.append((chunk, level))
         self._samples += chunk.size
@@ -270,6 +275,7 @@ class Dictation:
         self._speech = 0
         self._quiet = 0
         self._since_preview = 0
+        self._unsettled: list[tuple[int, float]] = []
 
     def feed(self, lines: Iterable[str]) -> threading.Thread:
         def read() -> None:
@@ -320,6 +326,7 @@ class Dictation:
         self._speech = 0
         self._quiet = 0
         self._since_preview = 0
+        self._unsettled = []
         self._segmenter = _Segmenter()
         self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
         recording = self._recorder(self._tap)
@@ -374,11 +381,16 @@ class Dictation:
                 return
             self._captured += samples.size
             segment = segmenter.add(samples)
-            if level >= segmenter.threshold:
-                self._speech += samples.size
-                self._quiet = 0
-            else:
-                self._quiet += samples.size
+            # Room noise only reads as quiet once the floor is known, so score the opening then.
+            self._unsettled.append((samples.size, level))
+            if segmenter.settled:
+                for size, held in self._unsettled:
+                    if held >= segmenter.threshold:
+                        self._speech += size
+                        self._quiet = 0
+                    else:
+                        self._quiet += size
+                self._unsettled.clear()
             if segment is not None:
                 _submit(decoder, segment)
             self._stop_if_quiet()
