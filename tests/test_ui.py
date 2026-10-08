@@ -13,7 +13,8 @@ import io
 from rich.console import Console
 
 from vinowhisper import events
-from vinowhisper.ui import _PARAGRAPH_SILENCE_S, RichRenderer
+from vinowhisper.paragraphs import PARAGRAPH_SILENCE_S
+from vinowhisper.ui import RichRenderer
 
 
 def make_console(width: int = 80) -> Console:
@@ -98,7 +99,7 @@ def test_a_pause_breaks_the_paragraph_only_once_a_word_follows():
 
 
 def test_a_pause_shorter_than_the_paragraph_threshold_is_just_breath():
-    """_PARAGRAPH_SILENCE_S sits well above a normal inter-sentence gap on
+    """PARAGRAPH_SILENCE_S sits well above a normal inter-sentence gap on
     purpose: a threshold low enough to catch ordinary speech rhythm shreds the
     transcript into two-line stanzas. Both sides of it are pinned here, since
     only the far side was covered.
@@ -106,7 +107,7 @@ def test_a_pause_shorter_than_the_paragraph_threshold_is_just_breath():
     console = make_console()
     renderer = RichRenderer(console=console)
     renderer.handle(cycle(["first", "sentence."]))
-    renderer.handle(events.Silence(elapsed_s=_PARAGRAPH_SILENCE_S - 0.1, rms=0.0, sink_muted=False))
+    renderer.handle(events.Silence(elapsed_s=PARAGRAPH_SILENCE_S - 0.1, rms=0.0, sink_muted=False))
     renderer.handle(cycle(["still", "the", "same", "thought"]))
     renderer._flush_line()
 
@@ -117,7 +118,7 @@ def test_a_pause_at_the_paragraph_threshold_breaks():
     console = make_console()
     renderer = RichRenderer(console=console)
     renderer.handle(cycle(["first", "sentence."]))
-    renderer.handle(events.Silence(elapsed_s=_PARAGRAPH_SILENCE_S, rms=0.0, sink_muted=False))
+    renderer.handle(events.Silence(elapsed_s=PARAGRAPH_SILENCE_S, rms=0.0, sink_muted=False))
     renderer.handle(cycle(["a", "new", "thought"]))
     renderer._flush_line()
 

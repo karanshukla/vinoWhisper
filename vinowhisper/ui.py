@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import config, events
+from .paragraphs import ParagraphBreaker
 
 _METER_WIDTH = 14
 _SPARK_CHARS = "▁▂▃▄▅▆▇█"
@@ -22,28 +23,8 @@ _METER_CEIL_DB = -5.0
 _SILENCE_DB = 20 * math.log10(config.SILENCE_RMS_THRESHOLD)
 _QUIET_DB = -35.0
 
-_PARAGRAPH_SILENCE_S = 2.5
-
-_PARAGRAPH_MIN_WORDS = 70
-
 _GUTTER_W = 8
 _GUTTER_MIN_WIDTH = 60
-
-_SENTENCE_ENDS = ".?!"
-_CLOSERS = "\"'”’)]"
-
-_ABBREVIATIONS = frozenset(
-    "mr. mrs. ms. dr. prof. st. jr. sr. vs. etc. e.g. i.e. approx. inc. ltd.".split()  # noqa: SIM905
-)
-
-
-def _ends_sentence(word: str) -> bool:
-    stripped = word.rstrip(_CLOSERS)
-    if not stripped or stripped[-1] not in _SENTENCE_ENDS:
-        return False
-    if stripped.lower() in _ABBREVIATIONS:
-        return False
-    return not all(len(piece) <= 1 for piece in stripped.split("."))
 
 
 def _dbfs(rms: float) -> float:
@@ -99,8 +80,7 @@ class RichRenderer:
         self._word_count = 0
         self._gutter = ""
         self._new_paragraph = True
-        self._break_pending = False
-        self._words_in_paragraph = 0
+        self._paragraphs = ParagraphBreaker()
 
         self._pending: list[str] = []
         self._rms = 0.0
@@ -154,8 +134,7 @@ class RichRenderer:
             self._silent_for = event.elapsed_s
             self._muted = bool(event.sink_muted)
             self._state = ("MUTED", "red") if self._muted else ("no signal", "red")
-            if event.elapsed_s >= _PARAGRAPH_SILENCE_S:
-                self._break_pending = True
+            self._paragraphs.silence(event.elapsed_s)
         elif isinstance(event, events.Stopped):
             self._add_words(event.flushed)
             self._pending = []
@@ -165,9 +144,8 @@ class RichRenderer:
 
     def _add_words(self, words: list[str]) -> None:
         for word in words:
-            if self._break_pending and self._words_in_paragraph:
+            if self._paragraphs.word(word):
                 self._end_paragraph()
-            self._break_pending = False
 
             width = self._width()
             if self._columns and self._columns + 1 + len(word) > width:
@@ -180,10 +158,6 @@ class RichRenderer:
             self._line.append(word)
             self._columns += len(word)
             self._word_count += 1
-            self._words_in_paragraph += 1
-
-            if self._words_in_paragraph >= _PARAGRAPH_MIN_WORDS and _ends_sentence(word):
-                self._break_pending = True
 
     def _begin_line(self) -> None:
         if not self._gutter_width():
@@ -199,7 +173,6 @@ class RichRenderer:
         target = self._live.console if self._live is not None else self.console
         target.print()
         self._new_paragraph = True
-        self._words_in_paragraph = 0
 
     def _flush_line(self) -> None:
         if not self._line:
