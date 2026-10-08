@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::captions::Tone;
@@ -6,13 +8,15 @@ use crate::protocol::Dictate;
 pub const TAP: Duration = Duration::from_millis(350);
 
 const PREVIEW_CHARS: usize = 64;
+pub const RECENT: usize = 5;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Phase {
     Idle,
     Listening {
         hands_free: bool,
         live: bool,
+        text: String,
     },
     Transcribing,
     Typed {
@@ -23,7 +27,28 @@ pub enum Phase {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl fmt::Debug for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Phase::Idle => f.write_str("Idle"),
+            Phase::Listening { hands_free, live } => f
+                .debug_struct("Listening")
+                .field("hands_free", hands_free)
+                .field("live", live)
+                .finish(),
+            Phase::Transcribing => f.write_str("Transcribing"),
+            Phase::Typed { text, pasted } => f
+                .debug_struct("Typed")
+                .field("chars", &text.chars().count())
+                .field("pasted", pasted)
+                .finish(),
+            Phase::Nothing => f.write_str("Nothing"),
+            Phase::Failed(message) => f.debug_tuple("Failed").field(message).finish(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Action {
     Start,
     HandsFree,
@@ -31,11 +56,65 @@ pub enum Action {
     Paste(String),
 }
 
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Action::Start => f.write_str("Start"),
+            Action::HandsFree => f.write_str("HandsFree"),
+            Action::Stop => f.write_str("Stop"),
+            Action::Paste(text) => write!(f, "Paste({} chars)", text.chars().count()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Default)]
+pub struct Recent {
+    entries: VecDeque<(u64, String)>,
+    next: u64,
+}
+
+impl fmt::Debug for Recent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Recent({} entries)", self.entries.len())
+    }
+}
+
+impl Recent {
+    pub fn push(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        self.entries.push_front((self.next, text.to_owned()));
+        self.next += 1;
+        self.entries.truncate(RECENT);
+    }
+
+    pub fn items(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.entries.iter().map(|(id, text)| (*id, text.as_str()))
+    }
+
+    pub fn get(&self, id: u64) -> Option<&str> {
+        self.items()
+            .find(|(held, _)| *held == id)
+            .map(|(_, text)| text)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pill {
     pub tone: Tone,
     pub text: String,
     pub level: Option<f32>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug)]
@@ -125,6 +204,7 @@ impl Dictation {
                     self.set(Phase::Listening {
                         hands_free: false,
                         live: false,
+                        text: String::new(),
                     });
                     Some(Action::Start)
                 }
@@ -137,7 +217,8 @@ impl Dictation {
             let Phase::Listening {
                 hands_free: false,
                 live,
-            } = self.phase
+                text,
+            } = self.phase.clone()
             else {
                 return None;
             };
@@ -145,6 +226,7 @@ impl Dictation {
                 self.set(Phase::Listening {
                     hands_free: true,
                     live,
+                    text,
                 });
                 Some(Action::HandsFree)
             } else {
@@ -157,10 +239,26 @@ impl Dictation {
     pub fn event(&mut self, event: Dictate) -> Option<Action> {
         match event {
             Dictate::Listening => {
-                if let Phase::Listening { hands_free, .. } = self.phase {
+                if let Phase::Listening {
+                    hands_free, text, ..
+                } = self.phase.clone()
+                {
                     self.set(Phase::Listening {
                         hands_free,
                         live: true,
+                        text,
+                    });
+                }
+            }
+            Dictate::Partial { text } => {
+                if let Phase::Listening {
+                    hands_free, live, ..
+                } = self.phase
+                {
+                    self.set(Phase::Listening {
+                        hands_free,
+                        live,
+                        text: text.trim().to_owned(),
                     });
                 }
             }
@@ -234,28 +332,29 @@ impl Dictation {
     }
 
     pub fn pill(&self) -> Option<Pill> {
-        let (tone, text, level) = match &self.phase {
+        let (tone, text, level, detail) = match &self.phase {
             Phase::Idle => return None,
             Phase::Listening { live: false, .. } => {
-                (Tone::Dim, "Starting the microphone…".to_owned(), None)
+                (Tone::Dim, "Starting the microphone…".to_owned(), None, None)
             }
             Phase::Listening {
-                hands_free: false, ..
+                hands_free, text, ..
             } => (
                 Tone::Good,
-                "Listening, release to type".to_owned(),
+                if *hands_free {
+                    "Listening, press again to type"
+                } else {
+                    "Listening, release to type"
+                }
+                .to_owned(),
                 Some(self.level),
+                (!text.is_empty()).then(|| preview(text)),
             ),
-            Phase::Listening { .. } => (
-                Tone::Good,
-                "Listening, press again to type".to_owned(),
-                Some(self.level),
-            ),
-            Phase::Transcribing => (Tone::Warn, self.transcribing_text(), None),
+            Phase::Transcribing => (Tone::Warn, self.transcribing_text(), None, None),
             Phase::Typed {
                 text,
                 pasted: None | Some(Ok(())),
-            } => (Tone::Good, preview(text), None),
+            } => (Tone::Good, preview(text), None, None),
             Phase::Typed {
                 pasted: Some(Err(why)),
                 ..
@@ -263,17 +362,24 @@ impl Dictation {
                 Tone::Warn,
                 format!("On the clipboard, not typed: {why}"),
                 None,
+                None,
             ),
-            Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
-            Phase::Failed(message) => (Tone::Bad, message.clone(), None),
+            Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None, None),
+            Phase::Failed(message) => (Tone::Bad, message.clone(), None, None),
         };
         match &self.notice {
             Some((_, message)) => Some(Pill {
                 tone: Tone::Warn,
                 text: message.clone(),
                 level,
+                detail: None,
             }),
-            None => Some(Pill { tone, text, level }),
+            None => Some(Pill {
+                tone,
+                text,
+                level,
+                detail,
+            }),
         }
     }
 
@@ -494,10 +600,123 @@ mod tests {
     }
 
     #[test]
+    fn partials_show_the_newest_text_and_keep_the_meter_until_release() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        assert_eq!(d.pill().unwrap().detail, None);
+        d.event(Dictate::Partial {
+            text: "hello there.".into(),
+        });
+        d.event(Dictate::Partial {
+            text: "hello there. general kenobi.".into(),
+        });
+        d.event(Dictate::Level { rms: 0.04 });
+        let pill = d.pill().unwrap();
+        assert_eq!(pill.text, "Listening, release to type");
+        assert_eq!(pill.detail.as_deref(), Some("hello there. general kenobi."));
+        assert_eq!(pill.level, Some(0.04));
+        d.event(Dictate::Level { rms: 0.09 });
+        assert_eq!(d.pill().unwrap().level, Some(0.09));
+        assert_eq!(d.key(false, at(2000, t)), Some(Action::Stop));
+        assert_eq!(d.phase(), &Phase::Transcribing);
+        assert_eq!(d.pill().unwrap().detail, None);
+        d.event(Dictate::Partial {
+            text: "late".into(),
+        });
+        assert_eq!(d.phase(), &Phase::Transcribing);
+    }
+
+    #[test]
+    fn partials_survive_latching_hands_free_and_reset_on_the_next_dictation() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        d.event(Dictate::Partial {
+            text: "one two".into(),
+        });
+        d.key(false, at(100, t));
+        let pill = d.pill().unwrap();
+        assert_eq!(pill.text, "Listening, press again to type");
+        assert_eq!(pill.detail.as_deref(), Some("one two"));
+        d.event(Dictate::Cancelled);
+        d.key(true, at(5000, t));
+        d.event(Dictate::Listening);
+        assert_eq!(d.pill().unwrap().detail, None);
+    }
+
+    #[test]
+    fn a_long_partial_shows_its_newest_words() {
+        let mut d = Dictation::new();
+        d.key(true, Instant::now());
+        d.event(Dictate::Listening);
+        let text = format!("{} last words", "word ".repeat(40));
+        d.event(Dictate::Partial { text });
+        let detail = d.pill().unwrap().detail.unwrap();
+        assert_eq!(detail.chars().count(), PREVIEW_CHARS);
+        assert!(detail.starts_with('…') && detail.ends_with("last words"));
+    }
+
+    #[test]
     fn a_long_result_previews_its_end() {
         let text = "word ".repeat(40);
         let shown = preview(text.trim());
         assert_eq!(shown.chars().count(), PREVIEW_CHARS);
         assert!(shown.starts_with('…'));
+    }
+
+    #[test]
+    fn recent_keeps_five_newest_first() {
+        let mut recent = Recent::default();
+        for n in 0..7 {
+            recent.push(&format!("text {n}"));
+        }
+        let texts: Vec<&str> = recent.items().map(|(_, text)| text).collect();
+        assert_eq!(texts, ["text 6", "text 5", "text 4", "text 3", "text 2"]);
+    }
+
+    #[test]
+    fn recent_skips_empty_text_and_trims() {
+        let mut recent = Recent::default();
+        recent.push("");
+        recent.push("  \n ");
+        assert!(recent.is_empty());
+        recent.push("  hello \n");
+        assert_eq!(recent.items().next().map(|(_, text)| text), Some("hello"));
+    }
+
+    #[test]
+    fn recent_clear_empties_it_and_ids_are_not_reused() {
+        let mut recent = Recent::default();
+        recent.push("one");
+        let old = recent.items().next().map(|(id, _)| id).unwrap();
+        recent.clear();
+        assert!(recent.is_empty());
+        recent.push("two");
+        assert_eq!(recent.get(old), None);
+        assert_eq!(recent.items().count(), 1);
+    }
+
+    #[test]
+    fn recent_looks_an_entry_up_by_id_even_after_newer_ones_arrive() {
+        let mut recent = Recent::default();
+        recent.push("first");
+        let id = recent.items().next().map(|(id, _)| id).unwrap();
+        recent.push("second");
+        assert_eq!(recent.get(id), Some("first"));
+    }
+
+    #[test]
+    fn debug_output_never_carries_the_text() {
+        let mut d = Dictation::new();
+        let action = d.event(Dictate::Dictated {
+            text: "hunter2 secret words".into(),
+        });
+        let mut recent = Recent::default();
+        recent.push("hunter2 secret words");
+        let shown = format!("{:?} {:?} {:?}", action, d.phase(), recent);
+        assert!(!shown.contains("hunter2"), "{shown}");
     }
 }

@@ -4,6 +4,9 @@ The recorder and the client are fakes, so this runs with no microphone and no
 server; what is under test is the command handling and what gets emitted.
 """
 
+import threading
+import time
+
 import numpy as np
 import pytest
 import requests
@@ -41,14 +44,21 @@ class FakeRecording:
     def captured_s(self) -> float:
         return self._signal.size / config.SAMPLE_RATE_HZ
 
-    def window(self, seconds: float) -> np.ndarray:
-        return self._signal[-int(seconds * config.SAMPLE_RATE_HZ) :]
-
 
 class FakeClient:
-    def __init__(self, transcript: str = "Hello there.", error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        transcript: str = "Hello there.",
+        error: Exception | None = None,
+        script: list[str] | None = None,
+        gate: threading.Event | None = None,
+    ) -> None:
         self.transcript = transcript
         self.error = error
+        self.script = script
+        self.gate = gate
+        self.started = threading.Event()
+        self.finished = threading.Event()
         self.decoded: list[np.ndarray] = []
 
     def wait_ready(self) -> dict:
@@ -58,7 +68,12 @@ class FakeClient:
 
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
         self.decoded.append(samples)
-        return self.transcript, 0.2
+        self.started.set()
+        if self.gate is not None:
+            self.gate.wait(5.0)
+        text = self.script[len(self.decoded) - 1] if self.script else self.transcript
+        self.finished.set()
+        return text, 0.2
 
 
 @pytest.fixture(autouse=True)
@@ -128,10 +143,11 @@ def test_stop_without_start_and_a_second_start_are_ignored():
     assert len(recordings) == 1
 
 
-def test_a_full_buffer_stops_and_decodes_by_itself():
+def test_the_overall_cap_stops_and_decodes_by_itself(monkeypatch):
+    monkeypatch.setattr(config, "DICTATION_MAX_S", 3.0)
     records: list[dict] = []
     client = FakeClient()
-    long = pcm.sine(220.0, config.MAX_WINDOW_S + 1.0, amplitude=0.1)
+    long = pcm.sine(220.0, 4.0, amplitude=0.1)
     dictation = dictate.Dictation(
         records.append, client=client, recorder=lambda tap: FakeRecording(tap, long)
     )
@@ -139,6 +155,9 @@ def test_a_full_buffer_stops_and_decodes_by_itself():
     dictation.handle(dictation._commands.get_nowait())
     assert records[-1]["event"] == "Dictated"
     assert len(client.decoded) == 1
+    assert [r for r in records if r["event"] == "Listening"] == [
+        {"event": "Listening", "limit_s": 3.0}
+    ]
 
 
 def test_a_stale_full_signal_does_not_stop_the_next_recording():
@@ -324,6 +343,17 @@ def test_every_field_the_overlay_reads_is_emitted():
     assert isinstance(by_event["Dictated"]["text"], str)
     assert {"device", "degraded"} <= by_event["Ready"].keys()
 
+    partials: list[dict] = []
+    signal = np.concatenate([_speech_with_pauses(1), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    client = FakeClient(script=["one.", "two."])
+    dictation = _dictation(signal, client, partials)
+    dictation.handle("start")
+    _wait_for(lambda: any(r["event"] == "Partial" for r in partials))
+    assert [r for r in partials if r["event"] == "Partial"] == [
+        {"event": "Partial", "text": "one."}
+    ]
+    dictation.handle("cancel")
+
     levels: list[dict] = []
     dictation = dictate.Dictation(
         levels.append, client=FakeClient(), recorder=lambda tap: FakeRecording(tap, SPEECH)
@@ -427,3 +457,168 @@ def test_trace_still_reports_when_hands_free_stops_on_silence(capsys):
     assert err.count("dictate-trace") == 1
     assert "first_loud=0ms (chunk 1)" in err
     assert "Hello" not in err
+
+
+def _speech_with_pauses(phrases: int, speech_s: float = 6.0, pause_s: float = 0.5) -> np.ndarray:
+    parts = []
+    for _ in range(phrases):
+        parts += [pcm.sine(220.0, speech_s, amplitude=0.1), pcm.silence(pause_s)]
+    return np.concatenate(parts)
+
+
+def _wait_for(condition, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert condition()
+
+
+def _dictation(signal, client, records):
+    return dictate.Dictation(
+        records.append, client=client, recorder=lambda tap: FakeRecording(tap, signal)
+    )
+
+
+def test_a_long_utterance_with_pauses_decodes_in_segments_and_joins_in_order():
+    signal = np.concatenate([_speech_with_pauses(6), pcm.sine(220.0, 2.0, amplitude=0.1)])
+    assert signal.size / config.SAMPLE_RATE_HZ > 40
+    client = FakeClient(script=[f"part{n}." for n in range(7)])
+    records, _, client = _run(["start", "stop"], signal=signal, client=client)
+    assert len(client.decoded) == 7
+    assert all(chunk.size / config.SAMPLE_RATE_HZ < config.MAX_WINDOW_S for chunk in client.decoded)
+    assert sum(chunk.size for chunk in client.decoded) == signal.size
+    done = records[-1]
+    assert done["event"] == "Dictated"
+    assert done["text"] == " ".join(f"part{n}." for n in range(7))
+    assert done["audio_s"] == pytest.approx(signal.size / config.SAMPLE_RATE_HZ)
+    assert [r["event"] for r in records].count("Dictated") == 1
+
+
+def test_release_decodes_only_the_tail_when_earlier_segments_are_done():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    client = FakeClient(script=["one.", "two.", "three.", "four."])
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    _wait_for(lambda: len(client.decoded) == 3)
+    _wait_for(lambda: client.finished.is_set())
+    time.sleep(0.05)
+    before = len(client.decoded)
+    dictation.handle("stop")
+    assert before == 3
+    assert len(client.decoded) == before + 1
+    assert client.decoded[-1].size / config.SAMPLE_RATE_HZ == pytest.approx(1.2, abs=0.01)
+    assert records[-1]["text"] == "one. two. three. four."
+
+
+def test_cancel_midway_types_nothing():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    gate = threading.Event()
+    client = FakeClient(gate=gate)
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    assert client.started.wait(5.0)
+    dictation.handle("cancel")
+    gate.set()
+    _wait_for(lambda: len(client.decoded) >= 1)
+    time.sleep(0.1)
+    events = [r["event"] for r in records if r["event"] != "Level"]
+    assert events == ["Listening", "Cancelled"]
+    assert len(client.decoded) == 1
+
+
+def test_an_utterance_shorter_than_the_minimum_segment_is_one_request():
+    signal = np.concatenate(
+        [pcm.sine(220.0, 2.0, amplitude=0.1), pcm.silence(0.6), pcm.sine(220.0, 1.5, amplitude=0.1)]
+    )
+    records, _, client = _run(["start", "stop"], signal=signal)
+    assert len(client.decoded) == 1
+    assert client.decoded[0].size == signal.size
+    assert records[-1]["text"] == "Hello there."
+
+
+def test_speech_with_no_pause_is_cut_at_the_quietest_chunk_of_the_last_seconds():
+    signal = pcm.sine(220.0, 40.0, amplitude=0.1)
+    dip = int(27.0 * config.SAMPLE_RATE_HZ)
+    signal[dip : dip + pcm.READ_CHUNK_SAMPLES] *= 0.1
+    client = FakeClient(script=["first.", "second."])
+    records, _, client = _run(["start", "stop"], signal=signal, client=client)
+    assert [chunk.size for chunk in client.decoded] == [
+        dip + pcm.READ_CHUNK_SAMPLES,
+        signal.size - dip - pcm.READ_CHUNK_SAMPLES,
+    ]
+    assert records[-1]["text"] == "first. second."
+
+
+def test_a_silent_segment_is_not_decoded_but_the_utterance_still_is():
+    signal = np.concatenate([pcm.silence(5.5), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    _, _, client = _run(["start", "stop"], signal=signal)
+    assert len(client.decoded) == 1
+    assert client.decoded[0].size == pcm.samples_for(1.5)
+
+
+def test_a_failed_segment_decode_is_reported_once():
+    client = FakeClient(error=None)
+    client.transcribe = lambda samples: (_ for _ in ()).throw(requests.ConnectionError("x"))  # type: ignore[method-assign]
+    signal = _speech_with_pauses(2)
+    records, _, _ = _run(["start", "stop"], signal=signal, client=client)
+    assert [r["event"] for r in records].count("Error") == 1
+    assert records[-1]["event"] == "Error"
+
+
+def test_each_finished_segment_emits_one_cumulative_partial_in_order():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    client = FakeClient(script=["one.", "two.", "three.", "four."])
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    _wait_for(lambda: sum(r["event"] == "Partial" for r in records) == 3)
+    dictation.handle("stop")
+    partials = [r["text"] for r in records if r["event"] == "Partial"]
+    assert partials == ["one.", "one. two.", "one. two. three."]
+    events = [r["event"] for r in records if r["event"] != "Level"]
+    assert events.index("Transcribing") > max(i for i, e in enumerate(events) if e == "Partial")
+    assert records[-1]["text"] == "one. two. three. four."
+
+
+def test_no_partial_follows_a_cancel():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    gate = threading.Event()
+    client = FakeClient(gate=gate)
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    assert client.started.wait(5.0)
+    dictation.handle("cancel")
+    gate.set()
+    _wait_for(lambda: len(client.decoded) >= 1)
+    time.sleep(0.1)
+    assert all(r["event"] != "Partial" for r in records)
+    assert records[-1] == {"event": "Cancelled"}
+
+
+def test_hands_free_quiet_stop_joins_segments_decoded_before_it():
+    dictation, recording, records, client = _live()
+    client.script = ["one.", "two."]
+    dictation.handle("hands-free")
+    recording.feed(_talk(6.0))
+    recording.feed(_quiet(config.SEGMENT_PAUSE_S + 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert dictation._commands.empty()
+    assert records[-1]["event"] == "Dictated"
+    assert records[-1]["text"] == "one. two."
+
+
+def test_cancel_after_hands_free_stop_was_queued_types_nothing():
+    dictation, recording, records, client = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle("cancel")
+    dictation.handle(dictation._commands.get_nowait())
+    assert "Dictated" not in [r["event"] for r in records]
+    assert records[-1]["event"] == "Cancelled"

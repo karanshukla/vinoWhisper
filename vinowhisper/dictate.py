@@ -42,7 +42,6 @@ class _Recording(Protocol):
     def check_alive(self) -> None: ...
     @property
     def captured_s(self) -> float: ...
-    def window(self, seconds: float) -> np.ndarray: ...
 
 
 @dataclass
@@ -73,6 +72,121 @@ class _Warmup:
     done: threading.Event = field(default_factory=threading.Event)
 
 
+class _Segmenter:
+    def __init__(self) -> None:
+        self._chunks: list[tuple[np.ndarray, float]] = []
+        self._samples = 0
+        self._quiet = 0
+        self._total = 0
+        self._energy = 0.0
+
+    @property
+    def total_s(self) -> float:
+        return self._total / config.SAMPLE_RATE_HZ
+
+    @property
+    def rms(self) -> float:
+        return float(np.sqrt(self._energy / self._total)) if self._total else 0.0
+
+    def add(self, chunk: np.ndarray) -> np.ndarray | None:
+        if chunk.size == 0:
+            return None
+        level = audio.rms(chunk)
+        self._chunks.append((chunk, level))
+        self._samples += chunk.size
+        self._total += chunk.size
+        self._energy += level * level * chunk.size
+        self._quiet = self._quiet + chunk.size if level < config.SILENCE_RMS_THRESHOLD else 0
+        rate = config.SAMPLE_RATE_HZ
+        if self._samples >= config.SEGMENT_MIN_S * rate and self._quiet >= (
+            config.SEGMENT_PAUSE_S * rate
+        ):
+            return self._cut(len(self._chunks))
+        if self._samples >= config.MAX_WINDOW_S * rate:
+            return self._cut(self._quietest_in_tail() + 1)
+        return None
+
+    def finish(self) -> np.ndarray:
+        return self._cut(len(self._chunks))
+
+    def _quietest_in_tail(self) -> int:
+        wanted = config.SEGMENT_FALLBACK_S * config.SAMPLE_RATE_HZ
+        best, seen = len(self._chunks) - 1, 0
+        for index in range(len(self._chunks) - 1, -1, -1):
+            if self._chunks[index][1] < self._chunks[best][1]:
+                best = index
+            seen += self._chunks[index][0].size
+            if seen >= wanted:
+                break
+        return best
+
+    def _cut(self, count: int) -> np.ndarray:
+        head, self._chunks = self._chunks[:count], self._chunks[count:]
+        self._samples = sum(chunk.size for chunk, _ in self._chunks)
+        self._quiet = 0
+        for chunk, level in reversed(self._chunks):
+            if level >= config.SILENCE_RMS_THRESHOLD:
+                break
+            self._quiet += chunk.size
+        if not head:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate([chunk for chunk, _ in head])
+
+
+class _Decoder:
+    def __init__(self, client: _Client, warmup: _Warmup, emit: Emit) -> None:
+        self.texts: list[str] = []
+        self.error: Exception | None = None
+        self._client = client
+        self._warmup = warmup
+        self._emit = emit
+        self._live = True
+        self._gate = threading.Lock()
+        self._pending: queue.Queue[np.ndarray | None] = queue.Queue()
+        self._cancelled = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
+        self._thread.start()
+
+    def submit(self, samples: np.ndarray) -> None:
+        self._pending.put(samples)
+
+    def finish(self) -> None:
+        self._pending.put(None)
+        self._thread.join()
+
+    def cancel(self) -> None:
+        with self._gate:
+            self._live = False
+            self._cancelled.set()
+        self._pending.put(None)
+
+    def mute(self) -> None:
+        with self._gate:
+            self._live = False
+
+    def _run(self) -> None:
+        while (samples := self._pending.get()) is not None:
+            if self._cancelled.is_set() or self.error is not None:
+                continue
+            self._warmup.done.wait()
+            if self._warmup.error is not None or self._cancelled.is_set():
+                continue
+            normalized, _gain = audio.normalize(samples, config.TARGET_RMS, config.MAX_GAIN)
+            try:
+                transcript, _first = self._client.transcribe(normalized)
+            except requests.RequestException as exc:
+                self.error = exc
+                continue
+            text = clean(transcript)
+            if text:
+                with self._gate:
+                    if self._cancelled.is_set():
+                        continue
+                    self.texts.append(text)
+                    if self._live:
+                        self._emit({"event": "Partial", "text": clean(" ".join(self.texts))})
+
+
 class Dictation:
     def __init__(
         self,
@@ -96,6 +210,9 @@ class Dictation:
         self._captured = 0
         self._stop_sent = False
         self._generation = 0
+        self._segmenter: _Segmenter | None = None
+        self._decoder: _Decoder | None = None
+        self._lock = threading.Lock()
         self._hands_free = False
         self._speech = 0
         self._quiet = 0
@@ -140,7 +257,7 @@ class Dictation:
         if self._active is not None:
             return
         # The model loads on the server's first request; overlap that with the speech.
-        self._warmup = self._warm()
+        warmup = self._warmup = self._warm()
         self._generation += 1
         self._captured = 0
         self._stop_sent = False
@@ -148,14 +265,17 @@ class Dictation:
         self._hands_free = False
         self._speech = 0
         self._quiet = 0
+        self._segmenter = _Segmenter()
+        self._decoder = _Decoder(self._client, warmup, self._emit)
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
         except CaptureError as exc:
+            self._discard()
             self._emit({"event": "Error", "message": f"Microphone capture failed: {exc}"})
             return
         self._active = recording
-        self._emit({"event": "Listening", "limit_s": config.MAX_WINDOW_S})
+        self._emit({"event": "Listening", "limit_s": config.DICTATION_MAX_S})
 
     def _warm(self) -> _Warmup:
         warmup = _Warmup()
@@ -173,8 +293,9 @@ class Dictation:
 
     def _latch_hands_free(self) -> None:
         if self._active is not None:
-            self._hands_free = True
-            self._stop_if_quiet()
+            with self._lock:
+                self._hands_free = True
+                self._stop_if_quiet()
 
     def _stop_if_quiet(self) -> None:
         wanted = config.HANDS_FREE_SILENCE_S * config.SAMPLE_RATE_HZ
@@ -190,18 +311,34 @@ class Dictation:
 
     def _tap(self, samples: np.ndarray) -> None:
         self._note_chunk(samples)
-        self._captured += samples.size
         level = audio.rms(samples)
         self._emit({"event": "Level", "rms": level})
-        if level >= config.SILENCE_RMS_THRESHOLD:
-            self._speech += samples.size
-            self._quiet = 0
-        else:
-            self._quiet += samples.size
-        self._stop_if_quiet()
-        if not self._stop_sent and self._captured >= config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ:
-            self._stop_sent = True
-            self._commands.put(f"{_FULL} {self._generation}")
+        with self._lock:
+            segmenter, decoder = self._segmenter, self._decoder
+            if segmenter is None or decoder is None:
+                return
+            self._captured += samples.size
+            if level >= config.SILENCE_RMS_THRESHOLD:
+                self._speech += samples.size
+                self._quiet = 0
+            else:
+                self._quiet += samples.size
+            segment = segmenter.add(samples)
+            if segment is not None:
+                _submit(decoder, segment)
+            self._stop_if_quiet()
+            if (
+                not self._stop_sent
+                and self._captured >= config.DICTATION_MAX_S * config.SAMPLE_RATE_HZ
+            ):
+                self._stop_sent = True
+                self._commands.put(f"{_FULL} {self._generation}")
+
+    def _discard(self) -> None:
+        with self._lock:
+            decoder, self._decoder, self._segmenter = self._decoder, None, None
+        if decoder is not None:
+            decoder.cancel()
 
     def _note_chunk(self, samples: np.ndarray) -> None:
         trace = self._trace
@@ -240,25 +377,38 @@ class Dictation:
         if recording is None:
             return
         self._report_trace()
+        released_at = time.monotonic()
         try:
             recording.check_alive()
             if transcribe:
                 _wait_for_tail(recording)
-            samples = recording.window(config.MAX_WINDOW_S)
         except CaptureError as exc:
             recording.__exit__(None, None, None)
+            self._discard()
             self._emit({"event": "Error", "message": f"Microphone capture failed: {exc}"})
             return
         recording.__exit__(None, None, None)
+        if transcribe:
+            with self._lock:
+                if self._decoder is not None:
+                    self._decoder.mute()
         if not transcribe:
+            self._discard()
             self._emit({"event": "Cancelled"})
             return
-        self._transcribe(samples)
+        with self._lock:
+            segmenter, decoder = self._segmenter, self._decoder
+            self._segmenter = self._decoder = None
+        if segmenter is None or decoder is None:
+            return
+        _submit(decoder, segmenter.finish())
+        self._finish(segmenter, decoder, released_at)
 
-    def _transcribe(self, samples: np.ndarray) -> None:
-        audio_s = samples.size / config.SAMPLE_RATE_HZ
-        level = audio.rms(samples)
+    def _finish(self, segmenter: _Segmenter, decoder: _Decoder, released_at: float) -> None:
+        audio_s = segmenter.total_s
+        level = segmenter.rms
         if audio_s < MIN_AUDIO_S or level < config.SILENCE_RMS_THRESHOLD:
+            decoder.cancel()
             self._emit(
                 {"event": "Dictated", "text": "", "audio_s": audio_s, "total_s": 0.0, "rms": level}
             )
@@ -269,25 +419,23 @@ class Dictation:
         if warmup is not None:
             warmup.done.wait()
             if warmup.error is not None:
+                decoder.cancel()
                 self._emit(_server_error(warmup.error))
                 return
             if warmup.health:
                 self._emit(_ready(warmup.health))
                 warmup.health = {}
 
-        normalized, _gain = audio.normalize(samples, config.TARGET_RMS, config.MAX_GAIN)
-        started_at = time.monotonic()
-        try:
-            transcript, _first = self._client.transcribe(normalized)
-        except requests.RequestException as exc:
-            self._emit(_server_error(exc))
+        decoder.finish()
+        if decoder.error is not None:
+            self._emit(_server_error(decoder.error))
             return
         self._emit(
             {
                 "event": "Dictated",
-                "text": clean(transcript),
+                "text": clean(" ".join(decoder.texts)),
                 "audio_s": audio_s,
-                "total_s": time.monotonic() - started_at,
+                "total_s": time.monotonic() - released_at,
                 "rms": level,
             }
         )
@@ -296,10 +444,16 @@ class Dictation:
         if self._active is not None:
             self._active.__exit__(None, None, None)
             self._active = None
+        self._discard()
+
+
+def _submit(decoder: _Decoder, segment: np.ndarray) -> None:
+    if audio.rms(segment) >= config.SILENCE_RMS_THRESHOLD:
+        decoder.submit(segment)
 
 
 def _wait_for_tail(recording: _Recording) -> None:
-    wanted = min(recording.captured_s + TAIL_S, config.MAX_WINDOW_S)
+    wanted = min(recording.captured_s + TAIL_S, config.DICTATION_MAX_S)
     deadline = time.monotonic() + _TAIL_WAIT_S
     while recording.captured_s < wanted and time.monotonic() < deadline:
         time.sleep(0.02)
