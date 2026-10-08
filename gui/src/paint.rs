@@ -184,7 +184,7 @@ impl Painter {
         let detail = pill.detail.as_ref().map(|text| {
             [Span {
                 text: text.clone(),
-                tone: Tone::Caption,
+                tone: Tone::Dim,
             }]
         });
         let max_text = (width - pad * 2.0 - icon - gap).max(1.0);
