@@ -1,8 +1,17 @@
 import json
 
+import numpy as np
 import pytest
 
-from tests.test_dictate import SPEECH, FakeClient, _run
+from tests import pcm
+from tests.test_dictate import (
+    SPEECH,
+    FakeClient,
+    _dictation,
+    _run,
+    _speech_with_pauses,
+    _wait_for,
+)
 from vinowhisper import config, replacements
 
 
@@ -106,3 +115,18 @@ def test_dictation_survives_a_broken_file(capsys):
     assert records[-1] == {**records[-1], "event": "Dictated", "text": "Hello there."}
     assert not any(r["event"] == "Error" for r in records)
     assert str(config.REPLACEMENTS_FILE) in capsys.readouterr().err
+
+
+def test_partials_and_the_final_text_are_replaced_on_the_joined_text():
+    config.REPLACEMENTS_FILE.write_text(json.dumps({"open vino": "OpenVINO"}))
+    signal = np.concatenate([_speech_with_pauses(2), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    # The phrase is split across two segments, so only the joined text can match it.
+    client = FakeClient(script=["I use open", "vino daily.", "ok."])
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    _wait_for(lambda: sum(r["event"] == "Partial" for r in records) == 2)
+    dictation.handle("stop")
+    partials = [r["text"] for r in records if r["event"] == "Partial"]
+    assert partials == ["I use open", "I use OpenVINO daily."]
+    assert records[-1]["text"] == "I use OpenVINO daily. ok."

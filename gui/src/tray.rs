@@ -6,6 +6,7 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
 use crate::APP_ID;
 use crate::app::Command;
+use crate::dictation::Recent;
 use crate::icon;
 use crate::settings::{self, Language, Position, Source, Task, TextSize};
 use crate::shortcut::State as ShortcutState;
@@ -24,6 +25,7 @@ pub struct View {
     pub autostart: bool,
     pub language: Language,
     pub task: Task,
+    pub recent: Recent,
     pub save_transcripts: bool,
 }
 
@@ -147,6 +149,60 @@ fn language_menu(language: Language, task: Task, installed: bool) -> Vec<MenuIte
         );
     }
     items
+}
+
+const LABEL_CHARS: usize = 40;
+
+fn recent_label(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let shown = if flat.chars().count() > LABEL_CHARS {
+        let head: String = flat.chars().take(LABEL_CHARS - 1).collect();
+        format!("{}…", head.trim_end())
+    } else {
+        flat
+    };
+    // ksni takes "_" as an access-key marker; a doubled one is a literal underscore.
+    shown.replace('_', "__")
+}
+
+fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
+    let mut submenu: Vec<MenuItem<Tray>> = recent
+        .items()
+        .map(|(id, text)| {
+            StandardItem {
+                label: recent_label(text),
+                activate: Box::new(move |tray: &mut Tray| tray.send(Command::CopyRecent(id))),
+                ..Default::default()
+            }
+            .into()
+        })
+        .collect();
+    if recent.is_empty() {
+        submenu.push(
+            StandardItem {
+                label: "None yet".into(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+        );
+    } else {
+        submenu.push(MenuItem::Separator);
+        submenu.push(
+            StandardItem {
+                label: "Clear".into(),
+                activate: Box::new(|tray: &mut Tray| tray.send(Command::ClearRecent)),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    SubMenu {
+        label: "Recent dictations".into(),
+        submenu,
+        ..Default::default()
+    }
+    .into()
 }
 
 fn shortcut_label(state: &ShortcutState) -> (String, bool) {
@@ -315,6 +371,7 @@ impl ksni::Tray for Tray {
         ];
         menu.extend(language);
         menu.push(MenuItem::Separator);
+        menu.push(recent_menu(&self.view.recent));
         menu.extend([
             StandardItem {
                 label: dictate_label(&self.view.shortcut),
@@ -473,5 +530,51 @@ mod tests {
         for name in names {
             assert!(!name.contains('_'), "{name}");
         }
+    }
+
+    fn submenu_labels(item: &MenuItem<Tray>) -> Vec<String> {
+        let MenuItem::SubMenu(menu) = item else {
+            panic!("a submenu");
+        };
+        labels(&menu.submenu)
+    }
+
+    #[test]
+    fn an_empty_history_says_none_yet_and_offers_no_clear() {
+        let item = recent_menu(&Recent::default());
+        assert_eq!(submenu_labels(&item), ["None yet"]);
+        let MenuItem::SubMenu(menu) = &item else {
+            panic!("a submenu");
+        };
+        let MenuItem::Standard(none) = &menu.submenu[0] else {
+            panic!("a standard item");
+        };
+        assert!(!none.enabled);
+    }
+
+    #[test]
+    fn the_history_lists_newest_first_with_clear_last() {
+        let mut recent = Recent::default();
+        recent.push("first");
+        recent.push("second");
+        assert_eq!(
+            submenu_labels(&recent_menu(&recent)),
+            ["second", "first", "Clear"]
+        );
+    }
+
+    #[test]
+    fn long_labels_are_cut_and_flattened() {
+        let text = format!("one\ntwo {}", "word ".repeat(30));
+        let label = recent_label(&text);
+        assert!(label.starts_with("one two word"));
+        assert!(label.ends_with('…'));
+        assert!(label.chars().count() <= LABEL_CHARS);
+        assert_eq!(recent_label("short"), "short");
+    }
+
+    #[test]
+    fn underscores_in_a_label_are_escaped() {
+        assert_eq!(recent_label("snake_case"), "snake__case");
     }
 }

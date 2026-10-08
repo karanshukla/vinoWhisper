@@ -133,6 +133,12 @@ DEFAULT_SOURCE = "output"
 # Hard ceiling: WhisperPipeline's streamer only handles audio under 30s.
 MAX_WINDOW_S = 29.5
 
+# Dictation cuts a long utterance at pauses and decodes the pieces while the key is held.
+DICTATION_MAX_S = 300.0
+SEGMENT_MIN_S = 5.0
+SEGMENT_PAUSE_S = 0.3
+SEGMENT_FALLBACK_S = 3.0
+
 WINDOW_S = 12.0
 
 MIN_WINDOW_S = 1.5

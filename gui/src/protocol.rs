@@ -42,6 +42,9 @@ pub enum Dictate {
     Level {
         rms: f32,
     },
+    Partial {
+        text: String,
+    },
     Transcribing,
     Ready {
         device: String,
@@ -148,6 +151,7 @@ mod tests {
         let lines = [
             r#"{"event": "Listening", "limit_s": 29.5}"#,
             r#"{"event": "Level", "rms": 0.031}"#,
+            r#"{"event": "Partial", "text": "It’s"}"#,
             r#"{"event": "Transcribing", "audio_s": 2.4}"#,
             r#"{"event": "Ready", "device": "NPU", "degraded": false, "warnings": []}"#,
             r#"{"event": "Dictated", "text": "It’s done.", "audio_s": 2.4, "total_s": 0.46, "rms": 0.02}"#,
@@ -157,7 +161,13 @@ mod tests {
         let parsed: Vec<Dictate> = lines.iter().filter_map(|line| parse(line)).collect();
         assert_eq!(parsed.len(), lines.len());
         assert_eq!(
-            parsed[4],
+            parsed[2],
+            Dictate::Partial {
+                text: "It’s".into()
+            }
+        );
+        assert_eq!(
+            parsed[5],
             Dictate::Dictated {
                 text: "It’s done.".into()
             }
