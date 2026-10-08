@@ -12,6 +12,7 @@ def _config_home() -> Path:
 
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
+TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
 
 MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"
@@ -159,6 +160,9 @@ def max_new_tokens(duration_s: float, multilingual: bool = False) -> int:
 
 
 SILENCE_RMS_THRESHOLD = 0.002
+
+HANDS_FREE_MIN_SPEECH_S = 0.5
+HANDS_FREE_SILENCE_S = 2.5
 
 TARGET_RMS = 0.05
 MAX_GAIN = 20.0
