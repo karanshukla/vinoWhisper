@@ -242,9 +242,30 @@ def test_hands_free_stops_in_a_room_whose_noise_is_above_the_fixed_threshold():
     assert records[-1]["event"] == "Dictated"
 
 
-def test_a_silent_chunk_as_the_mic_opens_does_not_become_the_noise_floor():
+def _faded_in(signal: np.ndarray, fade_s: float) -> np.ndarray:
+    # Intel's DMIC firmware ramps -90 dB to 0 dB, linear in dB, each time capture starts.
+    seconds = np.arange(signal.size) / config.SAMPLE_RATE_HZ
+    db = np.clip(-90.0 + 90.0 * seconds / fade_s, -90.0, 0.0)
+    return (signal * 10 ** (db / 20)).astype(np.float32)
+
+
+@pytest.mark.parametrize("fade_s", [0.1, 0.2])
+def test_the_mic_fading_in_does_not_become_the_noise_floor(fade_s):
     dictation, recording, records, _ = _live()
     dictation.handle("hands-free")
+    recording.feed(_faded_in(_room(1.0), fade_s))
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S - 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_room(0.2))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+
+
+def test_a_dropout_does_not_become_the_noise_floor():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_room(1.0))
     recording.feed(_quiet(0.1))
     recording.feed(_room(0.5))
     recording.feed(_talk(1.0))

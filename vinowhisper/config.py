@@ -171,6 +171,8 @@ SILENCE_RMS_THRESHOLD = 0.002
 
 NOISE_FLOOR_MARGIN = 2.0
 NOISE_FLOOR_MAX_RMS = 0.05
+# Mics fade in as capture starts (Intel DMIC: 100-200ms); the opening reads quieter than the room.
+NOISE_FLOOR_SETTLE_S = 0.5
 
 HANDS_FREE_MIN_SPEECH_S = 0.5
 HANDS_FREE_SILENCE_S = 2.5
