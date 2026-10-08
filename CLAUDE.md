@@ -262,8 +262,10 @@ and the traps found building it:
   (2.22s held), a tap is ~55ms. KDE's GlobalShortcuts portal delivers
   `Deactivated` on release (2.49s hold), and kglobalaccel's repeats do not
   reach the app. `dictation::TAP` is 350ms.
-- **One utterance, one decode, no stitching.** `vinowhisper-dictate --json`
-  takes start/stop/cancel on stdin, records the mic, posts once. The overlay
+- **One utterance, one `Dictated`, no stitching.** `vinowhisper-dictate --json`
+  takes start/stop/cancel on stdin, records the mic, and (since #54) decodes
+  pieces cut at pauses while the key is held, capped at 5 minutes (see
+  `docs/gui.md`). Pre-#54 it posted once, 29.5s at most. The overlay
   keeps it running idle because Python imports cost 270ms; `pw-record`
   delivers 90-290ms after spawn; 250ms of tail is kept past the release. The
   key press also calls `/health`, so a cold model load overlaps the speech.

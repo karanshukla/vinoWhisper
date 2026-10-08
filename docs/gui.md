@@ -205,9 +205,54 @@ Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
 Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
 "Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.
 
-One utterance is one decode, so none of the caption stitching applies: 29.5s
-at most (it stops and types by itself there), about 0.5-0.8s from release to
-text on the NPU, measured 2026-09-21.
+One utterance is one `Dictated`, and none of the caption stitching applies.
+While the key is held (or hands-free is on), the audio is cut at pauses and each
+finished piece is decoded in the background; on release only the tail is
+decoded, the pieces are joined with single spaces and cleaned once. It stops
+and types by itself at 5 minutes (`DICTATION_MAX_S`). Release to text was about
+0.5-0.8s for a short utterance on the NPU, measured 2026-09-21, when the whole
+thing was one decode. The release-to-text time for a ~60s dictation is not
+measured yet; that needs the NPU.
+
+- **Where it cuts.** A piece must hold at least 5s (`SEGMENT_MIN_S`) and then
+  see 300ms of consecutive 100ms chunks under `SILENCE_RMS_THRESHOLD`
+  (`SEGMENT_PAUSE_S`). If a piece reaches `MAX_WINDOW_S` with no pause, it is
+  cut after the quietest chunk of its last 3s (`SEGMENT_FALLBACK_S`), which
+  can land inside a word. The 5s, 300ms and 3s are starting values, not tuned
+  on speech.
+- **What still covers the whole utterance.** The 0.3s minimum and the
+  silence check apply to the whole recording, not to each piece. A piece that
+  is entirely silent is skipped. Cancel drops queued and in-flight pieces and
+  types nothing.
+- **Hands-free auto-stop is separate from cutting.** The quiet rule (0.5s of
+  speech, then 2.5s quiet) counts over the whole recording, not per piece, so
+  the 300ms pause that cuts a piece never trips it, and speech in earlier
+  pieces still counts. When it fires, the last piece is decoded and everything
+  is typed as on a release. It shares the 5 minute cap's one-shot stop, so
+  neither can queue a second stop, and cancel wins over both.
+- **One decode at a time.** A single worker thread sends the pieces in order.
+  The server serializes requests behind one transcriber lock anyway, so a
+  dictation and running captions wait on each other; that contention is left
+  as it is.
+- **Text so far in the pill.** Added 2026-10-07, from
+  [issue #55](https://github.com/karanshukla/vinoWhisper/issues/55). Each time
+  a piece finishes decoding, `dictate` sends `Partial` with the cleaned text of
+  all pieces so far (cumulative, not a delta, so a dropped line cannot desync
+  the pill). While listening, the pill shows that text on a second line under
+  "Listening…", cut to its last 64 characters so the newest words stay in view,
+  and the level meter keeps moving. The pill is no wider than before, and the
+  two lines use a 13px font instead of 15px to fit its 44px height. Nothing is
+  typed until release, and the target window is not touched. Hold and
+  hands-free behave the same. No `Partial` is sent once the key is released or
+  after a cancel. The text lags the speech by up to a piece (5s minimum plus
+  decode time), and a short utterance that is a single piece shows nothing
+  until the result. Not run on a live compositor yet.
+- **Capitalisation.** Whisper capitalises the start of each piece and may end
+  it with a full stop, so a cut mid-sentence can read "...the report. And
+  then...". Nothing repairs this.
+- **Captions' buffer is untouched.** The recorder's 29.5s ring buffer is still
+  what captions read; dictation keeps its own audio per piece from the
+  recorder's tap, so a 5-minute utterance costs about 19MB.
 
 **How the text gets there.** Wayland lets no app type into another, so it
 copies the text and presses Shift+Insert:
