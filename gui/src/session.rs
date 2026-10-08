@@ -178,17 +178,26 @@ pub fn spawn(
     Ok(Child { pid, stdin })
 }
 
+fn caption_args(source: Source, transcript: bool) -> Vec<&'static str> {
+    let mut args = vec!["--json", "--source", source.as_arg()];
+    if transcript {
+        args.push("--transcript");
+    }
+    args
+}
+
 impl Session {
     // Main thread only, see `spawn`.
     pub fn start(
         program: &Path,
         source: Source,
+        transcript: bool,
         generation: u64,
         tx: Sender<Command>,
     ) -> io::Result<Session> {
         let mut process = Process::new(program);
         process
-            .args(["--json", "--source", source.as_arg()])
+            .args(caption_args(source, transcript))
             .stdin(Stdio::null());
         let events = tx.clone();
         let child = spawn(
@@ -225,5 +234,22 @@ impl Session {
 
     pub fn stopping(&self) -> bool {
         self.stopping
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_transcript_flag_is_only_passed_when_asked_for() {
+        assert_eq!(
+            caption_args(Source::Mic, false),
+            ["--json", "--source", "mic"]
+        );
+        assert_eq!(
+            caption_args(Source::Output, true),
+            ["--json", "--source", "output", "--transcript"]
+        );
     }
 }

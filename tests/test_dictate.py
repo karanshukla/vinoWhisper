@@ -174,6 +174,106 @@ def test_a_stale_full_signal_does_not_stop_the_next_recording():
     assert [r["event"] for r in records if r["event"] != "Level"][-1] == "Listening"
 
 
+class LiveRecording(FakeRecording):
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def feed(self, signal: np.ndarray) -> None:
+        self._signal = np.concatenate([self._signal, signal])
+        for chunk in pcm.chunks(signal):
+            self._tap(chunk)
+
+
+def _live():
+    records: list[dict] = []
+    recordings: list[LiveRecording] = []
+
+    def recorder(tap):
+        recordings.append(LiveRecording(tap, np.zeros(0, dtype=np.float32)))
+        return recordings[-1]
+
+    client = FakeClient()
+    dictation = dictate.Dictation(records.append, client=client, recorder=recorder)
+    dictation.handle("start")
+    return dictation, recordings[0], records, client
+
+
+def _talk(seconds: float) -> np.ndarray:
+    return pcm.sine(220.0, seconds, amplitude=0.1)
+
+
+def _quiet(seconds: float) -> np.ndarray:
+    return np.zeros(int(seconds * config.SAMPLE_RATE_HZ), dtype=np.float32)
+
+
+def test_hands_free_silence_before_any_speech_never_stops():
+    dictation, recording, _, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_quiet(10.0))
+    assert dictation._commands.empty()
+
+
+def test_hands_free_speech_then_the_silence_timeout_stops_and_decodes():
+    dictation, recording, records, client = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S - 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_quiet(0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+    assert len(client.decoded) == 1
+
+
+def test_a_held_key_never_stops_on_silence():
+    dictation, recording, _, _ = _live()
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(10.0))
+    assert dictation._commands.empty()
+
+
+def test_pauses_shorter_than_the_timeout_do_not_stop():
+    dictation, recording, _, _ = _live()
+    dictation.handle("hands-free")
+    pause = config.HANDS_FREE_SILENCE_S - 0.5
+    for _ in range(3):
+        recording.feed(_talk(1.0))
+        recording.feed(_quiet(pause))
+    assert dictation._commands.empty()
+
+
+def test_less_speech_than_the_minimum_does_not_arm_the_timeout():
+    dictation, recording, _, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(config.HANDS_FREE_MIN_SPEECH_S - 0.2))
+    recording.feed(_quiet(10.0))
+    assert dictation._commands.empty()
+
+
+def test_latching_after_the_silence_has_already_passed_stops_at_once():
+    dictation, recording, records, client = _live()
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S))
+    assert dictation._commands.empty()
+    dictation.handle("hands-free")
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+    assert len(client.decoded) == 1
+
+
+def test_a_stale_quiet_signal_does_not_stop_the_next_recording():
+    records: list[dict] = []
+    dictation = dictate.Dictation(
+        records.append, client=FakeClient(), recorder=lambda tap: FakeRecording(tap, SPEECH)
+    )
+    dictation.handle("start")
+    dictation.handle("stop")
+    dictation.handle("start")
+    dictation.handle("quiet 1")
+    assert [r["event"] for r in records if r["event"] != "Level"][-1] == "Listening"
+
+
 def test_a_microphone_that_will_not_open_is_an_error_not_a_crash():
     records, _, _ = _run(["start", "stop"], fail_on_enter=True)
     assert [r["event"] for r in records] == ["Error"]
@@ -402,3 +502,29 @@ def test_no_partial_follows_a_cancel():
     time.sleep(0.1)
     assert all(r["event"] != "Partial" for r in records)
     assert records[-1] == {"event": "Cancelled"}
+
+
+def test_hands_free_quiet_stop_joins_segments_decoded_before_it():
+    dictation, recording, records, client = _live()
+    client.script = ["one.", "two."]
+    dictation.handle("hands-free")
+    recording.feed(_talk(6.0))
+    recording.feed(_quiet(config.SEGMENT_PAUSE_S + 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert dictation._commands.empty()
+    assert records[-1]["event"] == "Dictated"
+    assert records[-1]["text"] == "one. two."
+
+
+def test_cancel_after_hands_free_stop_was_queued_types_nothing():
+    dictation, recording, records, client = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(1.0))
+    recording.feed(_quiet(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle("cancel")
+    dictation.handle(dictation._commands.get_nowait())
+    assert "Dictated" not in [r["event"] for r in records]
+    assert records[-1]["event"] == "Cancelled"
