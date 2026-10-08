@@ -119,6 +119,7 @@ pub struct Pill {
     pub tone: Tone,
     pub text: String,
     pub level: Option<f32>,
+    pub status: bool,
 }
 
 #[derive(Debug)]
@@ -358,13 +359,27 @@ impl Dictation {
             Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
             Phase::Failed(message) => (Tone::Bad, message.clone(), None),
         };
+        let words = matches!(
+            self.phase,
+            Phase::Listening { live: true, .. }
+                | Phase::Typed {
+                    pasted: None | Some(Ok(())),
+                    ..
+                }
+        );
         match &self.notice {
             Some((_, message)) => Some(Pill {
                 tone: Tone::Warn,
                 text: message.clone(),
                 level,
+                status: true,
             }),
-            None => Some(Pill { tone, text, level }),
+            None => Some(Pill {
+                tone,
+                text,
+                level,
+                status: !words,
+            }),
         }
     }
 
@@ -640,6 +655,26 @@ mod tests {
         let shown = d.pill().unwrap().text;
         assert_eq!(shown.chars().count(), PREVIEW_CHARS);
         assert!(shown.starts_with('…') && shown.ends_with("last words"));
+    }
+
+    #[test]
+    fn only_the_words_are_drawn_as_words_and_every_status_is_marked() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        assert!(d.pill().unwrap().status, "starting the microphone");
+        d.event(Dictate::Listening);
+        assert!(
+            !d.pill().unwrap().status,
+            "the empty pill is just the meter"
+        );
+        d.event(Dictate::Partial {
+            text: "hello".into(),
+        });
+        assert!(!d.pill().unwrap().status);
+        d.key(false, at(2000, t));
+        assert_eq!(d.phase(), &Phase::Transcribing);
+        assert!(d.pill().unwrap().status, "transcribing is not the words");
     }
 
     #[test]

@@ -242,7 +242,9 @@ measured yet; that needs the NPU.
   words arrive, then the meter and the text on one line, cut to its last 64
   characters so the newest words stay in view. There is no "Listening…" text
   (removed 2026-10-07 at the user's request), so hold and hands-free look the
-  same. Nothing is typed until release, and the target window is not touched.
+  same. Anything that is not the user's words (Starting the microphone…,
+  Transcribing…, Heard nothing, errors) is drawn dim and italic, so it cannot
+  be read as part of the text. Nothing is typed until release, and the target window is not touched.
   No `Partial` is sent once the key is released or after a cancel.
 - **Preview of the uncut tail.** Added 2026-10-07. A piece only finishes at a
   pause after 5s (`SEGMENT_MIN_S`), so a normal sentence showed nothing until

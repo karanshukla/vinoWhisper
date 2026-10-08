@@ -1,5 +1,6 @@
 use cosmic_text::{
-    Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap, fontdb,
+    Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
+    fontdb,
 };
 
 use crate::captions::{Captions, Span, Tone};
@@ -83,6 +84,7 @@ fn meter(rms: f32) -> f32 {
 struct TextBlock {
     metrics: Metrics,
     weight: Weight,
+    style: Style,
     wrap: Wrap,
     left: f32,
     right: f32,
@@ -145,6 +147,7 @@ impl Painter {
             TextBlock {
                 metrics: Metrics::new(g.status_px, g.status_line),
                 weight: Weight::NORMAL,
+                style: Style::Normal,
                 wrap: Wrap::None,
                 left: left + dot_radius * 2.0 + g.status_px * 0.5,
                 right,
@@ -159,6 +162,7 @@ impl Painter {
             TextBlock {
                 metrics: Metrics::new(g.caption_px, g.caption_line),
                 weight: Weight::MEDIUM,
+                style: Style::Normal,
                 wrap: Wrap::WordOrGlyph,
                 left,
                 right,
@@ -174,13 +178,18 @@ impl Painter {
         let px = PILL_TEXT_PX * scale;
         let line = (PILL_TEXT_PX * 1.4).round() * scale;
         let (pad, icon, gap) = (PILL_PAD * scale, PILL_ICON * scale, PILL_GAP * scale);
+        let (style, tone) = if pill.status {
+            (Style::Italic, Tone::Dim)
+        } else {
+            (Style::Normal, Tone::Caption)
+        };
         let spans = [Span {
             text: pill.text.clone(),
-            tone: Tone::Caption,
+            tone,
         }];
         let max_text = (width - pad * 2.0 - icon - gap).max(1.0);
         let metrics = Metrics::new(px, line);
-        let text_width = self.measure(&spans, metrics, max_text);
+        let text_width = self.measure(&spans, metrics, style, max_text);
 
         let text_gap = if pill.text.is_empty() { 0.0 } else { gap };
         let box_width = (pad * 2.0 + icon + text_gap + text_width).min(width).ceil();
@@ -222,6 +231,7 @@ impl Painter {
         let block = TextBlock {
             metrics,
             weight: Weight::MEDIUM,
+            style,
             wrap: Wrap::None,
             left,
             right,
@@ -231,13 +241,14 @@ impl Painter {
         self.draw_text(canvas, &spans, block);
     }
 
-    fn measure(&mut self, spans: &[Span], metrics: Metrics, max_width: f32) -> f32 {
+    fn measure(&mut self, spans: &[Span], metrics: Metrics, style: Style, max_width: f32) -> f32 {
         let mut buffer = Buffer::new(&mut self.fonts, metrics);
         buffer.set_wrap(Wrap::None);
         buffer.set_size(Some(max_width), None);
         let attrs = Attrs::new()
             .family(Family::SansSerif)
-            .weight(Weight::MEDIUM);
+            .weight(Weight::MEDIUM)
+            .style(style);
         buffer.set_rich_text(
             spans.iter().map(|span| (span.text.as_str(), attrs.clone())),
             &attrs,
@@ -256,7 +267,10 @@ impl Painter {
         let mut buffer = Buffer::new(&mut self.fonts, block.metrics);
         buffer.set_wrap(block.wrap);
         buffer.set_size(Some((block.right - block.left).max(1.0)), None);
-        let base = Attrs::new().family(Family::SansSerif).weight(block.weight);
+        let base = Attrs::new()
+            .family(Family::SansSerif)
+            .weight(block.weight)
+            .style(block.style);
         buffer.set_rich_text(
             spans.iter().map(|span| {
                 (
@@ -385,6 +399,7 @@ mod tests {
             tone: Tone::Good,
             text: "Listening".into(),
             level: Some(0.05),
+            status: false,
         };
         painter_without_fonts().paint_pill(&mut canvas, 1.0, &pill);
         let alpha = |x: u32, y: u32| pixels[((y * width + x) * 4 + 3) as usize];
