@@ -98,7 +98,10 @@ class _Segmenter:
         if chunk.size == 0:
             return None
         level = audio.rms(chunk)
-        self._floor = min(self._floor, level)
+        # A near-silent chunk (a source starting up) would pin the floor under real room
+        # noise; any floor this low yields the fixed threshold anyway.
+        if level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
+            self._floor = min(self._floor, level)
         self._chunks.append((chunk, level))
         self._samples += chunk.size
         self._total += chunk.size
@@ -203,6 +206,10 @@ class _Decoder:
             self._busy = True
             try:
                 self._decode(samples, tag)
+            except Exception as exc:
+                # A dead worker would quietly drop every later piece from the typed text.
+                if tag is None and self.error is None:
+                    self.error = exc
             finally:
                 self._busy = False
 
@@ -484,8 +491,13 @@ class Dictation:
                 warmup.health = {}
 
         decoder.finish()
-        if decoder.error is not None:
+        if isinstance(decoder.error, requests.RequestException):
             self._emit(_server_error(decoder.error))
+            return
+        if decoder.error is not None:
+            message = f"Transcription failed: {decoder.error}"
+            print(f"[vinowhisper] {message}", file=sys.stderr)
+            self._emit({"event": "Error", "message": message})
             return
         self._emit(
             {
