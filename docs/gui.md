@@ -201,6 +201,19 @@ measured yet; that needs the NPU.
   The server serializes requests behind one transcriber lock anyway, so a
   dictation and running captions wait on each other; that contention is left
   as it is.
+- **Text so far in the pill.** Added 2026-10-07, from
+  [issue #55](https://github.com/karanshukla/vinoWhisper/issues/55). Each time
+  a piece finishes decoding, `dictate` sends `Partial` with the cleaned text of
+  all pieces so far (cumulative, not a delta, so a dropped line cannot desync
+  the pill). While listening, the pill shows that text on a second line under
+  "Listening…", cut to its last 64 characters so the newest words stay in view,
+  and the level meter keeps moving. The pill is no wider than before, and the
+  two lines use a 13px font instead of 15px to fit its 44px height. Nothing is
+  typed until release, and the target window is not touched. Hold and
+  hands-free behave the same. No `Partial` is sent once the key is released or
+  after a cancel. The text lags the speech by up to a piece (5s minimum plus
+  decode time), and a short utterance that is a single piece shows nothing
+  until the result. Not run on a live compositor yet.
 - **Capitalisation.** Whisper capitalises the start of each piece and may end
   it with a full stop, so a cut mid-sentence can read "...the report. And
   then...". Nothing repairs this.

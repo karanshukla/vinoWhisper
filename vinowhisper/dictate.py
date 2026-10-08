@@ -121,11 +121,14 @@ class _Segmenter:
 
 
 class _Decoder:
-    def __init__(self, client: _Client, warmup: _Warmup) -> None:
+    def __init__(self, client: _Client, warmup: _Warmup, emit: Emit) -> None:
         self.texts: list[str] = []
         self.error: Exception | None = None
         self._client = client
         self._warmup = warmup
+        self._emit = emit
+        self._live = True
+        self._gate = threading.Lock()
         self._pending: queue.Queue[np.ndarray | None] = queue.Queue()
         self._cancelled = threading.Event()
         self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
@@ -139,8 +142,14 @@ class _Decoder:
         self._thread.join()
 
     def cancel(self) -> None:
-        self._cancelled.set()
+        with self._gate:
+            self._live = False
+            self._cancelled.set()
         self._pending.put(None)
+
+    def mute(self) -> None:
+        with self._gate:
+            self._live = False
 
     def _run(self) -> None:
         while (samples := self._pending.get()) is not None:
@@ -156,8 +165,13 @@ class _Decoder:
                 self.error = exc
                 continue
             text = clean(transcript)
-            if text and not self._cancelled.is_set():
-                self.texts.append(text)
+            if text:
+                with self._gate:
+                    if self._cancelled.is_set():
+                        continue
+                    self.texts.append(text)
+                    if self._live:
+                        self._emit({"event": "Partial", "text": clean(" ".join(self.texts))})
 
 
 class Dictation:
@@ -221,7 +235,7 @@ class Dictation:
         self._captured = 0
         self._full_sent = False
         self._segmenter = _Segmenter()
-        self._decoder = _Decoder(self._client, warmup)
+        self._decoder = _Decoder(self._client, warmup, self._emit)
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()
@@ -284,6 +298,10 @@ class Dictation:
             self._emit({"event": "Error", "message": f"Microphone capture failed: {exc}"})
             return
         recording.__exit__(None, None, None)
+        if transcribe:
+            with self._lock:
+                if self._decoder is not None:
+                    self._decoder.mute()
         if not transcribe:
             self._discard()
             self._emit({"event": "Cancelled"})

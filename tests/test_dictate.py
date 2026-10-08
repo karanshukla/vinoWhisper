@@ -243,6 +243,17 @@ def test_every_field_the_overlay_reads_is_emitted():
     assert isinstance(by_event["Dictated"]["text"], str)
     assert {"device", "degraded"} <= by_event["Ready"].keys()
 
+    partials: list[dict] = []
+    signal = np.concatenate([_speech_with_pauses(1), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    client = FakeClient(script=["one.", "two."])
+    dictation = _dictation(signal, client, partials)
+    dictation.handle("start")
+    _wait_for(lambda: any(r["event"] == "Partial" for r in partials))
+    assert [r for r in partials if r["event"] == "Partial"] == [
+        {"event": "Partial", "text": "one."}
+    ]
+    dictation.handle("cancel")
+
     levels: list[dict] = []
     dictation = dictate.Dictation(
         levels.append, client=FakeClient(), recorder=lambda tap: FakeRecording(tap, SPEECH)
@@ -360,3 +371,34 @@ def test_a_failed_segment_decode_is_reported_once():
     records, _, _ = _run(["start", "stop"], signal=signal, client=client)
     assert [r["event"] for r in records].count("Error") == 1
     assert records[-1]["event"] == "Error"
+
+
+def test_each_finished_segment_emits_one_cumulative_partial_in_order():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    client = FakeClient(script=["one.", "two.", "three.", "four."])
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    _wait_for(lambda: sum(r["event"] == "Partial" for r in records) == 3)
+    dictation.handle("stop")
+    partials = [r["text"] for r in records if r["event"] == "Partial"]
+    assert partials == ["one.", "one. two.", "one. two. three."]
+    events = [r["event"] for r in records if r["event"] != "Level"]
+    assert events.index("Transcribing") > max(i for i, e in enumerate(events) if e == "Partial")
+    assert records[-1]["text"] == "one. two. three. four."
+
+
+def test_no_partial_follows_a_cancel():
+    signal = np.concatenate([_speech_with_pauses(3), pcm.sine(220.0, 1.0, amplitude=0.1)])
+    gate = threading.Event()
+    client = FakeClient(gate=gate)
+    records: list[dict] = []
+    dictation = _dictation(signal, client, records)
+    dictation.handle("start")
+    assert client.started.wait(5.0)
+    dictation.handle("cancel")
+    gate.set()
+    _wait_for(lambda: len(client.decoded) >= 1)
+    time.sleep(0.1)
+    assert all(r["event"] != "Partial" for r in records)
+    assert records[-1] == {"event": "Cancelled"}
