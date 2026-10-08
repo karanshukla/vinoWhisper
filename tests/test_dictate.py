@@ -185,15 +185,15 @@ class LiveRecording(FakeRecording):
             self._tap(chunk)
 
 
-def _live():
-    records: list[dict] = []
+def _live(client=None, records=None):
+    records = [] if records is None else records
     recordings: list[LiveRecording] = []
 
     def recorder(tap):
         recordings.append(LiveRecording(tap, np.zeros(0, dtype=np.float32)))
         return recordings[-1]
 
-    client = FakeClient()
+    client = client or FakeClient()
     dictation = dictate.Dictation(records.append, client=client, recorder=recorder)
     dictation.handle("start")
     return dictation, recordings[0], records, client
@@ -224,6 +224,38 @@ def test_hands_free_speech_then_the_silence_timeout_stops_and_decodes():
     dictation.handle(dictation._commands.get_nowait())
     assert records[-1]["event"] == "Dictated"
     assert len(client.decoded) == 1
+
+
+def _room(seconds: float) -> np.ndarray:
+    return pcm.sine(97.0, seconds, amplitude=0.03)
+
+
+def test_hands_free_stops_in_a_room_whose_noise_is_above_the_fixed_threshold():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_room(0.5))
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S - 0.1))
+    assert dictation._commands.empty()
+    recording.feed(_room(0.2))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
+
+
+def test_a_noisy_room_with_no_speech_never_stops():
+    dictation, recording, _, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_room(10.0))
+    assert dictation._commands.empty()
+
+
+def test_speech_that_opens_the_recording_does_not_become_the_noise_floor():
+    dictation, recording, records, _ = _live()
+    dictation.handle("hands-free")
+    recording.feed(_talk(1.0))
+    recording.feed(_room(config.HANDS_FREE_SILENCE_S + 0.1))
+    dictation.handle(dictation._commands.get_nowait())
+    assert records[-1]["event"] == "Dictated"
 
 
 def test_a_held_key_never_stops_on_silence():
@@ -622,3 +654,46 @@ def test_cancel_after_hands_free_stop_was_queued_types_nothing():
     dictation.handle(dictation._commands.get_nowait())
     assert "Dictated" not in [r["event"] for r in records]
     assert records[-1]["event"] == "Cancelled"
+
+
+def test_speech_under_way_previews_the_uncut_tail_before_any_piece_is_cut(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 1.0)
+    client = FakeClient(script=["hello there"])
+    dictation, recording, records, _ = _live(client)
+    recording.feed(_talk(2.5))
+    _wait_for(lambda: any(r["event"] == "Partial" for r in records))
+    assert [r["text"] for r in records if r["event"] == "Partial"][0] == "hello there"
+    assert dictation._decoder is not None and dictation._decoder.texts == []
+
+
+def test_a_preview_is_not_queued_behind_another_decode(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 0.5)
+    gate = threading.Event()
+    client = FakeClient(gate=gate)
+    _, recording, _, _ = _live(client)
+    recording.feed(_talk(4.0))
+    assert client.started.wait(5.0)
+    assert len(client.decoded) == 1
+    gate.set()
+
+
+def test_a_preview_made_before_a_piece_was_cut_is_dropped(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 1e9)
+    client = FakeClient(script=["stale tail"])
+    records: list[dict] = []
+    dictation, recording, _, _ = _live(client, records)
+    decoder = dictation._decoder
+    assert decoder is not None
+    decoder.texts.append("already cut.")
+    decoder._pending.put((_talk(1.0), 0))
+    time.sleep(0.5)
+    assert not any(r["event"] == "Partial" for r in records)
+
+
+def test_silence_alone_is_not_previewed(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 0.5)
+    client = FakeClient()
+    _, recording, _, _ = _live(client)
+    recording.feed(_quiet(4.0))
+    time.sleep(0.3)
+    assert client.decoded == []

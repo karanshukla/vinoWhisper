@@ -1,5 +1,6 @@
 use cosmic_text::{
-    Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap, fontdb,
+    Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
+    fontdb,
 };
 
 use crate::captions::{Captions, Span, Tone};
@@ -70,7 +71,6 @@ pub const PILL_WIDTH: u32 = 640;
 pub const PILL_HEIGHT: u32 = 44;
 
 const PILL_TEXT_PX: f32 = 15.0;
-const PILL_TWO_LINE_PX: f32 = 13.0;
 const PILL_PAD: f32 = 16.0;
 const PILL_ICON: f32 = 18.0;
 const PILL_GAP: f32 = 10.0;
@@ -84,6 +84,7 @@ fn meter(rms: f32) -> f32 {
 struct TextBlock {
     metrics: Metrics,
     weight: Weight,
+    style: Style,
     wrap: Wrap,
     left: f32,
     right: f32,
@@ -146,6 +147,7 @@ impl Painter {
             TextBlock {
                 metrics: Metrics::new(g.status_px, g.status_line),
                 weight: Weight::NORMAL,
+                style: Style::Normal,
                 wrap: Wrap::None,
                 left: left + dot_radius * 2.0 + g.status_px * 0.5,
                 right,
@@ -160,6 +162,7 @@ impl Painter {
             TextBlock {
                 metrics: Metrics::new(g.caption_px, g.caption_line),
                 weight: Weight::MEDIUM,
+                style: Style::Normal,
                 wrap: Wrap::WordOrGlyph,
                 left,
                 right,
@@ -172,29 +175,24 @@ impl Painter {
     pub fn paint_pill(&mut self, canvas: &mut Canvas, scale: f32, pill: &Pill) {
         canvas.clear();
         let (width, height) = (canvas.width() as f32, canvas.height() as f32);
-        let two = pill.detail.is_some();
-        let text_px = if two { PILL_TWO_LINE_PX } else { PILL_TEXT_PX };
-        let px = text_px * scale;
-        let line = (text_px * 1.4).round() * scale;
+        let px = PILL_TEXT_PX * scale;
+        let line = (PILL_TEXT_PX * 1.4).round() * scale;
         let (pad, icon, gap) = (PILL_PAD * scale, PILL_ICON * scale, PILL_GAP * scale);
+        let (style, tone) = if pill.status {
+            (Style::Italic, Tone::Dim)
+        } else {
+            (Style::Normal, Tone::Caption)
+        };
         let spans = [Span {
             text: pill.text.clone(),
-            tone: Tone::Caption,
+            tone,
         }];
-        let detail = pill.detail.as_ref().map(|text| {
-            [Span {
-                text: text.clone(),
-                tone: Tone::Caption,
-            }]
-        });
         let max_text = (width - pad * 2.0 - icon - gap).max(1.0);
         let metrics = Metrics::new(px, line);
-        let mut text_width = self.measure(&spans, metrics, max_text);
-        if let Some(detail) = &detail {
-            text_width = text_width.max(self.measure(detail, metrics, max_text));
-        }
+        let text_width = self.measure(&spans, metrics, style, max_text);
 
-        let box_width = (pad * 2.0 + icon + gap + text_width).min(width).ceil();
+        let text_gap = if pill.text.is_empty() { 0.0 } else { gap };
+        let box_width = (pad * 2.0 + icon + text_gap + text_width).min(width).ceil();
         let x0 = ((width - box_width) / 2.0).floor();
         let frame = Rect {
             x0,
@@ -230,33 +228,27 @@ impl Painter {
 
         let left = x0 + pad + icon + gap;
         let right = (left + text_width + 1.0).min(frame.x1 - pad / 2.0);
-        let top = if two {
-            (height - line * 2.0) / 2.0
-        } else {
-            (height - line) / 2.0
-        };
-        let block = |top, weight| TextBlock {
+        let block = TextBlock {
             metrics,
-            weight,
+            weight: Weight::MEDIUM,
+            style,
             wrap: Wrap::None,
             left,
             right,
-            top,
+            top: (height - line) / 2.0,
             lines: 1,
         };
-        self.draw_text(canvas, &spans, block(top, Weight::MEDIUM));
-        if let Some(detail) = &detail {
-            self.draw_text(canvas, detail, block(top + line, Weight::NORMAL));
-        }
+        self.draw_text(canvas, &spans, block);
     }
 
-    fn measure(&mut self, spans: &[Span], metrics: Metrics, max_width: f32) -> f32 {
+    fn measure(&mut self, spans: &[Span], metrics: Metrics, style: Style, max_width: f32) -> f32 {
         let mut buffer = Buffer::new(&mut self.fonts, metrics);
         buffer.set_wrap(Wrap::None);
         buffer.set_size(Some(max_width), None);
         let attrs = Attrs::new()
             .family(Family::SansSerif)
-            .weight(Weight::MEDIUM);
+            .weight(Weight::MEDIUM)
+            .style(style);
         buffer.set_rich_text(
             spans.iter().map(|span| (span.text.as_str(), attrs.clone())),
             &attrs,
@@ -275,7 +267,10 @@ impl Painter {
         let mut buffer = Buffer::new(&mut self.fonts, block.metrics);
         buffer.set_wrap(block.wrap);
         buffer.set_size(Some((block.right - block.left).max(1.0)), None);
-        let base = Attrs::new().family(Family::SansSerif).weight(block.weight);
+        let base = Attrs::new()
+            .family(Family::SansSerif)
+            .weight(block.weight)
+            .style(block.style);
         buffer.set_rich_text(
             spans.iter().map(|span| {
                 (
@@ -404,7 +399,7 @@ mod tests {
             tone: Tone::Good,
             text: "Listening".into(),
             level: Some(0.05),
-            detail: Some("the newest words".into()),
+            status: false,
         };
         painter_without_fonts().paint_pill(&mut canvas, 1.0, &pill);
         let alpha = |x: u32, y: u32| pixels[((y * width + x) * 4 + 3) as usize];

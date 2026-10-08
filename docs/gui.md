@@ -238,15 +238,28 @@ measured yet; that needs the NPU.
   [issue #55](https://github.com/karanshukla/vinoWhisper/issues/55). Each time
   a piece finishes decoding, `dictate` sends `Partial` with the cleaned text of
   all pieces so far (cumulative, not a delta, so a dropped line cannot desync
-  the pill). While listening, the pill shows that text on a second line under
-  "Listening…", cut to its last 64 characters so the newest words stay in view,
-  and the level meter keeps moving. The pill is no wider than before, and the
-  two lines use a 13px font instead of 15px to fit its 44px height. Nothing is
-  typed until release, and the target window is not touched. Hold and
-  hands-free behave the same. No `Partial` is sent once the key is released or
-  after a cancel. The text lags the speech by up to a piece (5s minimum plus
-  decode time), and a short utterance that is a single piece shows nothing
-  until the result. Not run on a live compositor yet.
+  the pill). While listening, the pill is the animated level meter alone until
+  words arrive, then the meter and the text on one line, cut to its last 64
+  characters so the newest words stay in view. There is no "Listening…" text
+  (removed 2026-10-07 at the user's request), so hold and hands-free look the
+  same. Anything that is not the user's words (Starting the microphone…,
+  Transcribing…, Heard nothing, errors) is drawn dim and italic, so it cannot
+  be read as part of the text. Nothing is typed until release, and the target window is not touched.
+  No `Partial` is sent once the key is released or after a cancel.
+- **Preview of the uncut tail.** Added 2026-10-07. A piece only finishes at a
+  pause after 5s (`SEGMENT_MIN_S`), so a normal sentence showed nothing until
+  release. Every `PREVIEW_EVERY_S` (1.5s), if the decoder is idle, the uncut
+  tail (at least `PREVIEW_MIN_S`, and louder than the noise floor) is decoded
+  and sent as a `Partial` after the finished pieces. It is never kept: the
+  typed text comes from the real pieces, and a preview queued before a cut is
+  dropped. The final decode can wait behind at most one preview; not measured
+  on the NPU.
+- **Silence is relative to the mic.** Added 2026-10-07. The fixed
+  `SILENCE_RMS_THRESHOLD` (0.002) is under this laptop's mic noise floor
+  (measured 0.021), so no chunk counted as quiet: pause cuts and the
+  hands-free stop (#56) never fired. The segmenter now tracks the quietest
+  chunk as the floor and treats under 2x of it as quiet (`NOISE_FLOOR_MARGIN`),
+  never below the fixed threshold, ignoring a floor above `NOISE_FLOOR_MAX_RMS`.
 - **Capitalisation.** Whisper capitalises the start of each piece and may end
   it with a full stop, so a cut mid-sentence can read "...the report. And
   then...". Nothing repairs this.
