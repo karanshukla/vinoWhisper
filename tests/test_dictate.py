@@ -365,6 +365,100 @@ def test_every_field_the_overlay_reads_is_emitted():
     assert _run(["bogus"])[0][0].keys() == {"event", "message"}
 
 
+class TimedRecording(FakeRecording):
+    def __init__(self, tap, signal, clock, first_at: float) -> None:
+        super().__init__(tap, signal)
+        self._clock = clock
+        self._first_at = first_at
+
+    def __enter__(self):
+        self._clock.now += self._first_at
+        for chunk in pcm.chunks(self._signal):
+            self._tap(chunk)
+            self._clock.now += 0.1
+        return self
+
+
+class Clock:
+    now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _trace(signal, trace=True, first_at=0.2):
+    clock = Clock()
+    dictation = dictate.Dictation(
+        lambda record: None,
+        client=FakeClient(),
+        recorder=lambda tap: TimedRecording(tap, signal, clock, first_at),
+        trace=trace,
+        clock=clock,
+    )
+    dictation.feed(["start", "stop"]).join()
+    dictation.run()
+
+
+def test_trace_reports_first_chunk_first_loud_chunk_and_first_rms(capsys):
+    lead = pcm.silence(0.3)
+    signal = np.concatenate([lead, pcm.sine(220.0, 1.0, amplitude=0.1)])
+    _trace(signal)
+    err = capsys.readouterr().err
+    assert "first_chunk=200ms" in err
+    assert "first_loud=500ms (chunk 4)" in err
+    assert "first_rms=0.0000" in err
+
+
+def test_trace_flags_speech_already_under_way_on_the_first_chunk(capsys):
+    _trace(SPEECH)
+    err = capsys.readouterr().err
+    assert "first_loud=200ms (chunk 1)" in err
+    assert "first_rms=0.07" in err
+
+
+def test_trace_reports_a_dictation_that_never_got_loud(capsys):
+    _trace(pcm.silence(1.0))
+    assert "first_loud=none" in capsys.readouterr().err
+
+
+def test_trace_is_off_by_default_and_logs_no_text(capsys, monkeypatch):
+    monkeypatch.delenv("VINOWHISPER_DICTATE_TRACE", raising=False)
+    _trace(SPEECH, trace=None)
+    assert capsys.readouterr().err == ""
+    _trace(SPEECH)
+    assert "Hello" not in capsys.readouterr().err
+
+
+def test_trace_env_var_turns_it_on(capsys, monkeypatch):
+    monkeypatch.setenv("VINOWHISPER_DICTATE_TRACE", "1")
+    _trace(SPEECH, trace=None)
+    assert "dictate-trace" in capsys.readouterr().err
+
+
+def test_trace_still_reports_when_hands_free_stops_on_silence(capsys):
+    clock = Clock()
+    records: list[dict] = []
+    recordings: list[LiveRecording] = []
+
+    def recorder(tap):
+        recordings.append(LiveRecording(tap, np.zeros(0, dtype=np.float32)))
+        return recordings[-1]
+
+    dictation = dictate.Dictation(
+        records.append, client=FakeClient(), recorder=recorder, trace=True, clock=clock
+    )
+    dictation.handle("start")
+    dictation.handle("hands-free")
+    recordings[0].feed(_talk(1.0))
+    recordings[0].feed(_quiet(config.HANDS_FREE_SILENCE_S))
+    dictation.handle(dictation._commands.get_nowait())
+    err = capsys.readouterr().err
+    assert records[-1]["event"] == "Dictated"
+    assert err.count("dictate-trace") == 1
+    assert "first_loud=0ms (chunk 1)" in err
+    assert "Hello" not in err
+
+
 def _speech_with_pauses(phrases: int, speech_s: float = 6.0, pause_s: float = 0.5) -> np.ndarray:
     parts = []
     for _ in range(phrases):
