@@ -717,7 +717,7 @@ def test_a_preview_made_before_a_piece_was_cut_is_dropped(monkeypatch):
     decoder = dictation._decoder
     assert decoder is not None
     decoder.texts.append("already cut.")
-    decoder._pending.put((_talk(1.0), 0))
+    decoder._pending.put((_talk(1.0), 0, 0, time.monotonic()))
     time.sleep(0.5)
     assert not any(r["event"] == "Partial" for r in records)
 
@@ -731,6 +731,19 @@ def test_silence_alone_is_not_previewed(monkeypatch):
     assert client.decoded == []
 
 
+def test_a_pause_is_not_previewed_and_speech_resuming_previews_at_once(monkeypatch):
+    monkeypatch.setattr(config, "PREVIEW_EVERY_S", 0.5)
+    monkeypatch.setattr(config, "PREVIEW_MIN_S", 0.1)
+    client = FakeClient(script=["resumed"])
+    _, recording, records, _ = _live(client)
+    recording.feed(_talk(0.2))
+    recording.feed(_quiet(1.0))
+    time.sleep(0.3)
+    assert client.decoded == []
+    recording.feed(_talk(0.2))
+    _wait_for(lambda: len(client.decoded) == 1)
+
+
 class BrokenClient(FakeClient):
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
         raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
@@ -740,3 +753,19 @@ def test_a_decode_that_raises_reports_an_error_instead_of_typing_part_of_the_tex
     records, _, _ = _run(["start", "stop"], client=BrokenClient())
     assert records[-1]["event"] == "Error"
     assert "Transcription failed" in records[-1]["message"]
+
+
+def test_trace_reports_release_timing_without_text(capsys):
+    _trace(SPEECH)
+    err = capsys.readouterr().err
+    assert err.count("dictate-release") == 1
+    for field in ("tail_wait=", "final_audio=", "behind_job=", "queue_wait=", "decode="):
+        assert field in err
+    assert "preview_stale=" in err and "release_to_text=" in err
+    assert "Hello" not in err
+
+
+def test_release_line_is_off_without_trace(capsys, monkeypatch):
+    monkeypatch.delenv("VINOWHISPER_DICTATE_TRACE", raising=False)
+    _trace(SPEECH, trace=None)
+    assert "dictate-release" not in capsys.readouterr().err

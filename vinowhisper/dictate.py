@@ -91,6 +91,10 @@ class _Segmenter:
         return self._total > config.NOISE_FLOOR_SETTLE_S * config.SAMPLE_RATE_HZ
 
     @property
+    def quiet_s(self) -> float:
+        return self._quiet / config.SAMPLE_RATE_HZ
+
+    @property
     def total_s(self) -> float:
         return self._total / config.SAMPLE_RATE_HZ
 
@@ -169,8 +173,14 @@ class _Decoder:
         self._table = table or {}
         self._live = True
         self._gate = threading.Lock()
-        self._pending: queue.Queue[tuple[np.ndarray, int | None] | None] = queue.Queue()
+        self._pending: queue.Queue[tuple[np.ndarray, int | None, int, float] | None] = queue.Queue()
         self._busy = False
+        self.behind_job = False
+        self.behind_preview = False
+        self._previewing = False
+        self.last_wait_s = 0.0
+        self.last_decode_s = 0.0
+        self.preview_end: int | None = None
         self._cancelled = threading.Event()
         self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
         self._thread.start()
@@ -184,12 +194,14 @@ class _Decoder:
         return replacements.apply(clean(" ".join([*self.texts, tail])), self._table)
 
     def submit(self, samples: np.ndarray) -> None:
-        self._pending.put((samples, None))
+        self.behind_job = self._busy or not self._pending.empty()
+        self.behind_preview = self._busy and self._previewing
+        self._pending.put((samples, None, 0, time.monotonic()))
 
-    def preview(self, samples: np.ndarray) -> None:
+    def preview(self, samples: np.ndarray, end: int) -> None:
         # Only when the decoder is idle, so a preview never delays a real piece by more than one.
         if self._live and self._pending.empty() and not self._busy:
-            self._pending.put((samples, len(self.texts)))
+            self._pending.put((samples, len(self.texts), end, time.monotonic()))
 
     def finish(self) -> None:
         self._pending.put(None)
@@ -207,18 +219,23 @@ class _Decoder:
 
     def _run(self) -> None:
         while (job := self._pending.get()) is not None:
-            samples, tag = job
+            samples, tag, end, queued = job
+            self._previewing = tag is not None
             self._busy = True
+            started = time.monotonic()
             try:
-                self._decode(samples, tag)
+                self._decode(samples, tag, end)
             except Exception as exc:
                 # A dead worker would quietly drop every later piece from the typed text.
                 if tag is None and self.error is None:
                     self.error = exc
             finally:
                 self._busy = False
+                if tag is None:
+                    self.last_wait_s = started - queued
+                    self.last_decode_s = time.monotonic() - started
 
-    def _decode(self, samples: np.ndarray, tag: int | None) -> None:
+    def _decode(self, samples: np.ndarray, tag: int | None, end: int) -> None:
         if self._cancelled.is_set() or self.error is not None:
             return
         self._warmup.done.wait()
@@ -239,9 +256,11 @@ class _Decoder:
                 return
             if tag is None:
                 self.texts.append(text)
+                self.preview_end = None
                 if self._live:
                     self._emit({"event": "Partial", "text": self.joined()})
             elif self._live and len(self.texts) == tag:
+                self.preview_end = end
                 self._emit({"event": "Partial", "text": self.joined_with(text)})
 
 
@@ -395,14 +414,19 @@ class Dictation:
                 _submit(decoder, segment)
             self._stop_if_quiet()
             self._since_preview += samples.size
-            if self._since_preview >= config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ:
+            # A pause is when the key usually comes up, and a preview then would still be
+            # decoding at release. The counter keeps running, so speech resuming previews at once.
+            if (
+                self._since_preview >= config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ
+                and segmenter.quiet_s < config.PREVIEW_QUIET_S
+            ):
                 self._since_preview = 0
                 tail = segmenter.peek()
                 if (
                     tail.size >= config.PREVIEW_MIN_S * config.SAMPLE_RATE_HZ
                     and audio.rms(tail) >= segmenter.threshold
                 ):
-                    decoder.preview(tail)
+                    decoder.preview(tail, self._captured)
             if (
                 not self._stop_sent
                 and self._captured >= config.DICTATION_MAX_S * config.SAMPLE_RATE_HZ
@@ -454,10 +478,12 @@ class Dictation:
             return
         self._report_trace()
         released_at = time.monotonic()
+        tail_wait_s = 0.0
         try:
             recording.check_alive()
             if transcribe:
                 _wait_for_tail(recording)
+                tail_wait_s = time.monotonic() - released_at
         except CaptureError as exc:
             recording.__exit__(None, None, None)
             self._discard()
@@ -477,8 +503,14 @@ class Dictation:
             self._segmenter = self._decoder = None
         if segmenter is None or decoder is None:
             return
-        _submit(decoder, segmenter.finish())
+        final = segmenter.finish()
+        stale_samples = (
+            None if decoder.preview_end is None else self._captured - decoder.preview_end
+        )
+        _submit(decoder, final)
         self._finish(segmenter, decoder, released_at)
+        if self._trace_on:
+            _report_release(decoder, stale_samples, final.size, tail_wait_s, released_at)
 
     def _finish(self, segmenter: _Segmenter, decoder: _Decoder, released_at: float) -> None:
         audio_s = segmenter.total_s
@@ -526,6 +558,27 @@ class Dictation:
             self._active.__exit__(None, None, None)
             self._active = None
         self._discard()
+
+
+def _report_release(
+    decoder: _Decoder,
+    stale_samples: int | None,
+    final_size: int,
+    tail_wait_s: float,
+    released_at: float,
+) -> None:
+    rate = config.SAMPLE_RATE_HZ
+    stale = "none" if stale_samples is None else f"{stale_samples / rate * 1000:.0f}ms"
+
+    print(
+        f"[vinowhisper] dictate-release: tail_wait={tail_wait_s * 1000:.0f}ms "
+        f"final_audio={final_size / rate:.1f}s behind_job={decoder.behind_job} "
+        f"behind_preview={decoder.behind_preview} "
+        f"queue_wait={decoder.last_wait_s * 1000:.0f}ms "
+        f"decode={decoder.last_decode_s * 1000:.0f}ms preview_stale={stale} "
+        f"release_to_text={(time.monotonic() - released_at) * 1000:.0f}ms",
+        file=sys.stderr,
+    )
 
 
 def _submit(decoder: _Decoder, segment: np.ndarray) -> None:

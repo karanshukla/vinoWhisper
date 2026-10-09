@@ -252,8 +252,14 @@ measured yet; that needs the NPU.
   tail (at least `PREVIEW_MIN_S`, and louder than the noise floor) is decoded
   and sent as a `Partial` after the finished pieces. It is never kept: the
   typed text comes from the real pieces, and a preview queued before a cut is
-  dropped. The final decode can wait behind at most one preview; not measured
-  on the NPU.
+  dropped. The final decode can wait behind at most one preview. Measured
+  2026-10-08 (8 dictations, `dictate-release` line): 3 releases hit a busy
+  decoder and the final waited 282-528ms (release-to-text 0.9-1.2s against
+  0.6-0.8s otherwise). So no preview starts while the last `PREVIEW_QUIET_S`
+  (0.3s) was quiet, since a pause is when the key comes up; the interval
+  counter keeps running, so speech resuming previews at once. `behind_preview`
+  on the release line says whether the busy job was a preview. Not yet
+  re-measured after the change.
 - **Silence is relative to the mic.** Added 2026-10-07. The fixed
   `SILENCE_RMS_THRESHOLD` (0.002) is under this laptop's mic noise floor
   (measured 0.021), so no chunk counted as quiet: pause cuts and the
@@ -395,6 +401,20 @@ audio):
 `first_loud` the time to the first chunk at or above `SILENCE_RMS_THRESHOLD`
 (and its position), `first_rms` the level of the first 100ms chunk. The example
 line only shows the format; it is not a measurement.
+
+Added 2026-10-08: a second line per dictation, after the text is ready, for
+release-to-text latency:
+
+    [vinowhisper] dictate-release: tail_wait=250ms final_audio=2.4s behind_job=False queue_wait=0ms decode=480ms preview_stale=900ms release_to_text=790ms
+
+`tail_wait` is the wait for the kept tail audio, `final_audio` the uncut tail
+decoded on release, `behind_job` whether the decoder was busy or queued when it
+was submitted, `queue_wait` and `decode` that final job's wait and decode time,
+`preview_stale` the audio spoken since the last preview that covered the tail
+(`none` if there was no such preview), `release_to_text` the whole span from
+release. Format only, not a measurement. It decides whether reusing the preview
+at release is worth building: if `preview_stale` is usually under ~500ms and
+`decode` dominates, it is.
 
 To measure, on the laptop: start the overlay with the variable set
 (`VINOWHISPER_DICTATE_TRACE=1 vinowhisper-gui`; its stderr is the journal if
