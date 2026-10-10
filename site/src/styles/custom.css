@@ -1,0 +1,96 @@
+/* Tokens, type and code blocks follow vinowhisper-landing's site.css */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --sl-font: "Inter", system-ui, -apple-system, "Segoe UI", Cantarell, "Noto Sans", sans-serif;
+  --sl-font-mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+
+  --sl-color-black: #121315;
+  --sl-color-white: #f2f3f5;
+  --sl-color-gray-1: #e4e5e8;
+  --sl-color-gray-2: #c9cbd0;
+  --sl-color-gray-3: #9a9ea6;
+  --sl-color-gray-4: #6b6f77;
+  --sl-color-gray-5: #2a2c30;
+  --sl-color-gray-6: #1e2023;
+  --sl-color-gray-7: #17181a;
+  --sl-color-accent-low: #12301c;
+  --sl-color-accent: #2f9e57;
+  --sl-color-accent-high: #7bdc97;
+
+  --sl-color-bg-nav: var(--sl-color-bg);
+  --sl-color-bg-sidebar: var(--sl-color-bg);
+  --sl-color-hairline: var(--sl-color-gray-5);
+  --sl-color-hairline-light: var(--sl-color-gray-5);
+  --sl-color-hairline-shade: var(--sl-color-gray-5);
+}
+
+:root[data-theme="light"] {
+  --sl-color-black: #fcfcfc;
+  --sl-color-white: #1c1d20;
+  --sl-color-gray-1: #1c1d20;
+  --sl-color-gray-2: #33353a;
+  --sl-color-gray-3: #5d6068;
+  --sl-color-gray-4: #80848c;
+  --sl-color-gray-5: #e2e3e6;
+  --sl-color-gray-6: #eef0f2;
+  --sl-color-gray-7: #f5f6f7;
+  --sl-color-accent-low: #dcefe3;
+  --sl-color-accent: #1a7040;
+  --sl-color-accent-high: #1a7040;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-weight: 700;
+  text-wrap: balance;
+}
+.sl-markdown-content h1,
+h1#_top {
+  letter-spacing: -0.035em;
+}
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: -0.025em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-underline-offset: 2px;
+}
+
+.sl-markdown-content :not(pre) > code {
+  padding: 0.1em 0.3em;
+  border: 0;
+  border-radius: 3px;
+  background: var(--sl-color-gray-6);
+}
+
+.sl-markdown-content table {
+  font-size: 15px;
+}
+.sl-markdown-content th {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sl-color-gray-3);
+}
+
+.sl-link-button,
+.sl-markdown-content .card {
+  border-radius: 6px;
+}
+
+.site-title {
+  font-weight: 700;
+  font-size: 17px;
+}

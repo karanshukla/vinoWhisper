@@ -88,7 +88,7 @@ links nothing but libc, adds nothing to the Python install, and draws the same
 event stream as the terminal UI. It also does **dictation**: hold Meta+H (the
 dictation key on laptops that have one), talk, and let go to type what you
 said into the focused window, one NPU decode per utterance.
-[docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md)
+[docs/gui.md](https://docs.vinowhisper.com/gui/)
 
 ## Install
 
@@ -115,7 +115,7 @@ vinowhisper-setup         # still worth running: NPU driver, model export, units
 
 pip gets you the commands. It cannot get you an NPU driver, a model export or
 systemd units, which is what `vinowhisper-setup` is for either way.
-[docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
+[docs/install.md](https://docs.vinowhisper.com/install/)
 covers installing from a checkout and the OpenVINO version floor.
 
 ## What you need
@@ -125,13 +125,13 @@ covers installing from a checkout and the OpenVINO version floor.
 | **OS** | Linux. Developed on Fedora 45 / KDE Plasma 6 / Wayland. See [Supported distros](#supported-distros) |
 | **Audio** | PipeWire (`pw-record`) or PulseAudio (`parec`), picked automatically |
 | **Accelerator** | Intel NPU for the numbers above. An Intel GPU or the CPU runs, slower. AMD NPUs are detected and not usable (no OpenVINO plugin) |
-| **Python** | 3.11 to 3.13. [3.14 cannot export the model](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) |
+| **Python** | 3.11 to 3.13. [3.14 cannot export the model](https://docs.vinowhisper.com/install/) |
 | **Disk** | ~1.5GB for the model export |
 | **Overlay** (optional) | A Wayland compositor with wlr-layer-shell: KDE Plasma 6, Sway, Hyprland, niri, COSMIC. Not GNOME |
 
 The NPU needs a userspace driver half that no distro packages completely, and
 `vinowhisper-doctor` will tell you exactly which half is missing.
-[docs/hardware.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md)
+[docs/hardware.md](https://docs.vinowhisper.com/hardware/)
 covers every way it fails to appear.
 
 ## Supported distros
@@ -155,7 +155,7 @@ Anything else gets generic advice, and says so. Derivatives not listed are
 matched through `ID_LIKE`. On every distro the NPU compiler library
 (`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
 because nobody packages it; the doctor detects that and prints the steps.
-[docs/audio.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md#distro-support)
+[docs/audio.md](https://docs.vinowhisper.com/audio/#distro-support)
 has the capture side.
 
 ## Commands
@@ -196,15 +196,15 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 
 | | |
 |---|---|
-| [Installing](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
-| [Terminal captions](https://github.com/karanshukla/vinoWhisper/blob/main/docs/terminal.md) | Scrollback, paragraphs, the level meter, and plain output |
-| [Overlay and dictation](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
-| [Hardware](https://github.com/karanshukla/vinoWhisper/blob/main/docs/hardware.md) | Device selection, the two model exports, and every way the NPU fails to appear |
-| [Audio capture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/audio.md) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
-| [Latency](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
-| [Debugging](https://github.com/karanshukla/vinoWhisper/blob/main/docs/debugging.md) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
-| [Architecture](https://github.com/karanshukla/vinoWhisper/blob/main/docs/architecture.md) | Socket activation and scale-to-zero, and how to stop it |
-| [Development](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md) | Tests without the hardware, the build config, CI and releases |
+| [Installing](https://docs.vinowhisper.com/install/) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
+| [Terminal captions](https://docs.vinowhisper.com/terminal/) | Scrollback, paragraphs, the level meter, and plain output |
+| [Overlay and dictation](https://docs.vinowhisper.com/gui/) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
+| [Hardware](https://docs.vinowhisper.com/hardware/) | Device selection, the two model exports, and every way the NPU fails to appear |
+| [Audio capture](https://docs.vinowhisper.com/audio/) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
+| [Latency](https://docs.vinowhisper.com/latency/) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
+| [Debugging](https://docs.vinowhisper.com/debugging/) | `--record`, offline replay, and what `vinowhisper-doctor` measures |
+| [Architecture](https://docs.vinowhisper.com/architecture/) | Socket activation and scale-to-zero, and how to stop it |
+| [Development](https://docs.vinowhisper.com/development/) | Tests without the hardware, the build config, CI and releases |
 
 ## Other languages
 
@@ -244,7 +244,7 @@ machine:
   OpenVINO's GPU plugin.
 - **Captions trail the audio by roughly twice the cycle time.** That is
   inherent to a two-cycle commit policy, not a bug to be tuned away.
-  [docs/latency.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/latency.md)
+  [docs/latency.md](https://docs.vinowhisper.com/latency/)
   explains the one knob that moves it.
 - **Wording drifts between cycles**, because each window is re-decoded with
   more right-context than the last. The stitcher hides most of it and not all.
@@ -255,7 +255,7 @@ machine:
 - **Dictation pastes into whatever has focus.** Wayland does not say what that
   is, so it cannot check. Outside KDE the paste goes through the compositor's
   virtual keyboard, which has not been tried on a live compositor yet.
-  [docs/gui.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/gui.md#dictation)
+  [docs/gui.md](https://docs.vinowhisper.com/gui/#dictation)
   has the details.
 - **Only Fedora's package names have been used for real.** The other seven
   families come from their package indexes. If one is wrong for yours, that is
@@ -266,13 +266,13 @@ machine:
   `vinowhisper[export]` extra holds the pin. That version carries two open
   transformers CVEs, and both need you to export a malicious model repo, which
   the default `openai/whisper-small.en` is not.
-  [docs/install.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/install.md)
+  [docs/install.md](https://docs.vinowhisper.com/install/)
   has the bisect table.
 
 ## More
 
 - [CONTRIBUTING.md](https://github.com/karanshukla/vinoWhisper/blob/main/CONTRIBUTING.md)
-  and [docs/development.md](https://github.com/karanshukla/vinoWhisper/blob/main/docs/development.md)
+  and [docs/development.md](https://docs.vinowhisper.com/development/)
 - [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md):
   what stays on the machine, and the local server's trust boundary
 - [CHANGELOG.md](https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md)

@@ -10,6 +10,11 @@ export default defineConfig({
         'Live captions and dictation on the Intel NPU, running locally on Linux.',
       logo: { src: './src/assets/vinowhisper.svg', alt: '' },
       favicon: '/favicon.svg',
+      customCss: ['./src/styles/custom.css'],
+      expressiveCode: {
+        themes: ['github-dark'],
+        styleOverrides: { codeBackground: '#0e0e10', borderRadius: '6px', borderColor: '#0e0e10' },
+      },
       social: [
         {
           icon: 'github',
