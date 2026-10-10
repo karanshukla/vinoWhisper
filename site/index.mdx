@@ -1,0 +1,32 @@
+---
+title: vinoWhisper
+description: Live captions and dictation on the Intel NPU, running locally on Linux.
+template: splash
+hero:
+  tagline: Live captions and dictation on the Intel NPU. Everything stays on your machine.
+  actions:
+    - text: Install
+      link: /install/
+      icon: right-arrow
+    - text: Source
+      link: https://github.com/karanshukla/vinoWhisper
+      variant: minimal
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Installing" icon="rocket">
+    What the installer does, the OpenVINO version floor and why, and digest pinning. [Read more](/install/)
+  </Card>
+  <Card title="Overlay and dictation" icon="laptop">
+    The floating box, tray icon and shortcuts, and how dictation text is typed. [Read more](/gui/)
+  </Card>
+  <Card title="Hardware" icon="setting">
+    Device selection, the two model exports, and every way the NPU fails to appear. [Read more](/hardware/)
+  </Card>
+  <Card title="Latency" icon="information">
+    Why captions trail the audio and why the wording drifts. [Read more](/latency/)
+  </Card>
+</CardGrid>

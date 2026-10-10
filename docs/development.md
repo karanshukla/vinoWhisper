@@ -199,6 +199,12 @@ moves all three. They cannot differ: the overlay is downloaded from the
 release tagged with the Python package's version, and
 `tests/test_packaging.py` fails if they drift.
 
+This documentation is published at docs.vinowhisper.com, built by Starlight
+from `site/`. `docs/` stays the source: `site/scripts/sync-docs.mjs` copies it
+into a gitignored directory, adds the title from each file's H1 and rewrites
+relative links, so a page needs nothing site-specific. `cd site && npm ci &&
+npm run dev` previews it, and the `site` CI job runs the build.
+
 Pushing the tag runs `release.yml`:
 
 1. **gui** builds the overlay once for `x86_64-unknown-linux-musl`, so the one

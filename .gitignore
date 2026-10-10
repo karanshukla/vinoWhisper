@@ -19,3 +19,10 @@ vinowhisper/gui_release.json
 # recorded sessions (vinowhisper-caption --record), ~2MB per minute
 *.wav
 events.jsonl
+
+# docs site
+site/node_modules/
+site/.astro/
+site/src/content/docs/
+site/src/assets/vinowhisper.svg
+site/public/favicon.svg
