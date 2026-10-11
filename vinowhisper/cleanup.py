@@ -4,11 +4,14 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
+from . import config
 from .stitch import _norm
 
 ENABLE_ENV = "VINOWHISPER_CLEANUP"
@@ -102,12 +105,25 @@ class Outcome:
 Transport = Callable[[Settings, str], str]
 
 
-def _truthy(value: str | None) -> bool:
-    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def enabled(env: Mapping[str, str] | None = None) -> bool:
-    return _truthy((os.environ if env is None else env).get(ENABLE_ENV))
+def read_file(path: Path | None = None) -> dict:
+    try:
+        raw = json.loads((path or config.CLEANUP_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def enabled(env: Mapping[str, str] | None = None, path: Path | None = None) -> bool:
+    env = os.environ if env is None else env
+    if ENABLE_ENV in env:
+        return _truthy(env[ENABLE_ENV])
+    return _truthy(read_file(path).get("enabled"))
 
 
 def stored_key() -> str:
@@ -124,20 +140,28 @@ def stored_key() -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def load_settings(
-    env: Mapping[str, str] | None = None, lookup: Callable[[], str] = stored_key
-) -> Settings | None:
-    env = os.environ if env is None else env
-    if not enabled(env):
-        return None
+def _budget(value: object) -> float:
     try:
-        budget = float(env.get(BUDGET_ENV, DEFAULT_BUDGET_S))
-    except ValueError:
-        budget = DEFAULT_BUDGET_S
+        budget = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_BUDGET_S
+    return budget if budget > 0 else DEFAULT_BUDGET_S
+
+
+def load_settings(
+    env: Mapping[str, str] | None = None,
+    lookup: Callable[[], str] = stored_key,
+    path: Path | None = None,
+) -> Settings | None:
+    """The file is what the settings window writes; an environment variable beats it."""
+    env = os.environ if env is None else env
+    if not enabled(env, path):
+        return None
+    saved = read_file(path)
     return Settings(
-        base_url=env.get(URL_ENV) or DEFAULT_URL,
-        model=env.get(MODEL_ENV) or DEFAULT_MODEL,
-        budget_s=budget if budget > 0 else DEFAULT_BUDGET_S,
+        base_url=env.get(URL_ENV) or str(saved.get("url") or "") or DEFAULT_URL,
+        model=env.get(MODEL_ENV) or str(saved.get("model") or "") or DEFAULT_MODEL,
+        budget_s=_budget(env.get(BUDGET_ENV, saved.get("budget_s"))),
         api_key=env.get(KEY_ENV) or lookup(),
     )
 
@@ -149,7 +173,21 @@ def _words(text: str) -> list[str]:
     return [word for word in words if any(ch.isalnum() for ch in word)]
 
 
+# What a deletion can leave behind. Anything else the model writes must already be in the
+# transcript, so a reply cannot add shell punctuation or a newline to a terminal paste.
+_ADDABLE = frozenset(".,!?:'\"-\u2013\u2014\u2026")
+
+
+def _safe_characters(original: str, edited: str) -> bool:
+    if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in edited):
+        return False
+    spoken = set(original)
+    return all(ch.isalnum() or ch == " " or ch in _ADDABLE or ch in spoken for ch in edited)
+
+
 def only_deletes(original: str, edited: str) -> bool:
+    if not _safe_characters(original, edited):
+        return False
     source = iter(_words(original))
     return all(word in source for word in _words(edited))
 
@@ -197,7 +235,7 @@ def _failure(exc: BaseException) -> str:
     if isinstance(exc, urllib.error.URLError):
         return "unreachable"
     if isinstance(exc, ValueError):
-        return str(exc) or "bad response"
+        return "truncated" if str(exc) == "truncated" else "bad response"
     return type(exc).__name__
 
 

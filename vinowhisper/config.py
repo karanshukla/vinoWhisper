@@ -52,6 +52,9 @@ LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
 REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
 
+# Written by the settings window; the API key is never in it (see cleanup.SECRET_ATTRIBUTES).
+CLEANUP_FILE = _config_home() / "vinowhisper/cleanup.json"
+
 
 def load_language(path: Path | None = None) -> tuple[str, str]:
     import json

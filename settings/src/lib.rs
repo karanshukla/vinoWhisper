@@ -142,6 +142,91 @@ impl Speech {
     }
 }
 
+pub const DEFAULT_CLEANUP_URL: &str = "https://api.anthropic.com";
+
+pub const DEFAULT_CLEANUP_MODEL: &str = "claude-haiku-5-5";
+
+pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 2.0;
+
+/// The Secret Service attributes the API key is stored under, which
+/// `vinowhisper-dictate` looks up with `secret-tool` (cleanup.SECRET_ATTRIBUTES).
+pub const SECRET_ATTRIBUTES: [&str; 4] = ["service", "vinowhisper", "account", "anthropic-api-key"];
+
+/// LLM cleanup of dictation (issue #81). Not in gui.json, and never holds the key: the
+/// Python side reads this file at each key press (config.CLEANUP_FILE).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cleanup {
+    pub enabled: bool,
+    pub url: String,
+    pub model: String,
+    pub budget_s: f64,
+}
+
+impl Default for Cleanup {
+    fn default() -> Self {
+        Cleanup {
+            enabled: false,
+            url: DEFAULT_CLEANUP_URL.to_owned(),
+            model: DEFAULT_CLEANUP_MODEL.to_owned(),
+            budget_s: DEFAULT_CLEANUP_BUDGET_S,
+        }
+    }
+}
+
+impl Cleanup {
+    pub fn path() -> PathBuf {
+        config_home().join("vinowhisper/cleanup.json")
+    }
+
+    pub fn load() -> Cleanup {
+        Self::load_from(&Self::path())
+    }
+
+    pub fn load_from(path: &Path) -> Cleanup {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Cleanup::default();
+        };
+        serde_json::from_str(&text).unwrap_or_else(|err| {
+            eprintln!("[vinowhisper] ignoring {}: {err}", path.display());
+            Cleanup::default()
+        })
+    }
+
+    pub fn save(&self) {
+        let path = Self::path();
+        if let Err(err) = self.save_to(&path) {
+            eprintln!("[vinowhisper] could not save {}: {err}", path.display());
+        }
+    }
+
+    pub fn save_to(&self, path: &Path) -> io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
+        std::fs::write(path, text + "\n")
+    }
+
+    /// Whether dictated text stays on this machine. Anything that is not plainly
+    /// loopback counts as leaving it, including a LAN address.
+    pub fn is_local(&self) -> bool {
+        let rest = self
+            .url
+            .split_once("://")
+            .map_or(self.url.as_str(), |(_, r)| r);
+        let authority = rest.split('/').next().unwrap_or("");
+        let authority = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host);
+        let host = match authority.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(""),
+            None => authority.split(':').next().unwrap_or(""),
+        };
+        matches!(host, "localhost" | "127.0.0.1" | "::1")
+    }
+}
+
 /// Whether the multilingual export exists (either variant), so the tray can say what to run
 /// instead of offering a language the server could not load.
 pub fn multilingual_installed() -> bool {
@@ -428,6 +513,57 @@ mod tests {
             task: Task::Translate,
         };
         assert_eq!(speech.normalised().task, Task::Transcribe);
+    }
+
+    #[test]
+    fn cleanup_is_off_and_hosted_until_the_file_says_otherwise() {
+        let defaults = Cleanup::default();
+        assert!(!defaults.enabled);
+        assert!(!defaults.is_local());
+        let path = scratch("cleanup-partial");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"enabled": true, "model": "m"}"#).unwrap();
+        let loaded = Cleanup::load_from(&path);
+        assert!(loaded.enabled);
+        assert_eq!(loaded.model, "m");
+        assert_eq!(loaded.url, DEFAULT_CLEANUP_URL);
+        assert_eq!(loaded.budget_s, DEFAULT_CLEANUP_BUDGET_S);
+    }
+
+    #[test]
+    fn cleanup_matches_the_file_the_dictation_process_reads() {
+        let path = scratch("cleanup");
+        let cleanup = Cleanup {
+            enabled: true,
+            url: "http://localhost:8080".into(),
+            model: "m".into(),
+            budget_s: 1.5,
+        };
+        cleanup.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for key in ["enabled", "url", "model", "budget_s"] {
+            assert!(text.contains(&format!("\"{key}\"")), "{key}");
+        }
+        assert_eq!(Cleanup::load_from(&path), cleanup);
+    }
+
+    #[test]
+    fn only_loopback_counts_as_staying_on_the_machine() {
+        let local = |url: &str| {
+            Cleanup {
+                url: url.into(),
+                ..Cleanup::default()
+            }
+            .is_local()
+        };
+        assert!(local("http://localhost:8080"));
+        assert!(local("http://127.0.0.1:11434/v1"));
+        assert!(local("http://[::1]:9000"));
+        assert!(local("localhost"));
+        assert!(!local("https://api.anthropic.com"));
+        assert!(!local("http://192.168.1.20:8080"));
+        assert!(!local("http://localhost.evil.example"));
+        assert!(!local("http://localhost@evil.example"));
     }
 
     #[test]

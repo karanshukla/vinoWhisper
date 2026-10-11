@@ -771,6 +771,24 @@ def test_release_line_is_off_without_trace(capsys, monkeypatch):
     assert "dictate-release" not in capsys.readouterr().err
 
 
+class FakeCleaner:
+    def __init__(self, answer=None) -> None:
+        self._answer = answer
+        self.prepared = 0
+        self.seen: list[str] = []
+
+    def prepare(self) -> None:
+        self.prepared += 1
+
+    @property
+    def active(self) -> bool:
+        return self._answer is not None
+
+    def __call__(self, text: str):
+        self.seen.append(text)
+        return self._answer(text)
+
+
 def _run_cleaned(cleaner, transcript="um hello there"):
     records: list[dict] = []
     client = FakeClient(transcript=transcript)
@@ -789,33 +807,33 @@ def _outcome(text, cleaned=True, reason=None):
 
 
 def test_cleanup_announces_itself_then_types_the_cleaned_text():
-    records = _run_cleaned(lambda text: _outcome("Hello there."))
+    cleaner = FakeCleaner(lambda text: _outcome("Hello there."))
+    records = _run_cleaned(cleaner)
     events = [r["event"] for r in records]
     assert events == ["Listening", "Transcribing", "Ready", "Cleaning", "Dictated"]
     assert records[-1]["text"] == "Hello there."
     assert records[-1]["cleaned"] is True
+    assert cleaner.prepared == 1
 
 
 def test_a_refused_cleanup_types_the_raw_transcript():
-    records = _run_cleaned(lambda text: _outcome(text, cleaned=False, reason="timed out"))
+    cleaner = FakeCleaner(lambda text: _outcome(text, cleaned=False, reason="timed out"))
+    records = _run_cleaned(cleaner)
     assert records[-1]["text"] == "um hello there"
     assert records[-1]["cleaned"] is False
 
 
 def test_cleanup_sees_the_text_before_replacements_and_replacements_still_apply(monkeypatch):
     monkeypatch.setattr(dictate.replacements, "load", lambda: {"hello": "HELLO"})
-    seen = []
-
-    def cleaner(text):
-        seen.append(text)
-        return _outcome("hello there")
-
+    cleaner = FakeCleaner(lambda text: _outcome("hello there"))
     records = _run_cleaned(cleaner)
-    assert seen == ["um hello there"]
+    assert cleaner.seen == ["um hello there"]
     assert records[-1]["text"] == "HELLO there"
 
 
-def test_no_cleaner_means_no_cleaning_event():
-    records = _run_cleaned(None)
+def test_an_inactive_cleaner_costs_no_event_and_no_call():
+    cleaner = FakeCleaner(None)
+    records = _run_cleaned(cleaner)
     assert "Cleaning" not in [r["event"] for r in records]
     assert records[-1]["cleaned"] is False
+    assert cleaner.seen == []

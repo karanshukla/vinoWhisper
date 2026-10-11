@@ -48,6 +48,28 @@ def test_characterization_anything_but_deletion_is_refused(original, edited):
     assert not cleanup.only_deletes(original, edited)
 
 
+@pytest.mark.parametrize(
+    "edited",
+    [
+        "git status\nrm -rf",
+        "git status\r rm",
+        "git status \x1b[31m rm",
+        "git status $( rm",
+        "git status && rm",
+        "git status | rm",
+        "git status; rm",
+        "git status \u202e rm",
+    ],
+)
+def test_added_control_or_shell_characters_are_refused(edited):
+    assert not cleanup.only_deletes("git status rm", edited)
+
+
+def test_punctuation_the_speaker_already_produced_survives():
+    original = "run git status && ls; then stop"
+    assert cleanup.only_deletes(original, "run git status && ls; then stop")
+
+
 def test_a_standalone_dash_is_not_an_added_word():
     assert cleanup.only_deletes("ship it friday", "ship it — friday")
 
@@ -105,6 +127,14 @@ def test_the_budget_is_a_hard_deadline():
     assert outcome.elapsed_s < 1.0
 
 
+def test_a_reason_never_carries_the_response_text():
+    def garbled(settings, text):
+        raise ValueError("secret transcript fragment")
+
+    outcome = cleanup.clean_up("hello", SETTINGS, garbled)
+    assert outcome.reason == "bad response"
+
+
 def test_the_request_has_no_sampling_parameters_and_a_bounded_output():
     body = cleanup.request_body(SETTINGS, "one two three")
     assert "temperature" not in body
@@ -121,8 +151,8 @@ def test_the_response_text_blocks_are_joined_and_truncation_is_refused():
         cleanup.parse_response(cut.encode())
 
 
-def test_off_unless_asked_and_the_env_key_beats_the_wallet():
-    assert cleanup.load_settings({}) is None
+def test_off_unless_asked_and_the_env_key_beats_the_wallet(tmp_path):
+    assert cleanup.load_settings({}, path=tmp_path / "missing.json") is None
     env = {cleanup.ENABLE_ENV: "1", cleanup.KEY_ENV: "from-env"}
     assert cleanup.load_settings(env, lookup=lambda: "from-wallet").api_key == "from-env"
     only_wallet = {cleanup.ENABLE_ENV: "1"}
@@ -137,3 +167,42 @@ def test_a_garbled_budget_keeps_the_default():
 def test_the_endpoint_is_the_messages_path_under_the_base_url():
     custom = cleanup.Settings(base_url="http://localhost:8080/", api_key="k")
     assert custom.endpoint == "http://localhost:8080/v1/messages"
+
+
+def _file(tmp_path, **fields):
+    path = tmp_path / "cleanup.json"
+    path.write_text(json.dumps(fields))
+    return path
+
+
+def test_the_settings_file_turns_it_on_and_supplies_the_endpoint(tmp_path):
+    path = _file(tmp_path, enabled=True, url="http://localhost:9", model="m", budget_s=1.5)
+    settings = cleanup.load_settings({}, lambda: "wallet-key", path)
+    assert settings == cleanup.Settings("http://localhost:9", "m", 1.5, "wallet-key")
+
+
+def test_an_environment_variable_beats_the_file(tmp_path):
+    path = _file(tmp_path, enabled=True, url="http://file", model="file-model")
+    env = {cleanup.URL_ENV: "http://env", cleanup.MODEL_ENV: "env-model"}
+    settings = cleanup.load_settings(env, lambda: "k", path)
+    assert (settings.base_url, settings.model) == ("http://env", "env-model")
+    off = {cleanup.ENABLE_ENV: "0"}
+    assert cleanup.load_settings(off, lambda: "k", path) is None
+
+
+def test_a_blank_or_broken_file_is_off_not_an_error(tmp_path):
+    path = tmp_path / "cleanup.json"
+    path.write_text("{not json")
+    assert cleanup.load_settings({}, lambda: "k", path) is None
+    assert cleanup.load_settings({}, lambda: "k", tmp_path / "absent.json") is None
+    blank = _file(tmp_path, enabled=True, url="", model="")
+    settings = cleanup.load_settings({}, lambda: "k", blank)
+    assert (settings.base_url, settings.model) == (cleanup.DEFAULT_URL, cleanup.DEFAULT_MODEL)
+
+
+def test_the_wallet_entry_matches_what_the_settings_window_writes():
+    from pathlib import Path
+
+    source = (Path(__file__).parent.parent / "settings/src/lib.rs").read_text()
+    for part in cleanup.SECRET_ATTRIBUTES:
+        assert f'"{part}"' in source

@@ -5,9 +5,10 @@ use std::time::Duration;
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke};
 
 use crate::forward::{self, Shortcuts};
+use crate::secret::{self, Key};
 use crate::theme;
 use vinowhisper_settings::{
-    Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
+    Cleanup, Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,10 +16,11 @@ enum Page {
     Shortcuts,
     Captions,
     Speech,
+    Cleanup,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Shortcuts, Page::Captions, Page::Speech];
+    const ALL: [Page; 4] = [Page::Shortcuts, Page::Captions, Page::Speech, Page::Cleanup];
 
     fn parse(name: &str) -> Option<Page> {
         Page::ALL
@@ -31,6 +33,7 @@ impl Page {
             Page::Shortcuts => "Shortcuts",
             Page::Captions => "Captions",
             Page::Speech => "Speech",
+            Page::Cleanup => "Cleanup",
         }
     }
 }
@@ -111,6 +114,10 @@ struct SettingsWindow {
     page: Page,
     settings: Settings,
     speech: Speech,
+    cleanup: Cleanup,
+    cleanup_dirty: bool,
+    key: Arc<Mutex<Key>>,
+    key_input: String,
     multilingual: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
@@ -127,6 +134,10 @@ impl SettingsWindow {
             page: page.unwrap_or(Page::Shortcuts),
             settings: Settings::load(),
             speech: Speech::load(),
+            cleanup: Cleanup::load(),
+            cleanup_dirty: false,
+            key: Arc::new(Mutex::new(Key::Checking)),
+            key_input: String::new(),
             multilingual: multilingual_installed(),
             focused: true,
             kde_header: theme::kde_header(),
@@ -297,6 +308,138 @@ impl SettingsWindow {
             },
         );
         changed
+    }
+
+    fn run_key(&self, ctx: &egui::Context, job: impl FnOnce() -> Key + Send + 'static) {
+        let key = Arc::clone(&self.key);
+        let ctx = ctx.clone();
+        *key.lock().unwrap() = Key::Checking;
+        std::thread::spawn(move || {
+            let answer = job();
+            *key.lock().unwrap() = answer;
+            ctx.request_repaint();
+        });
+    }
+
+    fn cleanup(&mut self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        section(ui, "Dictation cleanup");
+        row(
+            ui,
+            "Clean up:",
+            "Sends what you dictate to a language model before it is typed, to drop ums, apply \
+             corrections and act on \"scratch that\". It only ever deletes words, and any other \
+             answer is thrown away and the raw text is typed. Off by default.",
+            |ui| {
+                self.cleanup_dirty |= ui
+                    .checkbox(&mut self.cleanup.enabled, "Clean up dictation")
+                    .changed();
+            },
+        );
+        let off = !self.cleanup.enabled;
+        ui.add_enabled_ui(!off, |ui| {
+            section(ui, "Endpoint");
+            let wide = (ui.available_width() - LABEL_WIDTH).clamp(200.0, 380.0);
+            row(
+                ui,
+                "Address:",
+                "An Anthropic-compatible server. A local one keeps the text on this machine.",
+                |ui| {
+                    let edit = ui
+                        .add(egui::TextEdit::singleline(&mut self.cleanup.url).desired_width(wide));
+                    self.cleanup_dirty |= edit.lost_focus() && edit.changed();
+                },
+            );
+            row(ui, "Model:", "Any model name the endpoint accepts.", |ui| {
+                let edit =
+                    ui.add(egui::TextEdit::singleline(&mut self.cleanup.model).desired_width(wide));
+                self.cleanup_dirty |= edit.lost_focus() && edit.changed();
+            });
+            row(
+                ui,
+                "Time limit:",
+                "Seconds to wait before typing the raw text instead.",
+                |ui| {
+                    let slider = ui.add(
+                        egui::DragValue::new(&mut self.cleanup.budget_s)
+                            .range(0.5..=30.0)
+                            .speed(0.1)
+                            .fixed_decimals(1)
+                            .suffix(" s"),
+                    );
+                    self.cleanup_dirty |= slider.on_hover_cursor(egui::CursorIcon::Text).changed();
+                },
+            );
+            let (tone, text) = if self.cleanup.is_local() {
+                (
+                    p.muted,
+                    "This address is on this machine. Nothing leaves it.",
+                )
+            } else {
+                (
+                    ui.visuals().warn_fg_color,
+                    "Dictated text is sent to this address, along with your key.",
+                )
+            };
+            row(ui, "", "", |ui| {
+                ui.label(RichText::new(text).color(tone));
+            });
+        });
+
+        section(ui, "API key");
+        let state = self.key.lock().unwrap().clone();
+        let working = state == Key::Checking;
+        let status = match &state {
+            Key::Checking => "Checking…".to_owned(),
+            Key::Stored => "A key is stored in your desktop's wallet.".to_owned(),
+            Key::Missing => "No key is stored. ANTHROPIC_API_KEY in the environment is used if set."
+                .to_owned(),
+            Key::NoTool => "No wallet tool found (secret-tool). Set ANTHROPIC_API_KEY in the environment instead."
+                .to_owned(),
+            Key::Failed(why) => format!("The wallet said: {why}"),
+        };
+        row(ui, "Status:", "", |ui| {
+            let color = if matches!(state, Key::Failed(_)) {
+                ui.visuals().error_fg_color
+            } else {
+                p.muted
+            };
+            ui.label(RichText::new(status).color(color));
+        });
+        let usable = state != Key::NoTool;
+        ui.add_enabled_ui(usable && !working, |ui| {
+            row(
+                ui,
+                "New key:",
+                "Kept in the wallet, never in a settings file. It cannot be shown again once saved.",
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.key_input)
+                            .password(true)
+                            .hint_text("sk-ant-…")
+                            .desired_width(300.0),
+                    );
+                    ui.horizontal(|ui| {
+                        let has_input = !self.key_input.trim().is_empty();
+                        if ui
+                            .add_enabled(has_input, egui::Button::new("Save key"))
+                            .clicked()
+                        {
+                            let mut entered = std::mem::take(&mut self.key_input);
+                            let trimmed = entered.trim().to_owned();
+                            entered.clear();
+                            self.run_key(ui.ctx(), move || secret::store(&trimmed));
+                        }
+                        if ui
+                            .add_enabled(state == Key::Stored, egui::Button::new("Remove key"))
+                            .clicked()
+                        {
+                            self.run_key(ui.ctx(), secret::clear);
+                        }
+                    });
+                },
+            );
+        });
     }
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
@@ -479,6 +622,12 @@ fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::He
 }
 
 impl eframe::App for SettingsWindow {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.cleanup_dirty {
+            self.cleanup.save();
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let focused = ctx.input(|input| input.focused);
         if focused && !self.focused {
@@ -490,6 +639,9 @@ impl eframe::App for SettingsWindow {
         self.focused = focused;
         if self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)) {
             self.ask_shortcuts(ctx, Duration::ZERO);
+        }
+        if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
+            self.run_key(ctx, secret::status);
         }
         self.shown = Some(self.page);
         if let Some(reason) = self.refused.lock().unwrap().take() {
@@ -560,11 +712,16 @@ impl eframe::App for SettingsWindow {
                             Page::Shortcuts => self.shortcuts(ui),
                             Page::Captions => saved_settings = self.captions(ui),
                             Page::Speech => saved_speech = self.speech(ui),
+                            Page::Cleanup => self.cleanup(ui),
                         }
                         ui.add_space(12.0);
                     });
             });
 
+        if self.cleanup_dirty {
+            self.cleanup_dirty = false;
+            self.cleanup.save();
+        }
         if saved_settings {
             self.settings.save();
             forward::reload_tray(|_| {});

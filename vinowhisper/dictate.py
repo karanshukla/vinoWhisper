@@ -54,6 +54,13 @@ class _Trace:
     loud_index: int = 0
 
 
+class _Cleaner(Protocol):
+    def prepare(self) -> None: ...
+    @property
+    def active(self) -> bool: ...
+    def __call__(self, text: str) -> cleanup.Outcome: ...
+
+
 class _Client(Protocol):
     def wait_ready(self) -> dict: ...
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]: ...
@@ -277,7 +284,7 @@ class Dictation:
         client: _Client | None = None,
         recorder: Callable[[Callable[[np.ndarray], None]], _Recording] | None = None,
         trace: bool | None = None,
-        cleaner: Callable[[str], cleanup.Outcome | None] | None = None,
+        cleaner: _Cleaner | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._trace_on = (
@@ -288,7 +295,7 @@ class Dictation:
         self._emit = emit
         self._client = client or TranscriptionClient()
         self._recorder = recorder or (lambda tap: Recorder(source="mic", tap=tap))
-        self._cleaner = cleaner or _env_cleaner()
+        self._cleaner: _Cleaner = cleaner or _FileCleaner()
         self._commands: queue.Queue[str] = queue.Queue()
         self._active: _Recording | None = None
         self._warmup: _Warmup | None = None
@@ -354,6 +361,7 @@ class Dictation:
         self._quiet = 0
         self._since_preview = 0
         self._unsettled = []
+        self._cleaner.prepare()
         self._segmenter = _Segmenter()
         self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
         recording = self._recorder(self._tap)
@@ -565,13 +573,11 @@ class Dictation:
 
     def _tidy(self, decoder: _Decoder) -> tuple[str, bool]:
         spoken = decoder.spoken()
-        if not spoken or self._cleaner is None:
+        if not spoken or not self._cleaner.active:
             return decoder.apply_replacements(spoken), False
         # The text is leaving the machine for the model, so the overlay says so.
         self._emit({"event": "Cleaning"})
         outcome = self._cleaner(spoken)
-        if outcome is None:
-            return decoder.apply_replacements(spoken), False
         status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
         print(
             f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms",
@@ -586,19 +592,34 @@ class Dictation:
         self._discard()
 
 
-def _env_cleaner() -> Callable[[str], cleanup.Outcome | None] | None:
-    if not cleanup.enabled():
-        return None
-    resolved: list[cleanup.Settings | None] = []
+class _FileCleaner:
+    """Settings are read at each key press, off the path the text takes at release."""
 
-    def run(text: str) -> cleanup.Outcome | None:
-        # The wallet lookup waits for the first dictation, not the process start.
-        if not resolved:
-            resolved.append(cleanup.load_settings())
-        settings = resolved[0]
-        return None if settings is None else cleanup.clean_up(text, settings)
+    def __init__(self) -> None:
+        self._settings: cleanup.Settings | None = None
+        self._ready = threading.Event()
+        self._ready.set()
 
-    return run
+    def prepare(self) -> None:
+        self._ready.clear()
+
+        def load() -> None:
+            try:
+                self._settings = cleanup.load_settings()
+            finally:
+                self._ready.set()
+
+        threading.Thread(target=load, name="cleanup-settings", daemon=True).start()
+
+    @property
+    def active(self) -> bool:
+        self._ready.wait()
+        return self._settings is not None
+
+    def __call__(self, text: str) -> cleanup.Outcome:
+        self._ready.wait()
+        assert self._settings is not None
+        return cleanup.clean_up(text, self._settings)
 
 
 def _report_release(

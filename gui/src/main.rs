@@ -2,6 +2,7 @@
 //! (`gui.json`, `language.json`) through `vinowhisper-settings`.
 
 mod forward;
+mod secret;
 mod theme;
 mod window;
 
@@ -10,7 +11,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 vinowhisper-gui: the vinoWhisper settings window
 
-Usage: vinowhisper-gui [--page shortcuts|captions|speech]
+Usage: vinowhisper-gui [--page shortcuts|captions|speech|cleanup]
 
 Arguments meant for the tray (toggle, --hidden, dictate-*, quit, --install) are
 passed on to vinowhisper-tray, so launchers written before the split keep working.

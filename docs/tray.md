@@ -408,19 +408,30 @@ its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
 **LLM cleanup, added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
-Set `VINOWHISPER_CLEANUP=1` and the final transcript (never the live
+Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and the final transcript (never the live
 previews) goes to an Anthropic-compatible `/v1/messages` endpoint, which drops
 fillers, applies self-corrections and applies spoken edits ("scratch that",
 "delete that last word"; "literal" before the phrase keeps it as text).
 **This is the one path where dictated text leaves the machine**: with a local
 endpoint it does not, with the hosted default it does.
 
-| Variable | Default |
-|---|---|
-| `VINOWHISPER_CLEANUP_URL` | `https://api.anthropic.com` |
-| `VINOWHISPER_CLEANUP_MODEL` | `claude-haiku-5-5` |
-| `VINOWHISPER_CLEANUP_BUDGET_S` | `2.0`, a hard deadline |
-| `ANTHROPIC_API_KEY` | else the Secret Service entry `service=vinowhisper account=anthropic-api-key`, read with `secret-tool` |
+The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `url`,
+`model`, `budget_s`), which `vinowhisper-dictate` re-reads at each key press, so
+no restart is needed. An environment variable beats the file:
+
+| Variable | File key | Default |
+|---|---|---|
+| `VINOWHISPER_CLEANUP` | `enabled` | off |
+| `VINOWHISPER_CLEANUP_URL` | `url` | `https://api.anthropic.com` |
+| `VINOWHISPER_CLEANUP_MODEL` | `model` | `claude-haiku-5-5` |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `2.0`, a hard deadline |
+| `ANTHROPIC_API_KEY` | none | else the Secret Service entry `service=vinowhisper account=anthropic-api-key` |
+
+The key is never in that file. The window stores it with `secret-tool store`,
+passing the value on stdin so it is not in `ps`, and shows only whether one is
+stored. A wallet protects it from backups and a copied dotfile, not from other
+code running as you, which can ask the wallet too. The page also says whether
+the address is loopback (text stays here) or not (text and key leave).
 
 - **Deletion only.** The answer is used only if its words are an ordered
   subsequence of the transcript's (case and punctuation ignored). Anything
@@ -428,6 +439,10 @@ endpoint it does not, with the hosted default it does.
   transcript. That also means "three" becoming "3" is refused: v1 trades
   that for a check with no heuristics, and a model answering a dictated
   question or obeying it cannot get past it.
+- **Characters are checked too.** Control characters, newlines and any
+  punctuation the speaker did not already produce are refused, so an answer
+  cannot add shell syntax to a terminal paste. Only `. , ! ? : ' " - – … ` may
+  appear that were not in the transcript.
 - **Replacements run after it**, on the cleaned text, so the check sees the
   words Whisper wrote.
 - **Not streamed.** The text is pasted once, after the whole answer has been
