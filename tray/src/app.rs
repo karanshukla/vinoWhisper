@@ -71,6 +71,7 @@ pub enum Command {
     Hide,
     Toggle,
     Quit,
+    Reload,
     SetSource(Source),
     SetPosition(Position),
     SetSize(TextSize),
@@ -245,6 +246,7 @@ pub fn run(options: Options) -> Result<(), String> {
                 Request::Hide => Command::Hide,
                 Request::Toggle => Command::Toggle,
                 Request::Quit => Command::Quit,
+                Request::Reload => Command::Reload,
                 Request::Dictate => {
                     // A tap: starts hands-free, or finishes what is running.
                     let _ = tx.send(Command::DictateKey { down: true });
@@ -371,6 +373,7 @@ impl App {
             Command::Toggle if self.visible => self.hide(),
             Command::Toggle => self.show(),
             Command::Quit => self.quit(),
+            Command::Reload => self.reload(),
             Command::SetSource(source) => self.set_source(source),
             Command::SetPosition(position) => {
                 self.settings.position = position;
@@ -541,6 +544,40 @@ impl App {
         if changed {
             self.restart_session();
         }
+    }
+
+    /// The settings window (or a hand edit) changed the files: apply what differs, and nothing
+    /// that did not, so a save of one field does not restart captions.
+    fn reload(&mut self) {
+        let was = self.source();
+        let old = std::mem::replace(&mut self.settings, Settings::load());
+        let changes = self.settings.changes_from(&old);
+        if changes.source {
+            // The file now says what the user wants, over a one-run --source flag.
+            self.source_override = None;
+        }
+        if self.source() != was {
+            self.restart_session();
+        }
+        if changes.placement {
+            self.place();
+        }
+        if changes.tray_idle && std::mem::take(&mut self.idle) {
+            // Disarmed here, armed again with the new time at the end of handle().
+            if let Some(timer) = &self.idle_timer {
+                let _ = timer.disarm();
+            }
+        }
+        if changes.shortcut {
+            // The portal keeps the binding the user already has; the file's trigger is only
+            // its suggestion for a shortcut it has not bound yet.
+            eprintln!(
+                "[vinowhisper-tray] the shortcut in gui.json changed; an existing binding is \
+                 changed with \"Change shortcut…\", not here"
+            );
+        }
+        // Refused while dictating, like the menu: set_speech says so and the file stays as written.
+        self.set_speech(Speech::load());
     }
 
     fn set_speech(&mut self, speech: Speech) {

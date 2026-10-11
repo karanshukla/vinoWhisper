@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use eframe::egui::{self, Align, FontId, Layout, RichText, Sense, Stroke, TextStyle};
 
+use crate::forward;
 use crate::theme;
 use vinowhisper_settings::{
     Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
@@ -116,8 +117,8 @@ impl SettingsWindow {
         let mut changed = false;
         row(
             ui,
-            "Captions shortcut",
-            "Toggles the floating captions. Written the way the desktop portal reads it, for example LOGO+ALT+C.",
+            "Preferred captions shortcut",
+            "The key the desktop is asked for the first time captions are bound, for example LOGO+ALT+C. Once it is bound, change it from the tray menu (Change shortcut…) or your desktop's keyboard settings.",
             |ui| {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.settings.shortcut)
@@ -398,11 +399,13 @@ impl eframe::App for SettingsWindow {
 
         if saved_settings {
             self.settings.save();
-            self.saved = Some("Saved. The tray picks this up when it next starts.");
+            forward::reload_tray();
+            self.saved = Some("Saved");
         }
         if saved_speech {
             self.speech.save();
-            self.saved = Some("Saved. The server reads the language the next time it loads.");
+            forward::reload_tray();
+            self.saved = Some("Saved. A language change reloads the model, which takes a moment.");
         }
     }
 }

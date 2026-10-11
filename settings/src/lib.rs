@@ -185,7 +185,27 @@ impl Default for Settings {
     }
 }
 
+/// What a reload has to do, given the file as it was and as it is now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Changes {
+    pub source: bool,
+    /// Position or size: the overlay has to be placed again.
+    pub placement: bool,
+    pub tray_idle: bool,
+    /// Only a hint to the portal on the first bind; see `Settings::shortcut`.
+    pub shortcut: bool,
+}
+
 impl Settings {
+    pub fn changes_from(&self, old: &Settings) -> Changes {
+        Changes {
+            source: self.source != old.source,
+            placement: self.position != old.position || self.size != old.size,
+            tray_idle: self.tray_idle_minutes != old.tray_idle_minutes,
+            shortcut: self.shortcut != old.shortcut,
+        }
+    }
+
     pub fn path() -> PathBuf {
         config_home().join("vinowhisper/gui.json")
     }
@@ -269,6 +289,43 @@ mod tests {
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
+    }
+
+    #[test]
+    fn a_reload_names_only_what_changed() {
+        let old = Settings::default();
+        assert_eq!(old.changes_from(&old), Changes::default());
+
+        let new = Settings {
+            size: TextSize::Large,
+            tray_idle_minutes: 0,
+            // not acted on live: save_transcripts is read when the next session starts
+            save_transcripts: true,
+            ..Settings::default()
+        };
+        assert_eq!(
+            new.changes_from(&old),
+            Changes {
+                placement: true,
+                tray_idle: true,
+                ..Changes::default()
+            }
+        );
+        let moved = Settings {
+            source: Source::Mic,
+            position: Position::Top,
+            shortcut: "CTRL+ALT+K".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            moved.changes_from(&old),
+            Changes {
+                source: true,
+                placement: true,
+                shortcut: true,
+                tray_idle: false,
+            }
+        );
     }
 
     #[test]

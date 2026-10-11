@@ -4,7 +4,7 @@
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -28,12 +28,33 @@ pub fn decide(args: &[String]) -> Action {
 }
 
 /// Next to this binary first (the install puts them together), then `PATH`.
-fn tray_command() -> PathBuf {
+pub fn tray_command() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-tray")))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from("vinowhisper-tray"))
+}
+
+/// Tell a running tray to re-read the settings files. It prints and exits 0 when none is
+/// running, which is fine: it reads them when it starts. Never waited on, so a save does
+/// not stall the window.
+pub fn reload_tray() {
+    let spawned = Command::new(tray_command())
+        .arg("reload")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(mut child) => {
+            // reap it, off the UI thread
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(err) => eprintln!("[vinowhisper-gui] could not tell the tray to reload: {err}"),
+    }
 }
 
 pub fn exec_tray(args: &[String]) -> ExitCode {

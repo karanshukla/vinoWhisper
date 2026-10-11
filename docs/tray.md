@@ -103,7 +103,7 @@ driven from three places instead:
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
 | **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut…, Save transcripts and Quit |
-| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
+| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. The settings window sends it after each save |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,

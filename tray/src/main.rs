@@ -47,6 +47,8 @@ Commands go to the running instance, starting one if there is none:
               bindsym, and bindsym --release), holding it talks and
               letting go types
   quit        stop everything, tray icon included
+  reload      re-read the settings files, after changing them by hand or
+              in vinowhisper-gui (it sends this itself)
 
 Options:
   --hidden          start in the tray, captions off (for autostart)
@@ -177,6 +179,7 @@ fn main() -> ExitCode {
         request,
         Request::Hide
             | Request::Quit
+            | Request::Reload
             | Request::Dictate
             | Request::DictatePress
             | Request::DictateRelease
@@ -247,6 +250,12 @@ mod tests {
         let args = parse(&["--source", "mic", "toggle"]).unwrap();
         assert_eq!(args.command, Some(Request::Toggle));
         assert_eq!(args.source, Some(Source::Mic));
+    }
+
+    #[test]
+    fn reload_is_a_command() {
+        let args = Args::parse(["reload".to_owned()]).unwrap();
+        assert_eq!(args.command, Some(Request::Reload));
     }
 
     #[test]

@@ -18,11 +18,13 @@ pub enum Request {
     DictatePress,
     DictateRelease,
     Quit,
+    /// Re-read gui.json and language.json: the settings window saved something.
+    Reload,
     Ping,
 }
 
 impl Request {
-    const ALL: [Request; 8] = [
+    const ALL: [Request; 9] = [
         Request::Show,
         Request::Hide,
         Request::Toggle,
@@ -30,6 +32,7 @@ impl Request {
         Request::DictatePress,
         Request::DictateRelease,
         Request::Quit,
+        Request::Reload,
         Request::Ping,
     ];
 
@@ -42,6 +45,7 @@ impl Request {
             Request::DictatePress => "dictate-press",
             Request::DictateRelease => "dictate-release",
             Request::Quit => "quit",
+            Request::Reload => "reload",
             Request::Ping => "ping",
         }
     }
