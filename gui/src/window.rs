@@ -116,6 +116,8 @@ const SIDEBAR_FROM: f32 = 620.0;
 const SIDEBAR_WIDTH: f32 = 180.0;
 const LABEL_WIDTH: f32 = 150.0;
 const FORM_MAX_WIDTH: f32 = 620.0;
+// Between the form and the scroll bar, which sits on the window's right edge.
+const SCROLL_GAP: f32 = 24.0;
 const TWO_COLUMNS_FROM: f32 = 440.0;
 
 struct SettingsWindow {
@@ -744,7 +746,14 @@ impl eframe::App for SettingsWindow {
             .frame(
                 egui::Frame::NONE
                     .fill(p.bg)
-                    .inner_margin(egui::Margin::symmetric(24, 4)),
+                    // No right margin: the scroll bar belongs on the window's edge, and the
+                    // content keeps its own gap from it below.
+                    .inner_margin(egui::Margin {
+                        left: 24,
+                        right: 0,
+                        top: 4,
+                        bottom: 4,
+                    }),
             )
             .show(ctx, |ui| {
                 // A solid bar, always drawn: the floating one only shows on hover, so a page
@@ -754,7 +763,7 @@ impl eframe::App for SettingsWindow {
                     .auto_shrink([false, false])
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width().min(FORM_MAX_WIDTH));
+                        ui.set_max_width((ui.available_width() - SCROLL_GAP).min(FORM_MAX_WIDTH));
                         match self.page {
                             Page::Shortcuts => self.shortcuts(ui),
                             Page::Captions => saved_settings = self.captions(ui),
