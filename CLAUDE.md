@@ -178,7 +178,7 @@ the static musl build: winit `dlopen`s libwayland and libEGL, measured
 `APP_ID` did not change. Launchers and login entries written by older versions
 name `vinowhisper-gui`, and the launcher is never overwritten, so the tray
 rewrites that command name on start (`install::migrate_legacy_command`). The
-settings window is started (2026-10-11): `gui/` is an eframe window with Shortcuts, Captions and Speech pages, and `settings/` is the crate both binaries read `gui.json` and `language.json` through (path dependency, no cargo workspace, so the tray's CI and release paths did not move). It forwards tray-style arguments to `vinowhisper-tray` and takes `--page shortcuts|captions|speech`. Its look is the landing page's (`gui/src/theme.rs`: same tokens, Inter bundled as static TTFs made from `vinowhisper-landing`'s variable woff2, licence in `gui/assets/fonts/`). The window sends `vinowhisper-tray reload` after each save (`Request::Reload`, `App::reload`, which applies only what differs via `Settings::changes_from`). A changed `shortcut` cannot be applied live: the portal keeps the existing binding, so the file's trigger is only a first-bind hint. Not yet done: release plumbing for the second binary, shrinking the tray menu. `gui.json` keeps its name: it is the
+settings window is started (2026-10-11): `gui/` is an eframe window with Shortcuts, Captions and Speech pages, and `settings/` is the crate both binaries read `gui.json` and `language.json` through (path dependency, no cargo workspace, so the tray's CI and release paths did not move). It forwards tray-style arguments to `vinowhisper-tray` and takes `--page shortcuts|captions|speech`. Its look is the landing page's (`gui/src/theme.rs`: same tokens, Inter bundled as static TTFs made from `vinowhisper-landing`'s variable woff2, licence in `gui/assets/fonts/`). The window sends `vinowhisper-tray reload` after each save (`Request::Reload`, `App::reload`, which applies only what differs via `Settings::changes_from`). A changed `shortcut` cannot be applied live: the portal keeps the existing binding, so the file's trigger is only a first-bind hint. Release plumbing for the second binary is done (`overlay.SETTINGS`); not yet run as a real tagged release. Not yet done: shrinking the tray menu. `gui.json` keeps its name: it is the
 settings window's file too.
 
 Asked for by the user: a GUI that floats above other applications, a tray
@@ -235,7 +235,9 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
 - **How the wizard trusts the download** (`vinowhisper/overlay.py`):
   release.yml builds the musl binary, `scripts/pin_tray_release.py` writes its
   sha256 into `vinowhisper/tray_release.json`, and only then is the wheel built,
-  so PyPI's wheel pins GitHub's binary. **No pin means no download**
+  so PyPI's wheel pins GitHub's binary. The settings window gets the same
+  treatment (`gui_release.json`, a glibc build on ubuntu-22.04), and `--gui`
+  installs both. **No pin means no download**
   (characterization test), and a mismatch installs nothing and fails setup.
   This is why the whole repo has one version, held by `bump-my-version` and
   `tests/test_packaging.py`: the download URL is the Python package's version.

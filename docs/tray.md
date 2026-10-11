@@ -27,7 +27,11 @@ wheel, and `pip install vinowhisper` stays the terminal tool alone. The link
 between the two is the pin. The release workflow builds the binary, writes its
 sha256 into the wheel (`vinowhisper/tray_release.json`), and only then builds
 the wheel, so the digest on PyPI and the binary on GitHub come out of one
-workflow run.
+workflow run. The settings window, `vinowhisper-gui`, is pinned the same way
+(`gui_release.json`) and installed by the same step, after the tray. It is a
+glibc build made on Ubuntu 22.04, so it needs glibc 2.35 or newer; the tray is
+static and needs nothing. A tray without the window still works, so a missing
+window leaves the step unfinished rather than failed.
 
 - **A mismatch installs nothing**, not even a partial file, and fails setup.
 - **No pin means no download.** A source checkout has no pin, and neither does

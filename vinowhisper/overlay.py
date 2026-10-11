@@ -10,10 +10,8 @@ from typing import Any
 
 from . import __version__, config
 
-BINARY = "vinowhisper-tray"
-PIN_FILE = Path(__file__).resolve().parent / "tray_release.json"
 RELEASES_URL = "https://github.com/karanshukla/vinoWhisper/releases/download"
-GUI_MANIFEST = Path(__file__).resolve().parent.parent / "tray" / "Cargo.toml"
+_PACKAGE = Path(__file__).resolve().parent
 
 DOWNLOAD_TIMEOUT_S = 120.0
 
@@ -24,8 +22,33 @@ class OverlayError(Exception):
     pass
 
 
-def asset_name(arch: str) -> str:
-    return f"{BINARY}-{arch}-linux"
+@dataclass(frozen=True)
+class Component:
+    binary: str
+    pin_file: Path
+    manifest: Path
+
+
+TRAY = Component(
+    "vinowhisper-tray", _PACKAGE / "tray_release.json", _PACKAGE.parent / "tray" / "Cargo.toml"
+)
+# The settings window: a glibc build, since egui cannot run from a static musl one.
+SETTINGS = Component(
+    "vinowhisper-gui", _PACKAGE / "gui_release.json", _PACKAGE.parent / "gui" / "Cargo.toml"
+)
+COMPONENTS = (TRAY, SETTINGS)
+
+
+def asset_name(arch: str, component: Component = TRAY) -> str:
+    return f"{component.binary}-{arch}-linux"
+
+
+def component_for_asset(name: str, arch: str) -> Component:
+    for component in COMPONENTS:
+        if asset_name(arch, component) == name:
+            return component
+    expected = ", ".join(asset_name(arch, component) for component in COMPONENTS)
+    raise OverlayError(f"{name} is not a release asset; expected one of {expected}")
 
 
 @dataclass(frozen=True)
@@ -33,10 +56,11 @@ class Pin:
     version: str
     arch: str
     sha256: str
+    component: Component = TRAY
 
     @property
     def name(self) -> str:
-        return asset_name(self.arch)
+        return asset_name(self.arch, self.component)
 
     @property
     def url(self) -> str:
@@ -51,16 +75,22 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def pin_record(binary: Path, version: str, arch: str) -> dict[str, Any]:
+def pin_record(
+    binary: Path, version: str, arch: str, component: Component = TRAY
+) -> dict[str, Any]:
     return {
         "version": version,
-        "assets": {arch: {"name": asset_name(arch), "sha256": sha256_of(binary)}},
+        "assets": {arch: {"name": asset_name(arch, component), "sha256": sha256_of(binary)}},
     }
 
 
 def availability(
-    pin_file: Path = PIN_FILE, machine: str | None = None, version: str = __version__
+    pin_file: Path | None = None,
+    machine: str | None = None,
+    version: str = __version__,
+    component: Component = TRAY,
 ) -> Pin | str:
+    pin_file = pin_file or component.pin_file
     arch = machine or platform.machine()
     try:
         record = json.loads(pin_file.read_text(encoding="utf-8"))
@@ -80,29 +110,34 @@ def availability(
     asset = record.get("assets", {}).get(arch) or {}
     if not asset.get("sha256"):
         return f"there is no prebuilt overlay for {arch}; {_BUILD_INSTEAD}"
-    return Pin(version=version, arch=arch, sha256=str(asset["sha256"]))
+    return Pin(version=version, arch=arch, sha256=str(asset["sha256"]), component=component)
 
 
-def installed(bin_dir: Path) -> Path | None:
-    found = shutil.which(BINARY)
-    if found:
+def installed(bin_dir: Path, component: Component = TRAY) -> Path | None:
+    found = shutil.which(component.binary)
+    # The settings window's name was the tray's until 1.0, and a symlink to it may be left over.
+    if found and not (component is SETTINGS and _is_tray(Path(found))):
         return Path(found)
-    candidate = bin_dir / BINARY
-    if candidate.is_file() and os.access(candidate, os.X_OK):
+    candidate = bin_dir / component.binary
+    if candidate.is_file() and os.access(candidate, os.X_OK) and not _is_tray(candidate):
         return candidate
     return None
 
 
-def can_build() -> bool:
-    return GUI_MANIFEST.is_file() and shutil.which("cargo") is not None
+def _is_tray(path: Path) -> bool:
+    return path.is_symlink() and path.resolve().name == TRAY.binary
 
 
-def build_argv() -> list[str]:
-    return ["cargo", "build", "--release", "--locked", "--manifest-path", str(GUI_MANIFEST)]
+def can_build(component: Component = TRAY) -> bool:
+    return component.manifest.is_file() and shutil.which("cargo") is not None
 
 
-def built_binary() -> Path:
-    return GUI_MANIFEST.parent / "target" / "release" / BINARY
+def build_argv(component: Component = TRAY) -> list[str]:
+    return ["cargo", "build", "--release", "--locked", "--manifest-path", str(component.manifest)]
+
+
+def built_binary(component: Component = TRAY) -> Path:
+    return component.manifest.parent / "target" / "release" / component.binary
 
 
 def install_binary(source: Path, dest: Path) -> Path:

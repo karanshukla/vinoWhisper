@@ -158,9 +158,9 @@ def test_replacing_a_running_copy_goes_through_a_rename(tmp_path):
 
 
 def test_setup_never_downloads_without_a_pin(monkeypatch):
-    monkeypatch.setattr(overlay, "installed", lambda bin_dir: None)
-    monkeypatch.setattr(overlay, "availability", lambda: "no pin in this build")
-    monkeypatch.setattr(overlay, "can_build", lambda: False)
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: None)
+    monkeypatch.setattr(overlay, "availability", lambda component: "no pin in this build")
+    monkeypatch.setattr(overlay, "can_build", lambda component: False)
     monkeypatch.setattr(overlay, "fetch", lambda *a, **k: pytest.fail("downloaded without a pin"))
 
     outcome = wizard.Wizard(assume_yes=True).install_overlay()
@@ -169,8 +169,8 @@ def test_setup_never_downloads_without_a_pin(monkeypatch):
 
 
 def test_a_digest_mismatch_fails_setup(monkeypatch):
-    monkeypatch.setattr(overlay, "installed", lambda bin_dir: None)
-    monkeypatch.setattr(overlay, "availability", lambda: _pin_for(b"pinned"))
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: None)
+    monkeypatch.setattr(overlay, "availability", lambda component: _pin_for(b"pinned"))
 
     def tampered(pin, dest, get=None):
         raise overlay.OverlayError("does not match the sha256 pinned")
@@ -185,14 +185,14 @@ def test_a_copy_in_home_gets_a_launcher_and_a_packaged_one_does_not(monkeypatch,
     second one into the home directory would only shadow it.
     """
     home_copy = Path.home() / ".local/bin/vinowhisper-tray"
-    monkeypatch.setattr(overlay, "installed", lambda bin_dir: home_copy)
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: home_copy)
     wizard.Wizard(dry_run=True).install_overlay()
     printed = capsys.readouterr().out
     assert f"{home_copy} --install" in printed
     assert f"{home_copy} --autostart" in printed
 
     packaged = Path("/usr/bin/vinowhisper-tray")
-    monkeypatch.setattr(overlay, "installed", lambda bin_dir: packaged)
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: packaged)
     wizard.Wizard(dry_run=True).install_overlay()
     printed = capsys.readouterr().out
     assert "--install" not in printed
@@ -215,3 +215,99 @@ def test_setup_gui_runs_the_overlay_step_and_nothing_else(monkeypatch):
     )
     assert wizard.main(["--gui", "--dry-run"]) == 0
     assert ran == ["overlay"]
+
+
+# --- the settings window -------------------------------------------------
+
+
+def test_the_settings_window_has_its_own_asset_and_pin(tmp_path):
+    binary = tmp_path / overlay.asset_name("x86_64", overlay.SETTINGS)
+    binary.write_bytes(b"\x7fELF a fake settings window")
+    pin_file = tmp_path / "gui_release.json"
+    pin_file.write_text(
+        json.dumps(overlay.pin_record(binary, __version__, "x86_64", overlay.SETTINGS)),
+        encoding="utf-8",
+    )
+    pin = overlay.availability(pin_file, machine="x86_64", component=overlay.SETTINGS)
+    assert isinstance(pin, overlay.Pin)
+    assert pin.url.endswith(f"v{__version__}/vinowhisper-gui-x86_64-linux")
+    assert overlay.SETTINGS.pin_file.name == "gui_release.json"
+
+
+def test_each_asset_is_pinned_into_its_own_file():
+    assert overlay.component_for_asset("vinowhisper-tray-x86_64-linux", "x86_64") is overlay.TRAY
+    assert overlay.component_for_asset("vinowhisper-gui-x86_64-linux", "x86_64") is overlay.SETTINGS
+    with pytest.raises(overlay.OverlayError, match="not a release asset"):
+        overlay.component_for_asset("vinowhisper-x86_64-linux", "x86_64")
+
+
+def test_characterization_a_leftover_symlink_to_the_tray_is_not_the_settings_window(
+    tmp_path, monkeypatch
+):
+    """characterization: vinowhisper-gui -> vinowhisper-tray does not count as installed.
+
+    Before 1.0 the tray was called vinowhisper-gui, and dev installs kept that
+    name as a symlink to the renamed tray so old launchers still worked. If it
+    counted as the settings window, setup would report the window installed
+    and never fetch it. If this goes red, the question is whether those
+    installs were meant to stay without a settings window.
+    """
+    monkeypatch.setattr(overlay.shutil, "which", lambda name: None)
+    (tmp_path / "vinowhisper-tray").write_bytes(b"tray")
+    (tmp_path / "vinowhisper-tray").chmod(0o755)
+    (tmp_path / "vinowhisper-gui").symlink_to("vinowhisper-tray")
+    assert overlay.installed(tmp_path, overlay.SETTINGS) is None
+    assert overlay.installed(tmp_path, overlay.TRAY) == tmp_path / "vinowhisper-tray"
+
+    (tmp_path / "vinowhisper-gui").unlink()
+    (tmp_path / "vinowhisper-gui").write_bytes(b"window")
+    (tmp_path / "vinowhisper-gui").chmod(0o755)
+    assert overlay.installed(tmp_path, overlay.SETTINGS) == tmp_path / "vinowhisper-gui"
+
+
+def test_installing_over_the_leftover_symlink_replaces_the_link_not_the_tray(tmp_path):
+    tray = tmp_path / "vinowhisper-tray"
+    tray.write_bytes(b"tray")
+    link = tmp_path / "vinowhisper-gui"
+    link.symlink_to("vinowhisper-tray")
+    built = tmp_path / "built"
+    built.write_bytes(b"window")
+    overlay.install_binary(built, link)
+    assert not link.is_symlink()
+    assert link.read_bytes() == b"window"
+    assert tray.read_bytes() == b"tray"
+
+
+def test_setup_installs_the_settings_window_after_the_tray(monkeypatch, tmp_path):
+    fetched: list[str] = []
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: None)
+    monkeypatch.setattr(
+        overlay,
+        "availability",
+        lambda component: overlay.Pin(__version__, "x86_64", "0" * 64, component),
+    )
+
+    def fetch(pin, dest, get=None):
+        fetched.append(pin.component.binary)
+        return tmp_path / pin.component.binary
+
+    monkeypatch.setattr(overlay, "fetch", fetch)
+    monkeypatch.setattr(wizard.Wizard, "run", lambda self, argv, question: True)
+    outcome = wizard.Wizard(assume_yes=True).install_overlay()
+    assert fetched == ["vinowhisper-tray", "vinowhisper-gui"]
+    assert outcome.ok is True
+
+
+def test_a_missing_settings_window_leaves_the_tray_installed(monkeypatch, tmp_path):
+    tray = tmp_path / "vinowhisper-tray"
+    monkeypatch.setattr(
+        overlay,
+        "installed",
+        lambda bin_dir, component=overlay.TRAY: tray if component is overlay.TRAY else None,
+    )
+    monkeypatch.setattr(overlay, "availability", lambda component: "no pin in this build")
+    monkeypatch.setattr(overlay, "can_build", lambda component: False)
+    outcome = wizard.Wizard(dry_run=True).install_overlay()
+    assert outcome.ok is None
+    assert str(tray) in outcome.summary
+    assert "no settings window" in outcome.summary

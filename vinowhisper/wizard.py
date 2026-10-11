@@ -350,7 +350,7 @@ class Wizard:
         if path is not None:
             self.say(f"  Found {path}")
         else:
-            got = self._get_overlay()
+            got = self._get_binary(overlay.TRAY)
             if isinstance(got, Outcome):
                 return got
             path = got
@@ -358,24 +358,41 @@ class Wizard:
         if path.is_relative_to(Path.home()):
             self.run([str(path), "--install"], "add a launcher entry for it?")
         self.run([str(path), "--autostart"], "start it in the tray at login?")
-        return Outcome(True, f"{path} (open it from the app menu, or run vinowhisper-tray)")
 
-    def _get_overlay(self) -> Path | Outcome:
-        available = overlay.availability()
+        settings = self._install_settings_window()
+        summary = f"{path} (open it from the app menu, or run vinowhisper-tray)"
+        if settings.ok:
+            return Outcome(True, f"{summary}; settings window {settings.summary}")
+        # The tray works without the window, so a missing window does not fail the step.
+        return Outcome(None, f"{summary}; no settings window: {settings.summary}")
+
+    def _install_settings_window(self) -> Outcome:
+        path = overlay.installed(BIN_DIR, overlay.SETTINGS)
+        if path is not None:
+            self.say(f"  Found {path}")
+            return Outcome(True, str(path))
+        got = self._get_binary(overlay.SETTINGS)
+        return got if isinstance(got, Outcome) else Outcome(True, str(got))
+
+    def _get_binary(self, component: overlay.Component) -> Path | Outcome:
+        available = overlay.availability(component=component)
+        dest = BIN_DIR / component.binary
         if isinstance(available, overlay.Pin):
             self.say(f"  Download {available.url}")
             self.say(f"  sha256   {available.sha256} (pinned in vinowhisper {available.version})")
             if not self.confirm(f"install it into {BIN_DIR}?"):
                 return Outcome(None, "skipped; `vinowhisper-setup --gui` installs it any time")
             try:
-                return overlay.fetch(available, BIN_DIR / overlay.BINARY)
+                return overlay.fetch(available, dest)
             except overlay.OverlayError as exc:
                 return Outcome(False, str(exc))
 
-        if overlay.can_build():
-            if not self.run(overlay.build_argv(), "build it with cargo? (minutes, the first time)"):
+        if overlay.can_build(component):
+            if not self.run(
+                overlay.build_argv(component), "build it with cargo? (minutes, the first time)"
+            ):
                 return Outcome(None, "not built; `vinowhisper-setup --gui` builds it any time")
-            return overlay.install_binary(overlay.built_binary(), BIN_DIR / overlay.BINARY)
+            return overlay.install_binary(overlay.built_binary(component), dest)
 
         return Outcome(None, available)
 
@@ -636,10 +653,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gui",
         action="store_true",
-        help="Install only the optional desktop overlay (vinowhisper-tray: floating "
-        "captions and dictation): the "
-        "release binary, checked against the sha256 pinned in this package, or a "
-        "cargo build from a checkout.",
+        help="Install only the optional desktop app: the overlay and tray "
+        "(vinowhisper-tray: floating captions and dictation) and its settings window "
+        "(vinowhisper-gui). Release binaries, checked against the sha256s pinned in this "
+        "package, or cargo builds from a checkout.",
     )
     parser.add_argument(
         "--ovfetch",

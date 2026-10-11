@@ -73,10 +73,10 @@ These data files ride in the wheel:
   from the Hub API's LFS sha256 and the files' own bytes, never from a guess.
   `tests/test_integrity.py` also fails when `uv.lock`'s export toolchain moves
   away from the NPU pin, so drift shows up in CI rather than on install.
-- **`tray_release.json`**: exists only in a release build. `release.yml` writes
-  it (the sha256 of the overlay binary on the GitHub Release) with
-  `scripts/pin_tray_release.py` just before `uv build`, then checks the wheel
-  carries it. A checkout has none, and `overlay.availability()` then refuses
+- **`tray_release.json`** and **`gui_release.json`**: exist only in a release
+  build. `release.yml` writes them (the sha256s of the tray and settings window
+  binaries on the GitHub Release) with `scripts/pin_tray_release.py` just
+  before `uv build`, then checks the wheel carries both. A checkout has none, and `overlay.availability()` then refuses
   to download, which is the point.
 
 `openvino-tokenizers` is listed directly even though `openvino-genai` pulls it

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Pin the release's overlay binary into the package, before the wheel is built.
+"""Pin the release's desktop binaries into the package, before the wheel is built.
 
 Run by .github/workflows/release.yml, not by hand:
 
-    python3 scripts/pin_tray_release.py vinowhisper-tray-x86_64-linux --version 0.4.0
+    python3 scripts/pin_tray_release.py vinowhisper-tray-x86_64-linux \
+        vinowhisper-gui-x86_64-linux --version 1.0.0
 
-Writes vinowhisper/tray_release.json, which `vinowhisper-setup --gui` checks the
-downloaded binary against (see vinowhisper/overlay.py). Standard library only,
-so it runs on a bare runner before any environment exists.
+Writes vinowhisper/tray_release.json and vinowhisper/gui_release.json, which
+`vinowhisper-setup --gui` checks the downloads against (see vinowhisper/overlay.py).
+Each asset's name says which file it goes in. Standard library only, so it runs on
+a bare runner before any environment exists.
 """
 
 import argparse
@@ -21,16 +23,18 @@ from vinowhisper import overlay  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Pin the overlay binary into the wheel.")
-    parser.add_argument("binary", type=Path, help="the release asset, as uploaded")
+    parser = argparse.ArgumentParser(description="Pin the desktop binaries into the wheel.")
+    parser.add_argument("binaries", type=Path, nargs="+", help="the release assets, as uploaded")
     parser.add_argument("--version", required=True, help="the release version, no leading v")
     parser.add_argument("--arch", default="x86_64")
     args = parser.parse_args()
 
-    record = overlay.pin_record(args.binary, args.version, args.arch)
-    overlay.PIN_FILE.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(f"pinned {args.binary} into {overlay.PIN_FILE}")
-    print(json.dumps(record, indent=2))
+    for binary in args.binaries:
+        component = overlay.component_for_asset(binary.name, args.arch)
+        record = overlay.pin_record(binary, args.version, args.arch, component)
+        component.pin_file.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        print(f"pinned {binary} into {component.pin_file}")
+        print(json.dumps(record, indent=2))
     return 0
 
 
