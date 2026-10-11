@@ -5,7 +5,8 @@ use crate::APP_ID;
 use crate::icon;
 use crate::settings;
 
-const COMMAND: &str = "vinowhisper-gui";
+const COMMAND: &str = "vinowhisper-tray";
+const LEGACY_COMMAND: &str = "vinowhisper-gui";
 
 struct Dirs {
     data: PathBuf,
@@ -125,10 +126,58 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
             write(&path, &svg)?;
         }
     }
+    migrate_legacy_command(&dirs.launcher())?;
+    migrate_legacy_command(&dirs.autostart())?;
     if own {
         return Ok(None);
     }
     write(&dirs.launcher(), &desktop_entry(exe, None, false)).map(Some)
+}
+
+// Before 1.0 this binary was vinowhisper-gui; vinowhisper-gui is now the settings window.
+fn migrate_legacy_command(path: &Path) -> io::Result<()> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let migrated = rename_legacy_command(&text);
+    if migrated != text {
+        std::fs::write(path, migrated)?;
+    }
+    Ok(())
+}
+
+fn rename_legacy_command(entry: &str) -> String {
+    entry
+        .split_inclusive('\n')
+        .map(|line| {
+            if line.starts_with("Exec=") {
+                rename_in_exec_line(line)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
+}
+
+fn rename_in_exec_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(LEGACY_COMMAND) {
+        let end = at + LEGACY_COMMAND.len();
+        let ends_the_name = rest[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, ' ' | '"' | '\n'));
+        out.push_str(&rest[..at]);
+        out.push_str(if ends_the_name {
+            COMMAND
+        } else {
+            LEGACY_COMMAND
+        });
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn install_into(
@@ -257,7 +306,7 @@ mod tests {
 
     fn scratch(name: &str) -> Dirs {
         let root = std::env::temp_dir().join(format!(
-            "vinowhisper-gui-install-{}-{name}",
+            "vinowhisper-tray-install-{}-{name}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -278,34 +327,34 @@ mod tests {
     #[test]
     fn the_launcher_runs_this_binary_by_absolute_path() {
         let entry = desktop_entry(
-            Path::new("/home/me/.local/bin/vinowhisper-gui"),
+            Path::new("/home/me/.local/bin/vinowhisper-tray"),
             None,
             false,
         );
         assert_eq!(
             exec_line(&entry),
-            "Exec=/home/me/.local/bin/vinowhisper-gui"
+            "Exec=/home/me/.local/bin/vinowhisper-tray"
         );
         assert!(entry.contains(&format!("Icon={APP_ID}")));
-        assert!(entry.contains("Exec=/home/me/.local/bin/vinowhisper-gui toggle"));
+        assert!(entry.contains("Exec=/home/me/.local/bin/vinowhisper-tray toggle"));
     }
 
     #[test]
     fn autostart_starts_in_the_tray() {
-        let entry = desktop_entry(Path::new("/bin/vinowhisper-gui"), None, true);
-        assert_eq!(exec_line(&entry), "Exec=/bin/vinowhisper-gui --hidden");
+        let entry = desktop_entry(Path::new("/bin/vinowhisper-tray"), None, true);
+        assert_eq!(exec_line(&entry), "Exec=/bin/vinowhisper-tray --hidden");
     }
 
     #[test]
     fn an_explicit_caption_path_is_baked_in() {
         let entry = desktop_entry(
-            Path::new("/bin/vinowhisper-gui"),
+            Path::new("/bin/vinowhisper-tray"),
             Some(Path::new("/opt/venv/bin/vinowhisper-caption")),
             false,
         );
         assert_eq!(
             exec_line(&entry),
-            "Exec=/bin/vinowhisper-gui --caption /opt/venv/bin/vinowhisper-caption"
+            "Exec=/bin/vinowhisper-tray --caption /opt/venv/bin/vinowhisper-caption"
         );
     }
 
@@ -319,7 +368,7 @@ mod tests {
     #[test]
     fn install_then_uninstall_leaves_nothing_behind() {
         let dirs = scratch("round-trip");
-        let written = install_into(&dirs, Path::new("/bin/vinowhisper-gui"), true, None).unwrap();
+        let written = install_into(&dirs, Path::new("/bin/vinowhisper-tray"), true, None).unwrap();
         assert_eq!(written.len(), 4);
         assert!(written.iter().all(|path| path.exists()));
 
@@ -331,14 +380,14 @@ mod tests {
     #[test]
     fn a_first_run_writes_the_launcher_once_and_never_overwrites_it() {
         let dirs = scratch("ensure");
-        let written = ensure_launcher_in(&dirs, Path::new("/first/vinowhisper-gui")).unwrap();
+        let written = ensure_launcher_in(&dirs, Path::new("/first/vinowhisper-tray")).unwrap();
         assert_eq!(written, Some(dirs.launcher()));
         assert!(dirs.icons().iter().all(|(path, _)| path.exists()));
 
-        let again = ensure_launcher_in(&dirs, Path::new("/second/vinowhisper-gui")).unwrap();
+        let again = ensure_launcher_in(&dirs, Path::new("/second/vinowhisper-tray")).unwrap();
         assert_eq!(again, None);
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
-        assert!(entry.contains("Exec=/first/vinowhisper-gui"));
+        assert!(entry.contains("Exec=/first/vinowhisper-tray"));
     }
 
     #[test]
@@ -346,7 +395,7 @@ mod tests {
         let dirs = scratch("packaged");
         export(&dirs.system[0]).unwrap();
         assert_eq!(
-            ensure_launcher_in(&dirs, Path::new("/usr/bin/vinowhisper-gui")).unwrap(),
+            ensure_launcher_in(&dirs, Path::new("/usr/bin/vinowhisper-tray")).unwrap(),
             None
         );
         assert!(!dirs.launcher().exists());
@@ -359,7 +408,7 @@ mod tests {
         let icons = dirs.icons().map(|(path, _)| path);
         assert_eq!(written, [vec![dirs.launcher()], icons.to_vec()].concat());
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
-        assert_eq!(exec_line(&entry), "Exec=vinowhisper-gui");
+        assert_eq!(exec_line(&entry), "Exec=vinowhisper-tray");
     }
 
     #[test]
@@ -367,7 +416,7 @@ mod tests {
         let dirs = scratch("stale-icons");
         install_into(
             &dirs,
-            Path::new("/bin/vinowhisper-gui"),
+            Path::new("/bin/vinowhisper-tray"),
             false,
             Some(Path::new("/opt/venv/bin/vinowhisper-caption")),
         )
@@ -378,7 +427,7 @@ mod tests {
         }
 
         assert_eq!(
-            ensure_launcher_in(&dirs, Path::new("/elsewhere/vinowhisper-gui")).unwrap(),
+            ensure_launcher_in(&dirs, Path::new("/elsewhere/vinowhisper-tray")).unwrap(),
             None
         );
         for (path, svg) in dirs.icons() {
@@ -388,9 +437,46 @@ mod tests {
     }
 
     #[test]
+    fn a_launcher_and_login_entry_from_before_the_rename_follow_the_binary() {
+        let dirs = scratch("legacy");
+        let launcher = "[Desktop Entry]\nExec=/home/me/.local/bin/vinowhisper-gui --caption /v/bin/vinowhisper-caption\nName=vinoWhisper\n\n[Desktop Action toggle]\nExec=/home/me/.local/bin/vinowhisper-gui --caption /v/bin/vinowhisper-caption toggle\n";
+        let login = "[Desktop Entry]\nExec=\"/My Apps/vinowhisper-gui\" --hidden\n";
+        for (path, text) in [(dirs.launcher(), launcher), (dirs.autostart(), login)] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+
+        assert_eq!(
+            ensure_launcher_in(&dirs, Path::new("/x/vinowhisper-tray")).unwrap(),
+            None
+        );
+        let launcher = std::fs::read_to_string(dirs.launcher()).unwrap();
+        assert_eq!(
+            exec_line(&launcher),
+            "Exec=/home/me/.local/bin/vinowhisper-tray --caption /v/bin/vinowhisper-caption"
+        );
+        assert!(launcher.contains("vinowhisper-tray --caption /v/bin/vinowhisper-caption toggle"));
+        let login = std::fs::read_to_string(dirs.autostart()).unwrap();
+        assert_eq!(
+            exec_line(&login),
+            "Exec=\"/My Apps/vinowhisper-tray\" --hidden"
+        );
+    }
+
+    #[test]
+    fn only_the_command_name_is_renamed() {
+        assert_eq!(
+            rename_legacy_command(
+                "Exec=/src/vinowhisper-gui-checkout/vinowhisper-gui\nName=vinowhisper-gui\n"
+            ),
+            "Exec=/src/vinowhisper-gui-checkout/vinowhisper-tray\nName=vinowhisper-gui\n"
+        );
+    }
+
+    #[test]
     fn autostart_on_its_own_writes_only_the_login_entry() {
         let dirs = scratch("autostart-only");
-        let written = autostart_into(&dirs, Path::new("/usr/bin/vinowhisper-gui"), None).unwrap();
+        let written = autostart_into(&dirs, Path::new("/usr/bin/vinowhisper-tray"), None).unwrap();
         assert_eq!(written, vec![dirs.autostart()]);
         assert!(!dirs.launcher().exists());
     }
@@ -398,8 +484,8 @@ mod tests {
     #[test]
     fn reinstalling_without_autostart_turns_it_off() {
         let dirs = scratch("autostart-off");
-        install_into(&dirs, Path::new("/bin/vinowhisper-gui"), true, None).unwrap();
-        install_into(&dirs, Path::new("/bin/vinowhisper-gui"), false, None).unwrap();
+        install_into(&dirs, Path::new("/bin/vinowhisper-tray"), true, None).unwrap();
+        install_into(&dirs, Path::new("/bin/vinowhisper-tray"), false, None).unwrap();
         assert!(!dirs.autostart().exists());
         assert!(dirs.launcher().exists());
     }
@@ -407,13 +493,13 @@ mod tests {
     #[test]
     fn the_tray_toggle_turns_autostart_on_and_off() {
         let dirs = scratch("autostart-toggle");
-        let exe = Path::new("/bin/vinowhisper-gui");
+        let exe = Path::new("/bin/vinowhisper-tray");
         set_autostart_in(&dirs, exe, false, None).unwrap();
         assert!(!dirs.autostart().exists());
 
         set_autostart_in(&dirs, exe, true, None).unwrap();
         let entry = std::fs::read_to_string(dirs.autostart()).unwrap();
-        assert_eq!(exec_line(&entry), "Exec=/bin/vinowhisper-gui --hidden");
+        assert_eq!(exec_line(&entry), "Exec=/bin/vinowhisper-tray --hidden");
 
         set_autostart_in(&dirs, exe, false, None).unwrap();
         assert!(!dirs.autostart().exists());

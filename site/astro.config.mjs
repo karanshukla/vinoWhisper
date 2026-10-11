@@ -3,6 +3,7 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://docs.vinowhisper.com',
+  redirects: { '/gui': '/tray/' },
   integrations: [
     starlight({
       title: 'vinoWhisper',
@@ -31,7 +32,7 @@ export default defineConfig({
           items: [
             { slug: 'install' },
             { slug: 'terminal' },
-            { slug: 'gui' },
+            { slug: 'tray' },
           ],
         },
         {

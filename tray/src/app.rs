@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
@@ -44,7 +45,7 @@ use crate::paste::Paster;
 use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
-use crate::settings::{Language, Position, Settings, Source, Speech, Task, TextSize};
+use crate::settings::{Position, Settings, Source, Speech};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
 use crate::virtual_keyboard::VirtualKeyboard;
@@ -61,6 +62,9 @@ const TICK: Duration = Duration::from_secs(1);
 const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
 const COPIED: &str = "Copied";
 const COPY_REFUSED: &str = "Finish dictating before copying";
+const NO_SETTINGS_WINDOW: &str = "No settings window: run vinowhisper-setup --gui";
+// Under ipc's 2s, so the sender hears a timeout from us rather than from its socket.
+const ANSWER_WITHIN: Duration = Duration::from_millis(1500);
 const NOTICE_FOR: Duration = Duration::from_secs(3);
 // Each applied switch costs a model load, so wait out a burst of menu clicks.
 const SPEECH_SETTLE: Duration = Duration::from_millis(1500);
@@ -71,17 +75,15 @@ pub enum Command {
     Hide,
     Toggle,
     Quit,
+    Reload(mpsc::Sender<ipc::Reply>),
+    QueryShortcuts(mpsc::Sender<ipc::Reply>),
     SetSource(Source),
-    SetPosition(Position),
-    SetSize(TextSize),
-    SetLanguage(Language),
-    SetTranslate(bool),
     SpeechApplied,
     CopyRecent(u64),
     ClearRecent,
     ConfigureShortcut,
+    OpenSettings,
     SetAutostart(bool),
-    SetSaveTranscripts(bool),
     Shortcut(shortcut::State),
     DictateKey {
         down: bool,
@@ -240,11 +242,22 @@ pub fn run(options: Options) -> Result<(), String> {
     let ipc = {
         let tx = tx.clone();
         let forward = move |request| {
+            // These two answer from the event loop, so wait for it there.
+            let answered = |command: fn(mpsc::Sender<ipc::Reply>) -> Command| {
+                let (answer, reply) = mpsc::channel();
+                let _ = tx.send(command(answer));
+                reply
+                    .recv_timeout(ANSWER_WITHIN)
+                    .unwrap_or_else(|_| Err("vinowhisper-tray is busy; try again".into()))
+            };
             let command = match request {
                 Request::Show => Command::Show,
                 Request::Hide => Command::Hide,
                 Request::Toggle => Command::Toggle,
                 Request::Quit => Command::Quit,
+                Request::Reload => return answered(Command::Reload),
+                Request::Shortcuts => return answered(Command::QueryShortcuts),
+                Request::ConfigureShortcut => Command::ConfigureShortcut,
                 Request::Dictate => {
                     // A tap: starts hands-free, or finishes what is running.
                     let _ = tx.send(Command::DictateKey { down: true });
@@ -252,16 +265,17 @@ pub fn run(options: Options) -> Result<(), String> {
                 }
                 Request::DictatePress => Command::DictateKey { down: true },
                 Request::DictateRelease => Command::DictateKey { down: false },
-                Request::Ping => return,
+                Request::Ping => return Ok(String::new()),
             };
             let _ = tx.send(command);
+            Ok(String::new())
         };
         match ipc::listen(forward) {
             Ok(listener) => Some(listener),
             Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => return Err(err.to_string()),
             Err(err) => {
                 eprintln!(
-                    "[vinowhisper-gui] `vinowhisper-gui toggle` will not reach this instance: {err}"
+                    "[vinowhisper-tray] `vinowhisper-tray toggle` will not reach this instance: {err}"
                 );
                 None
             }
@@ -271,11 +285,11 @@ pub fn run(options: Options) -> Result<(), String> {
     // Before the portal: it refuses a shortcut to an app with no desktop file.
     match install::ensure_launcher() {
         Ok(Some(path)) => eprintln!(
-            "[vinowhisper-gui] added a launcher at {} (the shortcut portal needs one)",
+            "[vinowhisper-tray] added a launcher at {} (the shortcut portal needs one)",
             path.display()
         ),
         Ok(None) => {}
-        Err(err) => eprintln!("[vinowhisper-gui] no launcher, so no global shortcut: {err}"),
+        Err(err) => eprintln!("[vinowhisper-tray] no launcher, so no global shortcut: {err}"),
     }
     let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=1, ()).ok();
     let clipboard = match &seat {
@@ -285,7 +299,7 @@ pub fn run(options: Options) -> Result<(), String> {
     let clipboard = match clipboard {
         Ok(clipboard) => Some(clipboard),
         Err(err) => {
-            eprintln!("[vinowhisper-gui] dictation cannot set the clipboard: {err}");
+            eprintln!("[vinowhisper-tray] dictation cannot set the clipboard: {err}");
             None
         }
     };
@@ -371,38 +385,19 @@ impl App {
             Command::Toggle if self.visible => self.hide(),
             Command::Toggle => self.show(),
             Command::Quit => self.quit(),
+            Command::Reload(answer) => {
+                let _ = answer.send(self.reload());
+            }
+            Command::QueryShortcuts(answer) => {
+                let _ = answer.send(Ok(shortcut::to_json(&self.shortcut_state)));
+            }
             Command::SetSource(source) => self.set_source(source),
-            Command::SetPosition(position) => {
-                self.settings.position = position;
-                self.settings.save();
-                self.place();
-            }
-            Command::SetSize(size) => {
-                self.settings.size = size;
-                self.settings.save();
-                self.place();
-            }
-            Command::SetLanguage(language) => self.set_speech(Speech {
-                language,
-                task: self.speech.task,
-            }),
-            Command::SetTranslate(translate) => self.set_speech(Speech {
-                language: self.speech.language,
-                task: if translate {
-                    Task::Translate
-                } else {
-                    Task::Transcribe
-                },
-            }),
             Command::SpeechApplied => self.speech_applied(),
             Command::CopyRecent(id) => self.copy_recent(id),
             Command::ClearRecent => self.recent.clear(),
             Command::ConfigureShortcut => self.shortcut.configure(),
+            Command::OpenSettings => self.open_settings(),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
-            Command::SetSaveTranscripts(save) => {
-                self.settings.save_transcripts = save;
-                self.settings.save();
-            }
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
                 let action = self.dictation.key(down, Instant::now());
@@ -485,7 +480,7 @@ impl App {
         if let Some(timer) = &self.idle_timer
             && let Err(err) = timer.arm(Duration::from_secs(minutes.saturating_mul(60)))
         {
-            eprintln!("[vinowhisper-gui] could not start the tray's idle timer: {err}");
+            eprintln!("[vinowhisper-tray] could not start the tray's idle timer: {err}");
         }
     }
 
@@ -543,14 +538,54 @@ impl App {
         }
     }
 
-    fn set_speech(&mut self, speech: Speech) {
+    /// The settings window (or a hand edit) changed the files: apply what differs, and nothing
+    /// that did not, so a save of one field does not restart captions.
+    fn reload(&mut self) -> ipc::Reply {
+        let was = self.source();
+        let old = std::mem::replace(&mut self.settings, Settings::load());
+        let changes = self.settings.changes_from(&old);
+        if changes.source {
+            // The file now says what the user wants, over a one-run --source flag.
+            self.source_override = None;
+        }
+        if self.source() != was {
+            self.restart_session();
+        }
+        if changes.placement {
+            self.place();
+        }
+        if changes.tray_idle && std::mem::take(&mut self.idle) {
+            // Disarmed here, armed again with the new time at the end of handle().
+            if let Some(timer) = &self.idle_timer {
+                let _ = timer.disarm();
+            }
+        }
+        if changes.shortcut {
+            // The portal keeps the binding the user already has; the file's trigger is only
+            // its suggestion for a shortcut it has not bound yet.
+            eprintln!(
+                "[vinowhisper-tray] the shortcut in gui.json changed; an existing binding is \
+                 changed from vinowhisper-gui (Shortcuts), not here"
+            );
+        }
+        if self.set_speech(Speech::load()) {
+            Ok(String::new())
+        } else {
+            // Put the file back, so the window reads what is really in use.
+            self.speech.save();
+            Err(SWITCH_REFUSED.into())
+        }
+    }
+
+    // false when refused: a switch mid-dictation would drop what was said.
+    fn set_speech(&mut self, speech: Speech) -> bool {
         let speech = speech.normalised();
         if speech == self.speech {
-            return;
+            return true;
         }
         if self.dictation.is_busy() {
             self.refuse_speech_switch();
-            return;
+            return false;
         }
         self.speech = speech;
         speech.save();
@@ -567,6 +602,34 @@ impl App {
                 TimeoutAction::Drop
             },
         );
+        true
+    }
+
+    fn open_settings(&mut self) {
+        // Next to this binary first, as setup installs them, then PATH.
+        let beside = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-gui")))
+            .filter(|path| path.is_file());
+        let command = beside.unwrap_or_else(|| PathBuf::from("vinowhisper-gui"));
+        match std::process::Command::new(&command)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                // Reaped off the event loop; the window outlives nothing it needs from us.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                eprintln!(
+                    "[vinowhisper-tray] could not open {}: {err}",
+                    command.display()
+                );
+                self.flash(NO_SETTINGS_WINDOW);
+            }
+        }
     }
 
     fn apply_speech(&mut self) {
@@ -580,7 +643,7 @@ impl App {
 
     // A restart drops the request in flight and the audio recorded so far, so say no.
     fn refuse_speech_switch(&mut self) {
-        eprintln!("[vinowhisper-gui] language not changed: {SWITCH_REFUSED}");
+        eprintln!("[vinowhisper-tray] language not changed: {SWITCH_REFUSED}");
         self.flash(SWITCH_REFUSED);
         // The menu may already show the clicked choice; push the real one back.
         self.tray_view = None;
@@ -696,7 +759,7 @@ impl App {
                 if let Some(session) = &app.session
                     && session.generation == generation
                 {
-                    eprintln!("[vinowhisper-gui] vinowhisper-caption ignored SIGINT; killing it");
+                    eprintln!("[vinowhisper-tray] vinowhisper-caption ignored SIGINT; killing it");
                     session.kill();
                 }
                 TimeoutAction::Drop
@@ -763,7 +826,7 @@ impl App {
             Ok(region) => layer
                 .wl_surface()
                 .set_input_region(Some(region.wl_region())),
-            Err(err) => eprintln!("[vinowhisper-gui] overlay will catch clicks: {err}"),
+            Err(err) => eprintln!("[vinowhisper-tray] overlay will catch clicks: {err}"),
         }
         let (fractional, viewport) = match &self.scaling {
             Some((manager, viewporter)) => (
@@ -817,7 +880,7 @@ impl App {
         match Dictator::start(program, self.dictator_generation, self.tx.clone()) {
             Ok(dictator) => self.dictator = Some(dictator),
             Err(err) => eprintln!(
-                "[vinowhisper-gui] could not start {}: {err}",
+                "[vinowhisper-tray] could not start {}: {err}",
                 program.display()
             ),
         }
@@ -970,23 +1033,18 @@ impl App {
         tray::View {
             visible: self.visible,
             source: self.source(),
-            position: self.settings.position,
-            size: self.settings.size,
             status: self.status_text(),
             passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
             autostart: self.autostart,
-            language: self.speech.language,
-            task: self.speech.task,
             recent: self.recent.clone(),
-            save_transcripts: self.settings.save_transcripts,
         }
     }
 
     fn set_autostart(&mut self, enabled: bool) {
         match install::set_autostart(enabled, self.caption_override.as_deref()) {
             Ok(()) => self.autostart = enabled,
-            Err(err) => eprintln!("[vinowhisper-gui] could not change start at login: {err}"),
+            Err(err) => eprintln!("[vinowhisper-tray] could not change start at login: {err}"),
         }
     }
 
@@ -1023,7 +1081,7 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
     let (watcher, timer) = match timer {
         Ok(pair) => pair,
         Err(err) => {
-            eprintln!("[vinowhisper-gui] no idle timer, the tray icon stays in view: {err}");
+            eprintln!("[vinowhisper-tray] no idle timer, the tray icon stays in view: {err}");
             return None;
         }
     };
@@ -1036,15 +1094,15 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
             }
             Ok(PostAction::Continue)
         })
-        .map_err(|err| eprintln!("[vinowhisper-gui] no idle timer: {err}"))
+        .map_err(|err| eprintln!("[vinowhisper-tray] no idle timer: {err}"))
         .ok()?;
     Some(timer)
 }
 
 fn trace(message: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_GUI_TRACE").is_some_and(|v| v == "1")) {
-        eprintln!("[vinowhisper-gui] {message}");
+    if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_TRAY_TRACE").is_some_and(|v| v == "1")) {
+        eprintln!("[vinowhisper-tray] {message}");
     }
 }
 
@@ -1063,7 +1121,7 @@ fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(&mut Canvas
     ) {
         Ok(pair) => pair,
         Err(err) => {
-            eprintln!("[vinowhisper-gui] no buffer to draw into: {err}");
+            eprintln!("[vinowhisper-tray] no buffer to draw into: {err}");
             return;
         }
     };
@@ -1077,7 +1135,7 @@ fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(&mut Canvas
     }
     surface.damage_buffer(0, 0, width as i32, height as i32);
     if let Err(err) = buffer.attach_to(surface) {
-        eprintln!("[vinowhisper-gui] could not attach the frame: {err}");
+        eprintln!("[vinowhisper-tray] could not attach the frame: {err}");
         return;
     }
     overlay.layer.commit();

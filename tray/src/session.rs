@@ -70,7 +70,7 @@ fn is_executable(path: &Path) -> bool {
 pub fn not_found_message() -> String {
     format!(
         "{PROGRAM} was not found. Install vinoWhisper (pip install vinowhisper, then \
-         vinowhisper-setup), or point at it with vinowhisper-gui --caption PATH."
+         vinowhisper-setup), or point at it with vinowhisper-tray --caption PATH."
     )
 }
 
@@ -85,11 +85,11 @@ pub fn stop_server() {
     {
         Ok(status) if status.success() => {}
         Ok(status) => eprintln!(
-            "[vinowhisper-gui] could not stop {SERVER_UNIT} ({status}); if you started \
+            "[vinowhisper-tray] could not stop {SERVER_UNIT} ({status}); if you started \
              vinowhisper-server by hand, restart it to pick up the new language"
         ),
         Err(err) => eprintln!(
-            "[vinowhisper-gui] could not run systemctl ({err}); restart vinowhisper-server \
+            "[vinowhisper-tray] could not run systemctl ({err}); restart vinowhisper-server \
              to pick up the new language"
         ),
     }

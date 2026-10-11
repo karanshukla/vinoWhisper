@@ -35,7 +35,7 @@ uv sync --extra export
 uv run vinowhisper-setup --dry-run
 ```
 
-The overlay in `gui/` is plain cargo: `cargo test` from that directory.
+The overlay in `tray/` is plain cargo: `cargo test` from that directory.
 
 ## Before you push
 

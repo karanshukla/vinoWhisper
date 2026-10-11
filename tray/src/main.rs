@@ -1,0 +1,314 @@
+mod app;
+mod captions;
+mod clipboard;
+mod dictation;
+mod dictator;
+mod icon;
+mod idle;
+mod install;
+mod ipc;
+mod paint;
+mod paste;
+mod protocol;
+mod raster;
+mod session;
+mod shortcut;
+mod tray;
+mod uinput;
+mod virtual_keyboard;
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use ipc::Request;
+use vinowhisper_settings as settings;
+use vinowhisper_settings::Source;
+
+// Changing this orphans every shortcut already bound.
+pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
+
+const USAGE: &str = "\
+Usage: vinowhisper-tray [OPTIONS] [COMMAND]
+
+A floating overlay and tray icon for vinoWhisper: live captions, and
+dictation into the focused window. Runs vinowhisper-caption --json and
+vinowhisper-dictate --json and draws what they say.
+
+Commands go to the running instance, starting one if there is none:
+  show        show the overlay and start captioning (the default)
+  hide        hide the overlay and stop captioning
+  toggle      one or the other: bind this to a key if your desktop has
+              no global-shortcuts portal
+  dictate     start dictating from the microphone, or stop and type what
+              was said: the tap half of the dictation key, for desktops
+              with no global-shortcuts portal
+  dictate-press, dictate-release
+              the hold half: bound to a key's press and release (sway:
+              bindsym, and bindsym --release), holding it talks and
+              letting go types
+  quit        stop everything, tray icon included
+  reload      re-read the settings files, after changing them by hand or
+              in vinowhisper-gui (it sends this itself). Exits 1 when a
+              language change is refused because dictation is running
+  shortcuts   print the bound shortcuts as JSON, for vinowhisper-gui
+  configure-shortcut
+              open the desktop's dialog for changing them
+
+Options:
+  --hidden          start in the tray, captions off (for autostart)
+  --source SOURCE   'output' (system audio, the default) or 'mic', this run only
+  --caption PATH    the vinowhisper-caption to run, when it is not on PATH
+  --install         add a launcher entry and icon for this binary
+  --autostart       start in the tray at login (with --install, or alone for
+                    a packaged copy whose launcher came with the package)
+  --uninstall       remove what --install and --autostart added
+  --export-desktop DIR
+                    for packagers: write the launcher and icon under DIR
+                    (a buildroot's /usr/share), naming the command, not a path
+  -V, --version     print the version
+  -h, --help        print this help
+
+Two global shortcuts are requested from the desktop portal: captions,
+preferring Meta+Alt+C, and dictation, preferring Meta+H (the dictation key
+on laptops that have one). Hold the dictation key to talk and release to
+type, or tap it to start and tap again to finish. The text goes on the
+clipboard and is pasted with Shift+Insert: from /dev/uinput when that is
+writable, else through the compositor's virtual keyboard, else through the
+remote-desktop portal, which asks permission once. Change either shortcut
+from vinowhisper-gui (Shortcuts) or in your desktop's shortcut settings,
+where they are listed under vinoWhisper. Settings are kept in
+$XDG_CONFIG_HOME/vinowhisper/gui.json and language.json.";
+
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    command: Option<Request>,
+    hidden: bool,
+    source: Option<Source>,
+    caption: Option<PathBuf>,
+    install: bool,
+    autostart: bool,
+    uninstall: bool,
+    export_desktop: Option<PathBuf>,
+    help: bool,
+    version: bool,
+}
+
+impl Args {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
+        let mut parsed = Args::default();
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "-h" | "--help" => parsed.help = true,
+                "-V" | "--version" => parsed.version = true,
+                "--hidden" => parsed.hidden = true,
+                "--install" => parsed.install = true,
+                "--autostart" => parsed.autostart = true,
+                "--uninstall" => parsed.uninstall = true,
+                "--source" => {
+                    let value = args.next().ok_or("--source needs 'output' or 'mic'")?;
+                    parsed.source = Some(Source::parse(&value).ok_or_else(|| {
+                        format!("--source takes 'output' or 'mic', not {value:?}")
+                    })?);
+                }
+                "--caption" => {
+                    parsed.caption = Some(args.next().ok_or("--caption needs a path")?.into());
+                }
+                "--export-desktop" => {
+                    parsed.export_desktop = Some(
+                        args.next()
+                            .ok_or("--export-desktop needs a directory")?
+                            .into(),
+                    );
+                }
+                option if option.starts_with('-') => {
+                    return Err(format!("unknown option {option}"));
+                }
+                word => {
+                    if parsed.command.is_some() {
+                        return Err(format!("one command at a time, got a second: {word:?}"));
+                    }
+                    let request = Request::parse(word).filter(|request| *request != Request::Ping);
+                    parsed.command =
+                        Some(request.ok_or_else(|| format!("unknown command {word:?}"))?);
+                }
+            }
+        }
+        if parsed.export_desktop.is_some()
+            && (parsed.install || parsed.autostart || parsed.uninstall)
+        {
+            return Err("--export-desktop is for packagers and goes on its own".into());
+        }
+        if parsed.uninstall && (parsed.install || parsed.autostart) {
+            return Err("--uninstall undoes --install and --autostart; pick one".into());
+        }
+        Ok(parsed)
+    }
+}
+
+fn main() -> ExitCode {
+    let args = match Args::parse(std::env::args().skip(1)) {
+        Ok(args) => args,
+        Err(message) => {
+            eprintln!("vinowhisper-tray: {message}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    if args.help {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if args.version {
+        println!("vinowhisper-tray {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    if args.install || args.autostart || args.uninstall || args.export_desktop.is_some() {
+        return run_install(&args);
+    }
+
+    let request = args.command.unwrap_or(if args.hidden {
+        Request::Ping
+    } else {
+        Request::Show
+    });
+    match ipc::send(request) {
+        Ok(answer) => {
+            if !answer.is_empty() {
+                println!("{answer}");
+            }
+            return ExitCode::SUCCESS;
+        }
+        Err(ipc::SendError::Refused(reason)) => {
+            eprintln!("vinowhisper-tray: {reason}");
+            return ExitCode::FAILURE;
+        }
+        Err(ipc::SendError::NotRunning) => {}
+        Err(ipc::SendError::Io(err)) => {
+            eprintln!("vinowhisper-tray: could not reach the running instance: {err}");
+            return ExitCode::FAILURE;
+        }
+    }
+    if request == Request::Shortcuts {
+        // An answer, not an error: the settings window shows it as "not running".
+        println!("{{\"state\":\"stopped\"}}");
+        return ExitCode::SUCCESS;
+    }
+    if matches!(
+        request,
+        Request::Hide
+            | Request::Quit
+            | Request::Reload
+            | Request::ConfigureShortcut
+            | Request::Dictate
+            | Request::DictatePress
+            | Request::DictateRelease
+    ) {
+        eprintln!("vinowhisper-tray is not running");
+        return ExitCode::SUCCESS;
+    }
+
+    let options = app::Options {
+        visible: request != Request::Ping,
+        source: args.source,
+        caption: args.caption,
+    };
+    match app::run(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("vinowhisper-tray: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_install(args: &Args) -> ExitCode {
+    let caption = args.caption.as_deref();
+    let result = if let Some(dir) = &args.export_desktop {
+        install::export(dir)
+    } else if args.uninstall {
+        install::uninstall()
+    } else if args.install {
+        install::install(args.autostart, caption)
+    } else {
+        install::autostart(caption)
+    };
+    match result {
+        Ok(paths) => {
+            let verb = if args.uninstall { "removed" } else { "wrote" };
+            for path in paths {
+                println!("{verb} {}", path.display());
+            }
+            let integrating = args.install || args.autostart;
+            if integrating && session::find_caption(args.caption.as_deref()).is_none() {
+                eprintln!("note: {}", session::not_found_message());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("vinowhisper-tray: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Args, String> {
+        Args::parse(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn no_arguments_means_show() {
+        assert_eq!(parse(&[]), Ok(Args::default()));
+    }
+
+    #[test]
+    fn a_command_and_options_parse_together() {
+        let args = parse(&["--source", "mic", "toggle"]).unwrap();
+        assert_eq!(args.command, Some(Request::Toggle));
+        assert_eq!(args.source, Some(Source::Mic));
+    }
+
+    #[test]
+    fn reload_is_a_command() {
+        let args = Args::parse(["reload".to_owned()]).unwrap();
+        assert_eq!(args.command, Some(Request::Reload));
+    }
+
+    #[test]
+    fn bad_input_is_refused_with_a_reason() {
+        assert!(
+            parse(&["--source", "speakers"])
+                .unwrap_err()
+                .contains("'output' or 'mic'")
+        );
+        assert!(parse(&["restart"]).unwrap_err().contains("unknown command"));
+        assert_eq!(
+            parse(&["dictate-press"]).unwrap().command,
+            Some(Request::DictatePress)
+        );
+        assert!(parse(&["ping"]).is_err(), "ping is internal, not a command");
+        assert!(parse(&["show", "hide"]).is_err());
+        assert!(parse(&["--frobnicate"]).is_err());
+        assert!(parse(&["--export-desktop"]).is_err(), "needs a directory");
+        assert!(parse(&["--export-desktop", "/tmp/x", "--install"]).is_err());
+        assert!(parse(&["--uninstall", "--autostart"]).is_err());
+    }
+
+    #[test]
+    fn autostart_stands_alone_for_a_packaged_copy() {
+        let args = parse(&["--autostart"]).unwrap();
+        assert!(args.autostart && !args.install);
+    }
+
+    #[test]
+    fn export_desktop_takes_a_directory() {
+        let args = parse(&["--export-desktop", "/buildroot/usr/share"]).unwrap();
+        assert_eq!(
+            args.export_desktop,
+            Some(PathBuf::from("/buildroot/usr/share"))
+        );
+    }
+}

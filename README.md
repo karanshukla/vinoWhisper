@@ -81,14 +81,14 @@ then CPU, and a fallback is never silent: it shows up in the server journal, in
 that resolves it, in your distro's package names (see
 [Supported distros](#supported-distros)).
 
-**The overlay is optional, and native.** `vinowhisper-gui` is a 6.3MB Rust
+**The overlay is optional, and native.** `vinowhisper-tray` is a 6.3MB Rust
 binary that floats a caption box above every window, fullscreen video
 included, with a tray icon, a global shortcut and a start-at-login toggle. It
 links nothing but libc, adds nothing to the Python install, and draws the same
 event stream as the terminal UI. It also does **dictation**: hold Meta+H (the
 dictation key on laptops that have one), talk, and let go to type what you
 said into the focused window, one NPU decode per utterance.
-[docs/gui.md](https://docs.vinowhisper.com/gui/)
+[docs/tray.md](https://docs.vinowhisper.com/tray/)
 
 ## Install
 
@@ -172,10 +172,10 @@ vinowhisper-caption --json                # one event per line, what the overlay
 vinowhisper-setup --language fr           # French (de, es, auto): sets up the multilingual model
 vinowhisper-setup --language auto --task translate   # foreign speech, captioned in English
 
-vinowhisper-gui                           # the floating overlay and tray icon
-vinowhisper-gui toggle                    # show/hide it; Meta+Alt+C does the same
-vinowhisper-gui dictate                   # start/finish dictating; hold Meta+H does the same
-vinowhisper-gui --install --autostart     # launcher entry, and the tray at login
+vinowhisper-tray                           # the floating overlay and tray icon
+vinowhisper-tray toggle                    # show/hide it; Meta+Alt+C does the same
+vinowhisper-tray dictate                   # start/finish dictating; hold Meta+H does the same
+vinowhisper-tray --install --autostart     # launcher entry, and the tray at login
                                           #   (or tick "Start at login" in the tray)
 
 vinowhisper-setup                         # guided install; re-runnable, idempotent
@@ -198,7 +198,7 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 |---|---|
 | [Installing](https://docs.vinowhisper.com/install/) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
 | [Terminal captions](https://docs.vinowhisper.com/terminal/) | Scrollback, paragraphs, the level meter, and plain output |
-| [Overlay and dictation](https://docs.vinowhisper.com/gui/) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
+| [Overlay and dictation](https://docs.vinowhisper.com/tray/) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
 | [Hardware](https://docs.vinowhisper.com/hardware/) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://docs.vinowhisper.com/audio/) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](https://docs.vinowhisper.com/latency/) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
@@ -255,7 +255,7 @@ machine:
 - **Dictation pastes into whatever has focus.** Wayland does not say what that
   is, so it cannot check. Outside KDE the paste goes through the compositor's
   virtual keyboard, which has not been tried on a live compositor yet.
-  [docs/gui.md](https://docs.vinowhisper.com/gui/#dictation)
+  [docs/tray.md](https://docs.vinowhisper.com/tray/#dictation)
   has the details.
 - **Only Fedora's package names have been used for real.** The other seven
   families come from their package indexes. If one is wrong for yours, that is

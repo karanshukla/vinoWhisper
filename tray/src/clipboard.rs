@@ -181,7 +181,7 @@ impl Dispatch<ExtDataControlSourceV1, Arc<str>> for App {
                 };
                 // Small enough to fit a pipe buffer, so this does not stall the loop.
                 if let Err(err) = File::from(fd).write_all(bytes) {
-                    eprintln!("[vinowhisper-gui] could not hand over the dictated text: {err}");
+                    eprintln!("[vinowhisper-tray] could not hand over the dictated text: {err}");
                 }
             }
             ext_data_control_source_v1::Event::Cancelled => {

@@ -73,10 +73,10 @@ These data files ride in the wheel:
   from the Hub API's LFS sha256 and the files' own bytes, never from a guess.
   `tests/test_integrity.py` also fails when `uv.lock`'s export toolchain moves
   away from the NPU pin, so drift shows up in CI rather than on install.
-- **`gui_release.json`**: exists only in a release build. `release.yml` writes
-  it (the sha256 of the overlay binary on the GitHub Release) with
-  `scripts/pin_gui_release.py` just before `uv build`, then checks the wheel
-  carries it. A checkout has none, and `overlay.availability()` then refuses
+- **`tray_release.json`** and **`gui_release.json`**: exist only in a release
+  build. `release.yml` writes them (the sha256s of the tray and settings window
+  binaries on the GitHub Release) with `scripts/pin_tray_release.py` just
+  before `uv build`, then checks the wheel carries both. A checkout has none, and `overlay.availability()` then refuses
   to download, which is the point.
 
 `openvino-tokenizers` is listed directly even though `openvino-genai` pulls it
@@ -85,8 +85,8 @@ one upstream packaging change from disappearing.
 
 ## The overlay's dependencies
 
-Every crate in `gui/Cargo.toml` is pure Rust, so the binary links nothing but
-libc and installs as one file on any distro (see [gui.md](gui.md#why-rust)).
+Every crate in `tray/Cargo.toml` is pure Rust, so the binary links nothing but
+libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
 
 | Crate | Does |
 |---|---|
@@ -126,7 +126,7 @@ startup per Tab, only on `--target`.
 ## Conventions
 
 - **Comments are minimal.** No module, class or function docstrings in
-  `vinowhisper/`, no `//!` or item docs in `gui/src/`. A comment stays only
+  `vinowhisper/`, no `//!` or item docs in `tray/src/`. A comment stays only
   where the code would invite a wrong "fix" without it, and then it is one
   line. Rationale, measurements and gotchas go in the matching `docs/` page.
   `tests/` is exempt.
@@ -194,7 +194,7 @@ git push --follow-tags
 ```
 
 `git cliff --unreleased` previews what is pending. The version lives in
-`pyproject.toml`, `gui/Cargo.toml` and `gui/Cargo.lock`, and bump-my-version
+`pyproject.toml`, `tray/Cargo.toml` and `tray/Cargo.lock`, and bump-my-version
 moves all three. They cannot differ: the overlay is downloaded from the
 release tagged with the Python package's version, and
 `tests/test_packaging.py` fails if they drift.
@@ -207,7 +207,7 @@ npm run dev` previews it, and the `site` CI job runs the build.
 
 Pushing the tag runs `release.yml`:
 
-1. **gui** builds the overlay once for `x86_64-unknown-linux-musl`, so the one
+1. **tray** builds the overlay once for `x86_64-unknown-linux-musl`, so the one
    binary is fully static (static-pie, 6.0MB, measured 2026-09-12). It never
    goes to PyPI.
 2. **build** checks the tag matches `pyproject.toml`, pins the overlay's

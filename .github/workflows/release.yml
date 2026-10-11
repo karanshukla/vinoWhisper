@@ -9,7 +9,7 @@ on:
 permissions: {}
 
 jobs:
-  gui:
+  tray:
     # musl, so one static binary runs on any distro. Never goes to PyPI.
     runs-on: ubuntu-latest
     env:
@@ -19,15 +19,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-unknown-linux-musl
       - run: rustup default "$RUST_TOOLCHAIN"
-      - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path gui/Cargo.toml
-      - run: cp gui/target/x86_64-unknown-linux-musl/release/vinowhisper-gui vinowhisper-gui-x86_64-linux
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path tray/Cargo.toml
+      - run: cp tray/target/x86_64-unknown-linux-musl/release/vinowhisper-tray vinowhisper-tray-x86_64-linux
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tray
+          path: vinowhisper-tray-x86_64-linux
+
+  gui:
+    # The settings window. glibc, since winit dlopens libwayland and libEGL, which a static
+    # musl binary cannot. Built on the oldest supported runner: it runs wherever glibc is
+    # at least this runner's (2.35).
+    runs-on: ubuntu-22.04
+    env:
+      RUST_TOOLCHAIN: "1.98.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - run: rustup default "$RUST_TOOLCHAIN"
+      - run: cargo build --release --locked --manifest-path gui/Cargo.toml
+      - run: cp gui/target/release/vinowhisper-gui vinowhisper-gui-x86_64-linux
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gui
           path: vinowhisper-gui-x86_64-linux
 
   build:
-    needs: gui
+    needs: [tray, gui]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -51,22 +69,31 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: tray
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           name: gui
 
-      - name: Pin the overlay binary into the package
+      - name: Pin the desktop binaries into the package
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 scripts/pin_gui_release.py vinowhisper-gui-x86_64-linux --version "$VERSION" --arch x86_64
+        run: >-
+          python3 scripts/pin_tray_release.py
+          vinowhisper-tray-x86_64-linux vinowhisper-gui-x86_64-linux
+          --version "$VERSION" --arch x86_64
 
       - name: Build sdist and wheel
         run: uv build
 
-      - name: Check the wheel carries the overlay pin
+      - name: Check the wheel carries both pins
         run: |
-          if ! unzip -l dist/*.whl | grep -q 'vinowhisper/gui_release.json'; then
-            echo "::error::the wheel has no vinowhisper/gui_release.json"
-            exit 1
-          fi
+          for pin in tray_release.json gui_release.json; do
+            if ! unzip -l dist/*.whl | grep -q "vinowhisper/$pin"; then
+              echo "::error::the wheel has no vinowhisper/$pin"
+              exit 1
+            fi
+          done
 
       - name: Check the metadata renders on PyPI
         # A rejected upload cannot be retried under the same version
@@ -101,8 +128,9 @@ jobs:
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VERSION}/scripts/install.sh | bash"
             echo '```'
             echo
-            echo 'The optional desktop overlay, captions and dictation (`vinowhisper-gui-x86_64-linux` below), is'
-            echo 'installed and checked against the digest pinned in the wheel by:'
+            echo 'The optional desktop app, the overlay and tray (`vinowhisper-tray-x86_64-linux`) and its'
+            echo 'settings window (`vinowhisper-gui-x86_64-linux`), is installed and checked against the'
+            echo 'digests pinned in the wheel by:'
             echo
             echo '```'
             echo 'vinowhisper-setup --gui'
@@ -147,6 +175,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tray
+          path: dist
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
