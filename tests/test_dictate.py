@@ -619,7 +619,8 @@ def test_a_silent_segment_is_not_decoded_but_the_utterance_still_is():
     signal = np.concatenate([pcm.silence(5.5), pcm.sine(220.0, 1.0, amplitude=0.1)])
     _, _, client = _run(["start", "stop"], signal=signal)
     assert len(client.decoded) == 1
-    assert client.decoded[0].size == pcm.samples_for(1.5)
+    # The 0.5s of quiet before the word is cut to the pad, not decoded whole.
+    assert client.decoded[0].size == pcm.samples_for(1.0 + dictate.config.TRIM_PAD_S)
 
 
 def test_a_failed_segment_decode_is_reported_once():
@@ -849,3 +850,60 @@ def test_a_transcript_with_nothing_to_fix_skips_the_request_and_the_pill_state()
     assert "Cleaning" not in [r["event"] for r in records]
     assert records[-1]["text"] == "um hello there"
     assert cleaner.seen == []
+
+
+def _fed(segmenter, signal):
+    pieces = []
+    for chunk in pcm.chunks(signal):
+        cut = segmenter.add(chunk)
+        if cut is not None:
+            pieces.append(cut)
+    return pieces, segmenter.finish()
+
+
+def test_trailing_quiet_is_not_sent_to_the_decoder():
+    """Reported 2026-10-11: a final decode of speech plus 2.5s of room added a sentence.
+
+    Whisper writes text for noise. The piece keeps TRIM_PAD_S of context and no more.
+    """
+    speech = pcm.sine(220.0, 1.0, amplitude=0.1)
+    room = pcm.noise(2.5, amplitude=0.004)
+    _, final = _fed(dictate._Segmenter(), np.concatenate([speech, room]))
+    seconds = final.size / config.SAMPLE_RATE_HZ
+    assert 1.0 <= seconds <= 1.0 + config.TRIM_PAD_S + 0.2
+
+
+def test_leading_quiet_is_trimmed_too():
+    room = pcm.noise(1.5, amplitude=0.004)
+    speech = pcm.sine(220.0, 1.0, amplitude=0.1)
+    _, final = _fed(dictate._Segmenter(), np.concatenate([room, speech]))
+    seconds = final.size / config.SAMPLE_RATE_HZ
+    assert seconds <= 1.0 + config.TRIM_PAD_S + 0.2
+
+
+def test_a_pause_inside_the_speech_is_kept():
+    word = pcm.sine(220.0, 0.6, amplitude=0.1)
+    gap = pcm.noise(0.8, amplitude=0.004)
+    signal = np.concatenate([word, gap, word])
+    _, final = _fed(dictate._Segmenter(), signal)
+    assert final.size >= signal.size - 2 * int(0.3 * config.SAMPLE_RATE_HZ) - 1600
+
+
+def test_audio_with_nothing_loud_in_it_is_left_alone():
+    room = pcm.noise(2.0, amplitude=0.004)
+    _, final = _fed(dictate._Segmenter(), room)
+    assert final.size == room.size
+
+
+def test_audio_is_kept_only_when_asked_and_never_crashes_a_dictation(monkeypatch, tmp_path):
+    signal = pcm.sine(220.0, 1.0, amplitude=0.1)
+    _run(["start", "stop"], signal=signal)
+    assert not list(tmp_path.iterdir())
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", str(tmp_path / "kept"))
+    records, _, _ = _run(["start", "stop"], signal=signal)
+    assert records[-1]["event"] == "Dictated"
+    names = sorted(p.name.split("-", 2)[-1] for p in (tmp_path / "kept").iterdir())
+    assert names == ["decoded.wav", "raw.wav"]
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", "/proc/forbidden/kept")
+    records, _, _ = _run(["start", "stop"], signal=signal)
+    assert records[-1]["event"] == "Dictated"

@@ -104,6 +104,18 @@ def babble(seconds: float, directory: Path) -> np.ndarray:
     return scaled(np.tile(voice, reps)[: int(seconds * config.SAMPLE_RATE_HZ)], ROOM_RMS)
 
 
+def through_segmenter(clip: np.ndarray) -> np.ndarray:
+    segmenter = dictate._Segmenter()
+    pieces = []
+    step = 1600
+    for start in range(0, clip.size, step):
+        cut = segmenter.add(clip[start : start + step])
+        if cut is not None:
+            pieces.append(cut)
+    pieces.append(segmenter.finish())
+    return np.concatenate(pieces)
+
+
 def words(text: str) -> list[str]:
     return [w for w in (_norm(t) for t in text.split()) if any(c.isalnum() for c in w)]
 
@@ -128,6 +140,11 @@ def compare(spoken: str, heard: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", type=Path)
+    parser.add_argument(
+        "--segmenter",
+        action="store_true",
+        help="send each clip through dictate._Segmenter first, as a dictation does",
+    )
     parser.add_argument("--speeds", type=int, nargs="+", default=[175])
     args = parser.parse_args()
     client = TranscriptionClient()
@@ -150,7 +167,10 @@ def main() -> int:
             for speed in args.speeds:
                 speech = synth(text, Path(tmp), speed)
                 for name, make in variants.items():
-                    samples, _ = audio.normalize(make(speech), config.TARGET_RMS, config.MAX_GAIN)
+                    clip = make(speech)
+                    if args.segmenter:
+                        clip = through_segmenter(clip)
+                    samples, _ = audio.normalize(clip, config.TARGET_RMS, config.MAX_GAIN)
                     transcript, _ = client.transcribe(samples)
                     heard = dictate.clean(transcript)
                     rows.append(

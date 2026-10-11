@@ -145,6 +145,10 @@ PREVIEW_EVERY_S = 1.5
 PREVIEW_MIN_S = 1.0
 PREVIEW_QUIET_S = 0.3
 
+# Quiet kept around the speech in each piece. Whisper writes sentences for room noise, so
+# the long quiet either side of the words, which hands-free adds up to 2.5s of, is cut.
+TRIM_PAD_S = 0.3
+
 WINDOW_S = 12.0
 
 MIN_WINDOW_S = 1.5

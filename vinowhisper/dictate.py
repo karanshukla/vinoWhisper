@@ -6,8 +6,10 @@ import re
 import sys
 import threading
 import time
+import wave
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -162,7 +164,24 @@ class _Segmenter:
             self._quiet += chunk.size
         if not head:
             return np.zeros(0, dtype=np.float32)
-        return np.concatenate([chunk for chunk, _ in head])
+        return np.concatenate([chunk for chunk, _ in self._trim(head)])
+
+    def _trim(self, head: list[tuple[np.ndarray, float]]) -> list[tuple[np.ndarray, float]]:
+        threshold = self.threshold
+        loud = [i for i, (_, level) in enumerate(head) if level >= threshold]
+        if not loud:
+            return head
+        pad = int(config.TRIM_PAD_S * config.SAMPLE_RATE_HZ)
+        start, end = loud[0], loud[-1]
+        kept = 0
+        while start > 0 and kept < pad:
+            start -= 1
+            kept += head[start][0].size
+        kept = 0
+        while end < len(head) - 1 and kept < pad:
+            end += 1
+            kept += head[end][0].size
+        return head[start : end + 1]
 
 
 class _Decoder:
@@ -520,7 +539,9 @@ class Dictation:
             self._segmenter = self._decoder = None
         if segmenter is None or decoder is None:
             return
+        raw = segmenter.peek()
         final = segmenter.finish()
+        _keep_audio(raw, final)
         stale_samples = (
             None if decoder.preview_end is None else self._captured - decoder.preview_end
         )
@@ -577,7 +598,13 @@ class Dictation:
         if not spoken or not self._cleaner.active:
             return decoder.apply_replacements(spoken), False
         if not self._cleaner.wants(spoken):
-            print("[vinowhisper] cleanup: skipped, nothing to fix", file=sys.stderr)
+            print(
+                f"[vinowhisper] cleanup: skipped, nothing to fix "
+                f"(in {len(spoken)} chars, {len(decoder.texts)} pieces)",
+                file=sys.stderr,
+            )
+            if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
+                print(f"[vinowhisper] cleanup-debug pieces={decoder.texts!r}", file=sys.stderr)
             return decoder.apply_replacements(spoken), False
         # The text is leaving the machine for the model, so the overlay says so.
         self._emit({"event": "Cleaning"})
@@ -657,6 +684,26 @@ def _report_release(
         f"release_to_text={(time.monotonic() - released_at) * 1000:.0f}ms",
         file=sys.stderr,
     )
+
+
+def _keep_audio(raw: np.ndarray, decoded: np.ndarray) -> None:
+    """Opt in with VINOWHISPER_DICTATE_AUDIO_DIR: the last piece as heard and as decoded."""
+    target = os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")
+    if not target:
+        return
+    directory = Path(target).expanduser()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, samples in (("raw", raw), ("decoded", decoded)):
+            pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
+            with wave.open(str(directory / f"{stamp}-{name}.wav"), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(config.SAMPLE_RATE_HZ)
+                out.writeframes(pcm16.tobytes())
+    except OSError as exc:
+        print(f"[vinowhisper] could not keep audio: {exc}", file=sys.stderr)
 
 
 def _submit(decoder: _Decoder, segment: np.ndarray) -> None:
