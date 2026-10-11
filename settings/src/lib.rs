@@ -146,7 +146,7 @@ pub const DEFAULT_CLEANUP_URL: &str = "https://api.anthropic.com";
 
 pub const DEFAULT_CLEANUP_MODEL: &str = "claude-haiku-5-5";
 
-pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 2.0;
+pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 3.0;
 
 /// The Secret Service attributes the API key is stored under, which
 /// `vinowhisper-dictate` looks up with `secret-tool` (cleanup.SECRET_ATTRIBUTES).

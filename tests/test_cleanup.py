@@ -151,6 +151,17 @@ def test_a_reason_never_carries_the_response_text():
     assert outcome.reason == "bad response"
 
 
+def test_characterization_the_request_turns_thinking_off():
+    """characterization: thinking tokens count against max_tokens.
+
+    Measured 2026-10-11 on claude-haiku-5-5: a ten-token answer spent about a hundred
+    on a thinking block and stopped at max_tokens, so a correct answer was thrown away
+    as "truncated". Leaving it on also adds output tokens to every dictation.
+    """
+    body = cleanup.request_body(SETTINGS, "one two three")
+    assert body["thinking"] == {"type": "disabled"}
+
+
 def test_the_request_has_no_sampling_parameters_and_a_bounded_output():
     body = cleanup.request_body(SETTINGS, "one two three")
     assert "temperature" not in body
@@ -173,6 +184,10 @@ def test_off_unless_asked_and_the_env_key_beats_the_wallet(tmp_path):
     assert cleanup.load_settings(env, lookup=lambda: "from-wallet").api_key == "from-env"
     only_wallet = {cleanup.ENABLE_ENV: "1"}
     assert cleanup.load_settings(only_wallet, lambda: "from-wallet").api_key == "from-wallet"
+
+
+def test_the_default_budget_leaves_room_over_a_typical_call():
+    assert cleanup.DEFAULT_BUDGET_S >= 3.0
 
 
 def test_a_garbled_budget_keeps_the_default():

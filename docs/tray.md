@@ -424,7 +424,7 @@ no restart is needed. An environment variable beats the file:
 | `VINOWHISPER_CLEANUP` | `enabled` | off |
 | `VINOWHISPER_CLEANUP_URL` | `url` | `https://api.anthropic.com` |
 | `VINOWHISPER_CLEANUP_MODEL` | `model` | `claude-haiku-5-5` |
-| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `2.0`, a hard deadline |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `3.0`, a hard deadline |
 | `ANTHROPIC_API_KEY` | none | else the Secret Service entry `service=vinowhisper account=anthropic-api-key` |
 
 The key is never in that file. The window stores it with `secret-tool store`,
@@ -449,6 +449,18 @@ the address is loopback (text stays here) or not (text and key leave).
   checked, so first-token time buys nothing; only the last token matters.
 - **No `temperature`**: current models reject any non-default sampling
   parameter.
+- **Thinking is off.** Measured 2026-10-11 on `claude-haiku-5-5`: with it on, a
+  ten-token answer spent about a hundred tokens on a thinking block and hit
+  `max_tokens`, so a correct answer was refused as truncated.
+- **Measured 2026-10-11** (n=21, seven dictations of 5 to 17 words, hosted
+  endpoint, this laptop): median 0.88-0.92s, max 1.3s per call, about 15-20
+  output tokens. That lands typing roughly 1.5s after release, against 0.65s
+  without it. The system prompt is most of the input (about 850 tokens), but
+  halving it moved the median by only 4%, so the round trip is dominated by
+  the network and first-token time, not the prompt.
+- **The model still sometimes paraphrases** ("the thing is that we need the
+  build" becoming "the build needs"): 1 in 8 on the hardest line, caught by the
+  check, so the raw text is typed.
 - The pill says "Cleaning up with the model…" while the request is out, from
   the `Cleaning` event.
 - `python -m vinowhisper.cleanup "um so scratch that"` runs one round trip and
