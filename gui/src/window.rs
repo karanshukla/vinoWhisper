@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use eframe::egui::{self, Align, FontId, Layout, RichText, Sense, Stroke, TextStyle};
+use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke, TextStyle};
 
 use crate::forward;
 use crate::theme;
@@ -29,14 +29,6 @@ impl Page {
             Page::Shortcuts => "Shortcuts",
             Page::Captions => "Captions",
             Page::Speech => "Speech",
-        }
-    }
-
-    fn lede(self) -> &'static str {
-        match self {
-            Page::Shortcuts => "How you start captions and dictation from anywhere.",
-            Page::Captions => "How the floating captions look and where they listen.",
-            Page::Speech => "The language the model hears, and whether it translates.",
         }
     }
 }
@@ -73,6 +65,8 @@ fn language_label(language: Language) -> &'static str {
     }
 }
 
+const COMBO_WIDTH: f32 = 240.0;
+
 fn combo<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     id: &str,
@@ -82,6 +76,7 @@ fn combo<T: Copy + PartialEq>(
 ) -> bool {
     let before = *value;
     egui::ComboBox::from_id_salt(id)
+        .width(COMBO_WIDTH)
         .selected_text(label(*value))
         .show_ui(ui, |ui| {
             for &option in all {
@@ -91,15 +86,20 @@ fn combo<T: Copy + PartialEq>(
     *value != before
 }
 
-/// Same measure as the landing page's prose: a settings row never runs wider than this.
-const CONTENT_WIDTH: f32 = 600.0;
+// Below this the sidebar folds into tabs in the header, and form labels go above their control.
+const SIDEBAR_FROM: f32 = 620.0;
+const SIDEBAR_WIDTH: f32 = 180.0;
+const LABEL_WIDTH: f32 = 150.0;
+const FORM_MAX_WIDTH: f32 = 620.0;
+const TWO_COLUMNS_FROM: f32 = 440.0;
 
 struct SettingsWindow {
     page: Page,
     settings: Settings,
     speech: Speech,
     multilingual: bool,
-    saved: Option<&'static str>,
+    focused: bool,
+    kde_header: Option<theme::KdeHeader>,
 }
 
 impl SettingsWindow {
@@ -109,21 +109,23 @@ impl SettingsWindow {
             settings: Settings::load(),
             speech: Speech::load(),
             multilingual: multilingual_installed(),
-            saved: None,
+            focused: true,
+            kde_header: theme::kde_header(),
         }
     }
 
     fn shortcuts(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
+        section(ui, "Captions");
         row(
             ui,
-            "Preferred captions shortcut",
-            "The key the desktop is asked for the first time captions are bound, for example LOGO+ALT+C. Once it is bound, change it from the tray menu (Change shortcut…) or your desktop's keyboard settings.",
+            "Preferred shortcut:",
+            "Asked of the desktop the first time captions are bound. Once bound, change it from the tray menu or your desktop's keyboard settings.",
             |ui| {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.settings.shortcut)
                         .font(TextStyle::Monospace)
-                        .desired_width(260.0),
+                        .desired_width(COMBO_WIDTH),
                 );
                 // Only a finished edit is saved, so a half-typed trigger never reaches the tray.
                 if response.lost_focus() {
@@ -139,19 +141,11 @@ impl SettingsWindow {
 
     fn captions(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
-        row(ui, "Listen to", "What the captions follow.", |ui| {
-            changed |= combo(
-                ui,
-                "source",
-                &mut self.settings.source,
-                &Source::ALL,
-                source_label,
-            );
-        });
+        section(ui, "Overlay");
         row(
             ui,
-            "Position",
-            "Where the caption box sits above other windows.",
+            "Position:",
+            "Where the caption box sits, above other windows.",
             |ui| {
                 changed |= combo(
                     ui,
@@ -162,7 +156,7 @@ impl SettingsWindow {
                 );
             },
         );
-        row(ui, "Text size", "How large the captions are drawn.", |ui| {
+        row(ui, "Text size:", "", |ui| {
             changed |= combo(
                 ui,
                 "size",
@@ -171,26 +165,37 @@ impl SettingsWindow {
                 size_label,
             );
         });
+        section(ui, "Listening");
+        row(ui, "Listen to:", "What the captions follow.", |ui| {
+            changed |= combo(
+                ui,
+                "source",
+                &mut self.settings.source,
+                &Source::ALL,
+                source_label,
+            );
+        });
         row(
             ui,
-            "Transcripts",
-            "Write each session to a file, so you can read it back. Off until you turn it on.",
+            "Transcripts:",
+            "Write each session to a file you can read back later.",
             |ui| {
                 changed |= ui
                     .checkbox(&mut self.settings.save_transcripts, "Save transcripts")
                     .changed();
             },
         );
+        section(ui, "Tray");
         row(
             ui,
-            "Tray icon",
-            "The tray unloads after this long without use. 0 keeps it up all the time.",
+            "Unload after:",
+            "Idle time before the tray icon tucks itself away. 0 keeps it up.",
             |ui| {
                 changed |= ui
                     .add(
                         egui::DragValue::new(&mut self.settings.tray_idle_minutes)
                             .range(0..=1440)
-                            .suffix(" min idle"),
+                            .suffix(" min"),
                     )
                     .changed();
             },
@@ -200,21 +205,16 @@ impl SettingsWindow {
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
-        if !self.multilingual {
-            let p = theme::palette(ui.ctx());
-            ui.label(
-                RichText::new(
-                    "The multilingual model is not installed, so only English works. Run vinowhisper-setup to add it.",
-                )
-                .color(p.muted),
-            );
-            ui.add_space(8.0);
-        }
+        section(ui, "Recognition");
         let multilingual = self.multilingual;
         row(
             ui,
-            "Language",
-            "What is being said. Detect automatically picks per sentence.",
+            "Language:",
+            if multilingual {
+                "Detect automatically picks per sentence. Switching reloads the model, which takes a moment."
+            } else {
+                "Only English is installed. Run vinowhisper-setup --language auto to add the others."
+            },
             |ui| {
                 ui.add_enabled_ui(multilingual, |ui| {
                     if combo(
@@ -233,8 +233,8 @@ impl SettingsWindow {
         let foreign = multilingual && self.speech.language != Language::En;
         row(
             ui,
-            "Translation",
-            "Captions arrive in English whatever was spoken. English audio has nothing to translate.",
+            "Translation:",
+            "Captions arrive in English whatever was spoken.",
             |ui| {
                 ui.add_enabled_ui(foreign, |ui| {
                     let mut translate = self.speech.task == Task::Translate;
@@ -256,156 +256,186 @@ impl SettingsWindow {
     }
 }
 
-/// A setting set the way the landing page sets a feature: a hairline, a bold name, the
-/// explanation in muted text, then the control.
-fn row(ui: &mut egui::Ui, title: &str, help: &str, control: impl FnOnce(&mut egui::Ui)) {
-    let p = theme::palette(ui.ctx());
-    ui.add_space(4.0);
-    let rule = ui.available_rect_before_wrap().left_top();
-    let width = ui.available_width().min(CONTENT_WIDTH);
-    ui.painter().hline(
-        rule.x..=rule.x + width,
-        rule.y,
-        Stroke::new(1.0_f32, p.rule),
-    );
+fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(14.0);
-    ui.scope(|ui| {
-        ui.set_max_width(width);
-        ui.label(RichText::new(title).family(theme::bold()).size(16.0));
-        ui.label(RichText::new(help).size(14.0).color(p.muted));
-        ui.add_space(2.0);
-        control(ui);
-    });
-    ui.add_space(16.0);
+    ui.label(RichText::new(title).family(theme::bold()).size(14.0));
+    ui.add_space(6.0);
 }
 
-/// A header link: muted until it is the page you are on, then underlined in the link green.
-fn nav_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
+// Like a Kirigami FormLayout: right-aligned labels beside their controls, or above them
+// when the window is too narrow for two columns.
+fn row(ui: &mut egui::Ui, label: &str, help: &str, control: impl FnOnce(&mut egui::Ui)) {
     let p = theme::palette(ui.ctx());
+    let help = |ui: &mut egui::Ui| {
+        if !help.is_empty() {
+            ui.label(RichText::new(help).size(12.5).color(p.muted));
+        }
+    };
+    if ui.available_width() >= TWO_COLUMNS_FROM {
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(LABEL_WIDTH, ui.spacing().interact_size.y),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.set_min_width(LABEL_WIDTH);
+                    ui.label(label);
+                },
+            );
+            ui.vertical(|ui| {
+                control(ui);
+                help(ui);
+            });
+        });
+    } else {
+        ui.label(label);
+        control(ui);
+        help(ui);
+    }
+    ui.add_space(8.0);
+}
+
+fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
+    let p = theme::palette(ui.ctx());
+    let selected = *current == page;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), Sense::click());
+    let fill = if selected {
+        p.link.gamma_multiply(0.22)
+    } else if response.hovered() {
+        p.code_bg
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 4.0, fill);
+    ui.painter().text(
+        rect.left_center() + egui::vec2(10.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        page.title(),
+        FontId::proportional(14.0),
+        p.text,
+    );
+    if response.clicked() {
+        *current = page;
+    }
+}
+
+fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::Header) {
     let active = *current == page;
     let galley = ui.painter().layout_no_wrap(
         page.title().to_owned(),
         if active {
-            FontId::new(15.0, theme::bold())
+            FontId::new(14.0, theme::bold())
         } else {
-            FontId::proportional(15.0)
+            FontId::proportional(14.0)
         },
-        if active { p.text } else { p.muted },
+        // left for the paint call below, so hovering can change it
+        Color32::PLACEHOLDER,
     );
     let (rect, response) =
         ui.allocate_exact_size(galley.size() + egui::vec2(0.0, 6.0), Sense::click());
-    let hovered = response.hovered();
-    let text_pos = rect.left_top();
+    let lit = active || response.hovered();
     ui.painter().galley(
-        text_pos,
-        galley.clone(),
-        if hovered && !active { p.text } else { p.muted },
+        rect.left_top(),
+        galley,
+        if lit { header.text } else { header.muted },
     );
     if active {
-        let y = rect.bottom();
-        ui.painter()
-            .hline(rect.left()..=rect.right(), y, Stroke::new(2.0_f32, p.link));
+        let p = theme::palette(ui.ctx());
+        ui.painter().hline(
+            rect.left()..=rect.right(),
+            rect.bottom(),
+            Stroke::new(2.0_f32, p.link),
+        );
     }
     if response.clicked() {
         *current = page;
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand);
 }
 
 impl eframe::App for SettingsWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let focused = ctx.input(|input| input.focused);
+        if focused && !self.focused {
+            // The desktop's light/dark switch may have flipped while we were in the background.
+            theme::follow_desktop(ctx);
+            self.kde_header = theme::kde_header();
+        }
+        self.focused = focused;
         let p = theme::palette(ctx);
+        let header = theme::header(ctx, self.kde_header.as_ref(), focused);
+        let wide = ctx.content_rect().width() >= SIDEBAR_FROM;
         let mut saved_settings = false;
         let mut saved_speech = false;
 
         egui::TopBottomPanel::top("header")
             .frame(
                 egui::Frame::NONE
-                    .fill(p.bg)
-                    .inner_margin(egui::Margin::symmetric(24, 16)),
+                    .fill(header.bg)
+                    .inner_margin(egui::Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("vinoWhisper")
-                            .family(theme::bold())
-                            .size(17.0)
-                            .color(p.text),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 20.0;
-                        for page in Page::ALL.into_iter().rev() {
-                            nav_item(ui, page, &mut self.page);
+                    if wide {
+                        ui.add_space(SIDEBAR_WIDTH - 16.0 + 24.0);
+                        ui.label(
+                            RichText::new(self.page.title())
+                                .family(theme::bold())
+                                .size(16.0)
+                                .color(header.text),
+                        );
+                    } else {
+                        ui.spacing_mut().item_spacing.x = 18.0;
+                        for page in Page::ALL {
+                            tab_item(ui, page, &mut self.page, header);
                         }
-                    });
+                    }
                 });
             });
 
-        egui::TopBottomPanel::bottom("footer")
-            .frame(
-                egui::Frame::NONE
-                    .fill(p.bg)
-                    .inner_margin(egui::Margin::symmetric(24, 12)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    match self.saved {
-                        Some(text) => ui.label(RichText::new(text).color(p.link).size(14.0)),
-                        None => ui.label(
-                            RichText::new("Changes are saved as you make them.")
-                                .color(p.muted)
-                                .size(14.0),
-                        ),
-                    };
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let path = Settings::path();
-                        ui.label(
-                            RichText::new(path.display().to_string())
-                                .monospace()
-                                .size(12.5)
-                                .color(p.muted),
-                        );
-                    });
+        if wide {
+            egui::SidePanel::left("pages")
+                .resizable(false)
+                .exact_width(SIDEBAR_WIDTH)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(p.bg)
+                        .inner_margin(egui::Margin::same(8)),
+                )
+                .show(ctx, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for page in Page::ALL {
+                        sidebar_item(ui, page, &mut self.page);
+                    }
                 });
-            });
+        }
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
                     .fill(p.bg)
-                    .stroke(Stroke::NONE)
-                    .inner_margin(egui::Margin::symmetric(24, 8)),
+                    .inner_margin(egui::Margin::symmetric(24, 4)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.add_space(20.0);
-                        ui.label(
-                            RichText::new(self.page.title())
-                                .family(theme::bold())
-                                .size(30.0),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(self.page.lede()).size(16.0).color(p.muted));
-                        ui.add_space(20.0);
+                        ui.set_max_width(FORM_MAX_WIDTH);
                         match self.page {
                             Page::Shortcuts => saved_settings = self.shortcuts(ui),
                             Page::Captions => saved_settings = self.captions(ui),
                             Page::Speech => saved_speech = self.speech(ui),
                         }
+                        ui.add_space(12.0);
                     });
             });
 
         if saved_settings {
             self.settings.save();
             forward::reload_tray();
-            self.saved = Some("Saved");
         }
         if saved_speech {
             self.speech.save();
             forward::reload_tray();
-            self.saved = Some("Saved. A language change reloads the model, which takes a moment.");
         }
     }
 }
@@ -416,8 +446,8 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title("vinoWhisper settings")
             .with_app_id(app_id)
-            .with_inner_size([720.0, 680.0])
-            .with_min_inner_size([520.0, 420.0]),
+            .with_inner_size([760.0, 480.0])
+            .with_min_inner_size([340.0, 320.0]),
         ..Default::default()
     };
     let result = eframe::run_native(
