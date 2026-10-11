@@ -772,8 +772,9 @@ def test_release_line_is_off_without_trace(capsys, monkeypatch):
 
 
 class FakeCleaner:
-    def __init__(self, answer=None) -> None:
+    def __init__(self, answer=None, wants: bool = True) -> None:
         self._answer = answer
+        self._wants = wants
         self.prepared = 0
         self.seen: list[str] = []
 
@@ -783,6 +784,9 @@ class FakeCleaner:
     @property
     def active(self) -> bool:
         return self._answer is not None
+
+    def wants(self, text: str) -> bool:
+        return self._wants
 
     def __call__(self, text: str):
         self.seen.append(text)
@@ -836,4 +840,12 @@ def test_an_inactive_cleaner_costs_no_event_and_no_call():
     records = _run_cleaned(cleaner)
     assert "Cleaning" not in [r["event"] for r in records]
     assert records[-1]["cleaned"] is False
+    assert cleaner.seen == []
+
+
+def test_a_transcript_with_nothing_to_fix_skips_the_request_and_the_pill_state():
+    cleaner = FakeCleaner(lambda text: _outcome(text), wants=False)
+    records = _run_cleaned(cleaner)
+    assert "Cleaning" not in [r["event"] for r in records]
+    assert records[-1]["text"] == "um hello there"
     assert cleaner.seen == []

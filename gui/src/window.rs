@@ -8,7 +8,8 @@ use crate::forward::{self, Shortcuts};
 use crate::secret::{self, Key};
 use crate::theme;
 use vinowhisper_settings::{
-    Cleanup, Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
+    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Task, TextSize,
+    multilingual_installed,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,13 @@ fn size_label(size: TextSize) -> &'static str {
         TextSize::Small => "Small",
         TextSize::Medium => "Medium",
         TextSize::Large => "Large",
+    }
+}
+
+fn mode_label(mode: CleanupMode) -> &'static str {
+    match mode {
+        CleanupMode::Smart => "Only when it hears something to fix",
+        CleanupMode::Always => "Every dictation",
     }
 }
 
@@ -348,6 +356,20 @@ impl SettingsWindow {
                     let edit = ui
                         .add(egui::TextEdit::singleline(&mut self.cleanup.url).desired_width(wide));
                     self.cleanup_dirty |= edit.changed();
+                },
+            );
+            row(
+                ui,
+                "Send:",
+                "Each request takes about a second. Smart skips it for text with no filler, correction or spoken edit in it, which is most of what you say.",
+                |ui| {
+                    self.cleanup_dirty |= combo(
+                        ui,
+                        "cleanup-mode",
+                        &mut self.cleanup.mode,
+                        &CleanupMode::ALL,
+                        mode_label,
+                    );
                 },
             );
             row(ui, "Model:", "Any model name the endpoint accepts.", |ui| {

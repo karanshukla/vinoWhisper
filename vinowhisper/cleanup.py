@@ -18,11 +18,15 @@ from .stitch import _norm
 ENABLE_ENV = "VINOWHISPER_CLEANUP"
 URL_ENV = "VINOWHISPER_CLEANUP_URL"
 MODEL_ENV = "VINOWHISPER_CLEANUP_MODEL"
+MODE_ENV = "VINOWHISPER_CLEANUP_MODE"
 BUDGET_ENV = "VINOWHISPER_CLEANUP_BUDGET_S"
 KEY_ENV = "ANTHROPIC_API_KEY"
 
 DEFAULT_URL = "https://api.anthropic.com"
 DEFAULT_MODEL = "claude-haiku-5-5"
+# "smart" skips the request when the transcript shows nothing to fix; "always" never does.
+MODES = ("smart", "always")
+DEFAULT_MODE = "smart"
 DEFAULT_BUDGET_S = 3.0
 ANTHROPIC_VERSION = "2023-06-01"
 
@@ -64,6 +68,7 @@ class Settings:
     model: str = DEFAULT_MODEL
     budget_s: float = DEFAULT_BUDGET_S
     api_key: str = ""
+    mode: str = DEFAULT_MODE
 
     @property
     def endpoint(self) -> str:
@@ -116,6 +121,11 @@ def stored_key(attributes: tuple[str, ...] = SECRET_ATTRIBUTES) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
+def _mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in MODES else DEFAULT_MODE
+
+
 def _budget(value: object) -> float:
     try:
         budget = float(value)  # type: ignore[arg-type]
@@ -139,6 +149,7 @@ def load_settings(
         model=env.get(MODEL_ENV) or str(saved.get("model") or "") or DEFAULT_MODEL,
         budget_s=_budget(env.get(BUDGET_ENV, saved.get("budget_s"))),
         api_key=env.get(KEY_ENV) or lookup(),
+        mode=_mode(env.get(MODE_ENV) or saved.get("mode")),
     )
 
 
@@ -147,6 +158,37 @@ def _words(text: str) -> list[str]:
     words = (_norm(word) for word in folded.split())
     # A lone dash or bullet is formatting, not a word the model added.
     return [word for word in words if any(ch.isalnum() for ch in word)]
+
+
+# Cues that cleanup has something to do. A false hit costs one request; a miss is only a
+# correction spoken with none of these words, which "always" mode still catches.
+_FILLERS = frozenset({"um", "umm", "uh", "uhh", "er", "erm", "hmm"})
+_CUE_WORDS = frozenset({"actually", "sorry", "wait", "literal", "nevermind"})
+_CUE_PHRASES = (
+    "i mean",
+    "scratch that",
+    "scratch this",
+    "delete that",
+    "delete the last",
+    "delete last",
+    "never mind",
+    "cancel that",
+    "strike that",
+    "or rather",
+    "you know",
+    "kind of",
+    "sort of",
+)
+
+
+def needs_cleanup(text: str) -> bool:
+    words = _words(text)
+    if any(word in _FILLERS or word in _CUE_WORDS for word in words):
+        return True
+    padded = f" {' '.join(words)} "
+    if any(f" {phrase} " in padded for phrase in _CUE_PHRASES):
+        return True
+    return any(a == b for a, b in zip(words, words[1:], strict=False))
 
 
 # What a deletion can leave behind. Anything else the model writes must already be in the
@@ -238,6 +280,8 @@ def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outc
         return done(text, False, "empty input")
     if not settings.api_key:
         return done(text, False, "no api key")
+    if settings.mode == "smart" and not needs_cleanup(text):
+        return done(text, False, "nothing to fix")
 
     box: list[str | BaseException] = []
 

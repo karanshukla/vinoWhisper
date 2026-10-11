@@ -10,6 +10,7 @@ anything that would shell out to pw-record/pactl is monkeypatched at the
 capture-module boundary.
 """
 
+import os
 from collections import namedtuple
 
 import pytest
@@ -22,6 +23,18 @@ _Version = namedtuple("_Version", "major minor micro releaselevel serial")
 def fake_version(major: int, minor: int, micro: int = 0) -> _Version:
     """A stand-in for sys.version_info that supports both .major and slicing."""
     return _Version(major, minor, micro, "final", 0)
+
+
+@pytest.fixture(autouse=True)
+def no_real_cleanup_settings(monkeypatch, tmp_path):
+    """Dictation reads the user's cleanup.json and wallet; a test must never see either."""
+    monkeypatch.setattr(config, "CLEANUP_FILE", tmp_path / "no-cleanup.json")
+    for name in list(os.environ):
+        if name.startswith("VINOWHISPER_CLEANUP") or name == "ANTHROPIC_API_KEY":
+            monkeypatch.delenv(name)
+    from vinowhisper import cleanup
+
+    monkeypatch.setattr(cleanup, "stored_key", lambda attributes=(): "")
 
 
 @pytest.fixture(autouse=True)

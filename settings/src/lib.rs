@@ -148,6 +148,20 @@ pub const DEFAULT_CLEANUP_MODEL: &str = "claude-haiku-5-5";
 
 pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 3.0;
 
+/// When a dictation is sent for cleanup. Smart skips the request when the transcript
+/// shows nothing to fix, which is most of them and saves about a second each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CleanupMode {
+    #[default]
+    Smart,
+    Always,
+}
+
+impl CleanupMode {
+    pub const ALL: [CleanupMode; 2] = [CleanupMode::Smart, CleanupMode::Always];
+}
+
 /// The Secret Service attributes the API key is stored under, which
 /// `vinowhisper-dictate` looks up with `secret-tool` (cleanup.SECRET_ATTRIBUTES).
 pub const SECRET_ATTRIBUTES: [&str; 4] = ["service", "vinowhisper", "account", "anthropic-api-key"];
@@ -161,6 +175,7 @@ pub struct Cleanup {
     pub url: String,
     pub model: String,
     pub budget_s: f64,
+    pub mode: CleanupMode,
 }
 
 impl Default for Cleanup {
@@ -170,6 +185,7 @@ impl Default for Cleanup {
             url: DEFAULT_CLEANUP_URL.to_owned(),
             model: DEFAULT_CLEANUP_MODEL.to_owned(),
             budget_s: DEFAULT_CLEANUP_BUDGET_S,
+            mode: CleanupMode::default(),
         }
     }
 }
@@ -535,6 +551,7 @@ mod tests {
         assert_eq!(loaded.model, "m");
         assert_eq!(loaded.url, DEFAULT_CLEANUP_URL);
         assert_eq!(loaded.budget_s, DEFAULT_CLEANUP_BUDGET_S);
+        assert_eq!(loaded.mode, CleanupMode::Smart);
     }
 
     #[test]
@@ -545,10 +562,11 @@ mod tests {
             url: "http://localhost:8080".into(),
             model: "m".into(),
             budget_s: 1.5,
+            mode: CleanupMode::Always,
         };
         cleanup.save_to(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        for key in ["enabled", "url", "model", "budget_s"] {
+        for key in ["enabled", "url", "model", "budget_s", "mode"] {
             assert!(text.contains(&format!("\"{key}\"")), "{key}");
         }
         assert_eq!(Cleanup::load_from(&path), cleanup);

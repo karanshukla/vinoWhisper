@@ -10,7 +10,7 @@ import pytest
 
 from vinowhisper import cleanup
 
-SETTINGS = cleanup.Settings(api_key="sk-test", budget_s=0.5)
+SETTINGS = cleanup.Settings(api_key="sk-test", budget_s=0.5, mode="always")
 
 
 def _reply(text: str):
@@ -134,7 +134,7 @@ def test_the_budget_is_a_hard_deadline():
         release.wait(5.0)
         return text
 
-    fast = cleanup.Settings(api_key="k", budget_s=0.05)
+    fast = cleanup.Settings(api_key="k", budget_s=0.05, mode="always")
     try:
         outcome = cleanup.clean_up("hello", fast, slow)
     finally:
@@ -237,3 +237,55 @@ def test_the_wallet_entry_matches_what_the_settings_window_writes():
     source = (Path(__file__).parent.parent / "settings/src/lib.rs").read_text()
     for part in cleanup.SECRET_ATTRIBUTES:
         assert f'"{part}"' in source
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "So um I think we should ship it.",
+        "Let's meet at three, no wait, four.",
+        "Send it. Scratch that. Call Sam.",
+        "Delete that last word.",
+        "We need that that fixed by Friday.",
+        "It is, you know, fine.",
+        "Actually four.",
+    ],
+)
+def test_something_to_fix_is_sent(text):
+    assert cleanup.needs_cleanup(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Send the report to Sam by Friday.",
+        "I think we should ship the settings window first.",
+        "What is the capital of France?",
+        "",
+    ],
+)
+def test_a_clean_sentence_is_not_sent(text):
+    assert not cleanup.needs_cleanup(text)
+
+
+def test_smart_mode_skips_the_request_and_always_mode_does_not():
+    sent = []
+
+    def transport(settings, text):
+        sent.append(text)
+        return text
+
+    smart = cleanup.Settings(api_key="k", mode="smart")
+    skipped = cleanup.clean_up("Send the report.", smart, transport)
+    assert (skipped.cleaned, skipped.reason, sent) == (False, "nothing to fix", [])
+    always = cleanup.Settings(api_key="k", mode="always")
+    cleanup.clean_up("Send the report.", always, transport)
+    assert sent == ["Send the report."]
+
+
+def test_the_mode_comes_from_the_file_and_an_unknown_one_is_smart(tmp_path):
+    path = tmp_path / "cleanup.json"
+    path.write_text(json.dumps({"enabled": True, "mode": "always"}))
+    assert cleanup.load_settings({}, lambda: "k", path).mode == "always"
+    path.write_text(json.dumps({"enabled": True, "mode": "sometimes"}))
+    assert cleanup.load_settings({}, lambda: "k", path).mode == "smart"

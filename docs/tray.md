@@ -425,6 +425,7 @@ no restart is needed. An environment variable beats the file:
 | `VINOWHISPER_CLEANUP_URL` | `url` | `https://api.anthropic.com` |
 | `VINOWHISPER_CLEANUP_MODEL` | `model` | `claude-haiku-5-5` |
 | `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `3.0`, a hard deadline |
+| `VINOWHISPER_CLEANUP_MODE` | `mode` | `smart`, or `always` |
 | `ANTHROPIC_API_KEY` | none | else the Secret Service entry `service=vinowhisper account=anthropic-api-key` |
 
 The key is never in that file. The window stores it with `secret-tool store`,
@@ -445,6 +446,17 @@ the address is loopback (text stays here) or not (text and key leave).
   appear that were not in the transcript.
 - **Replacements run after it**, on the cleaned text, so the check sees the
   words Whisper wrote.
+- **Smart mode skips most requests.** The call costs a fixed ~0.9-1.0s
+  whatever the size: measured 2026-10-11, 32 and 92 output tokens both took
+  1.02s, a reused connection saved nothing (TLS is ~30ms here), and halving the
+  prompt moved the median 4%. Nothing hides that second except not paying it, so
+  `smart` (the default) sends only text with a filler (um, uh, er), a cue
+  (actually, sorry, wait, "I mean", "scratch that", "delete that", "you know",
+  literal) or an adjacent repeated word, and types everything else at once with
+  no `Cleaning` state. A correction spoken with none of those words, like
+  "three, four", goes through only in `always`. Overlapping the call with the
+  final decode was considered and not built: previews are up to 1.5s stale and
+  skipped at pauses, so the text at release rarely equals the last preview's.
 - **Not streamed.** The text is pasted once, after the whole answer has been
   checked, so first-token time buys nothing; only the last token matters.
 - **No `temperature`**: current models reject any non-default sampling

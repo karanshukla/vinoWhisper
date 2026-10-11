@@ -58,6 +58,7 @@ class _Cleaner(Protocol):
     def prepare(self) -> None: ...
     @property
     def active(self) -> bool: ...
+    def wants(self, text: str) -> bool: ...
     def __call__(self, text: str) -> cleanup.Outcome: ...
 
 
@@ -575,6 +576,9 @@ class Dictation:
         spoken = decoder.spoken()
         if not spoken or not self._cleaner.active:
             return decoder.apply_replacements(spoken), False
+        if not self._cleaner.wants(spoken):
+            print("[vinowhisper] cleanup: skipped, nothing to fix", file=sys.stderr)
+            return decoder.apply_replacements(spoken), False
         # The text is leaving the machine for the model, so the overlay says so.
         self._emit({"event": "Cleaning"})
         outcome = self._cleaner(spoken)
@@ -615,6 +619,11 @@ class _FileCleaner:
     def active(self) -> bool:
         self._ready.wait()
         return self._settings is not None
+
+    def wants(self, text: str) -> bool:
+        self._ready.wait()
+        settings = self._settings
+        return settings is not None and (settings.mode == "always" or cleanup.needs_cleanup(text))
 
     def __call__(self, text: str) -> cleanup.Outcome:
         self._ready.wait()
