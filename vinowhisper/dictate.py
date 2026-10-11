@@ -90,6 +90,7 @@ class _Segmenter:
         self._total = 0
         self._energy = 0.0
         self._floor = float("inf")
+        self._cuts = 0
 
     @property
     def threshold(self) -> float:
@@ -136,6 +137,11 @@ class _Segmenter:
         return None
 
     def finish(self) -> np.ndarray:
+        # What is left after a piece was already cut, with nothing in it above the noise
+        # floor, is the quiet after the last word. Whisper writes "you" for it.
+        if self._cuts and not any(level >= self.threshold for _, level in self._chunks):
+            self._chunks, self._samples = [], 0
+            return np.zeros(0, dtype=np.float32)
         return self._cut(len(self._chunks))
 
     def peek(self) -> np.ndarray:
@@ -164,6 +170,7 @@ class _Segmenter:
             self._quiet += chunk.size
         if not head:
             return np.zeros(0, dtype=np.float32)
+        self._cuts += 1
         return np.concatenate([chunk for chunk, _ in self._trim(head)])
 
     def _trim(self, head: list[tuple[np.ndarray, float]]) -> list[tuple[np.ndarray, float]]:

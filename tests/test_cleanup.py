@@ -412,3 +412,20 @@ def test_only_http_and_https_addresses_are_requested(url):
     settings = cleanup.Settings(base_url=url, api_key="k", budget_s=0.5, mode="always")
     outcome = cleanup.clean_up("hello there", settings)
     assert (outcome.text, outcome.cleaned, outcome.reason) == ("hello there", False, "bad address")
+
+
+def test_characterization_actually_alone_never_justifies_dropping_a_clause():
+    """characterization: reported 2026-10-11, 'my name's Karan. Actually, my name's Jim.'
+
+    The model dropped the first sentence on the strength of "actually". It is a filler
+    and a reason to send a request; it is not a correction cue. A correction needs
+    "no wait", "I mean", "sorry", "or rather" or a spoken edit. If this is "fixed" the
+    model decides what a speaker meant from one adverb.
+    """
+    original = "Hello, my name's Karan. Actually, my name's Jim."
+    assert cleanup.needs_cleanup(original)
+    assert not cleanup.deletions_justified(original, "Hello, my name's Jim.")
+    assert cleanup.deletions_justified("Um, actually, like, what is it?", "What is it?")
+    assert cleanup.deletions_justified(
+        "Hello, my name's Karan. No wait, my name's Jim.", "Hello, my name's Jim."
+    )

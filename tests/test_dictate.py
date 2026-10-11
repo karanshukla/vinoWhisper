@@ -925,3 +925,27 @@ def test_kept_audio_is_private_and_only_the_newest_are_kept(monkeypatch, tmp_pat
     assert stat.S_IMODE(kept.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(f.stat().st_mode) == 0o600 for f in files)
     assert files[-1].name.startswith("20261011-000004")
+
+
+def test_characterization_a_quiet_remnant_after_a_cut_is_not_decoded():
+    """characterization: reported 2026-10-11, 'Hello, my name's Jim.' typed with 'you'.
+
+    0.34s of room after the last word (rms 0.016, over the fixed gate) decoded to
+    "you" as a second piece. Whisper writes text for noise. Once a piece has been cut,
+    a remainder with nothing above the noise floor is dropped, not decoded. A first
+    and only piece is untouched: a soft speaker has nothing else to fall back on.
+    """
+    segmenter = dictate._Segmenter()
+    speech = np.concatenate([pcm.sine(220.0, 5.2, amplitude=0.1), pcm.noise(0.4, amplitude=0.004)])
+    pieces, final = _fed(segmenter, speech)
+    assert len(pieces) == 1
+    segmenter2 = dictate._Segmenter()
+    tail = pcm.noise(0.34, amplitude=0.004)
+    pieces2, final2 = _fed(segmenter2, np.concatenate([speech, tail]))
+    assert len(pieces2) == 1
+    assert final2.size == 0
+
+
+def test_the_only_piece_is_decoded_even_when_nothing_is_loud():
+    _, final = _fed(dictate._Segmenter(), pcm.noise(1.0, amplitude=0.004))
+    assert final.size == pcm.samples_for(1.0)
