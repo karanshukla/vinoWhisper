@@ -28,6 +28,83 @@ OpenVINO stack the dev group exists to avoid. For the same reason
 `transcriber.py`, `server.py` and `replay.py` are left out of coverage: they
 need an NPU, an audio server or a live socket.
 
+## Running your own build
+
+A checkout can be the install. Three pieces, each redeployed differently:
+
+| Piece | Where it runs from | After a change |
+|---|---|---|
+| Python commands (`caption`, `dictate`, `server`, `doctor`, `replay`, `setup`) | `.venv`, an editable install, linked into `~/.local/bin` | `uv sync --extra export`, then start a fresh process |
+| `vinowhisper-tray` | a binary in `~/.local/bin` | rebuild, copy, restart the tray |
+| `vinowhisper-gui` (settings window) | a binary in `~/.local/bin` | rebuild, copy; it starts fresh each time it opens |
+
+### Python
+
+```bash
+uv sync --extra export
+uv run vinowhisper-setup     # links the commands into ~/.local/bin and writes the units against .venv
+```
+
+After that an edit is live in the next process that starts, with no reinstall.
+Which process matters:
+
+- **The stitcher and the capture loop run in `vinowhisper-caption`**, not the
+  server. The tray spawns a fresh one on every show, so hide and show the
+  overlay.
+- **The idle dictation child is long-lived.** The tray keeps one
+  `vinowhisper-dictate --json` running to hide Python's import time, so a
+  change to `dictate.py` needs a tray restart (below).
+- **Server changes need the server restarted**:
+  `systemctl --user restart vinowhisper-server.service`. Check
+  `pgrep -af vinowhisper-caption` first: a restart kills a live caption
+  session, and the next request pays the model load again.
+- **`pyproject.toml` changes** (a new entry point, a dependency) need
+  `uv sync` again, and a new command needs `vinowhisper-setup` to link it.
+
+### The tray and the settings window
+
+```bash
+cargo build --release --locked --manifest-path tray/Cargo.toml
+cargo build --release --locked --manifest-path gui/Cargo.toml
+for b in tray gui; do
+    install -m755 $b/target/release/vinowhisper-$b ~/.local/bin/vinowhisper-$b.part
+    mv ~/.local/bin/vinowhisper-$b.part ~/.local/bin/vinowhisper-$b
+done
+```
+
+Install through a `.part` file and `mv` rather than copying over the binary:
+the running tray holds the old file open, and writing into it in place fails
+with "Text file busy". The rename swaps it atomically, and the running process
+keeps the old inode until it exits.
+
+Then restart the tray:
+
+```bash
+pgrep -af vinowhisper-caption           # a running session dies with the tray
+vinowhisper-tray quit
+setsid -f vinowhisper-tray >/dev/null 2>&1
+```
+
+Only one tray runs per session (it holds
+`$XDG_RUNTIME_DIR/vinowhisper-tray.sock`), so a second one started without
+`quit` forwards its request to the old binary and exits. The caption and
+dictation children die with it (`PR_SET_PDEATHSIG`), so nothing is left
+running the old code.
+
+These are glibc builds, not the release's static musl one. That is fine on the
+machine that built them. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every
+dictation key and state change to stderr, not the text.
+
+### Checking it took
+
+```bash
+ls -l ~/.local/bin/vinowhisper-*        # symlinks into .venv; tray and gui dated by the last copy
+pgrep -af 'vinowhisper-(tray|caption|dictate)'
+```
+
+A change that does not show up is nearly always the old process still
+running: a tray that was never restarted, or a server holding the old module.
+
 ## Checks
 
 ```bash

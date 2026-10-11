@@ -35,7 +35,9 @@ uv sync --extra export
 uv run vinowhisper-setup --dry-run
 ```
 
-The overlay in `tray/` is plain cargo: `cargo test` from that directory.
+The overlay in `tray/` and the settings window in `gui/` are plain cargo:
+`cargo test` from either directory. To run your build as the installed one,
+see [Running your own build](docs/development.md#running-your-own-build).
 
 ## Before you push
 
