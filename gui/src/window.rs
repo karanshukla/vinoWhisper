@@ -88,6 +88,18 @@ fn combo<T: Copy + PartialEq>(
     *value != before
 }
 
+fn number<N: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    value: &mut N,
+    range: std::ops::RangeInclusive<N>,
+    suffix: &str,
+) -> bool {
+    ui.add(egui::DragValue::new(value).range(range).suffix(suffix))
+        // DragValue's own hover cursor is a horizontal resize arrow, which reads as a splitter here.
+        .on_hover_cursor(egui::CursorIcon::Text)
+        .changed()
+}
+
 // Below this the sidebar folds into tabs in the header, and form labels go above their control.
 const SIDEBAR_FROM: f32 = 620.0;
 const SIDEBAR_WIDTH: f32 = 180.0;
@@ -262,13 +274,7 @@ impl SettingsWindow {
             "Hide after silence:",
             "Seconds with no audio before the captions count down and hide. 0 keeps them up.",
             |ui| {
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.settings.hide_after_silence_s)
-                            .range(0..=3600)
-                            .suffix(" s"),
-                    )
-                    .changed();
+                changed |= number(ui, &mut self.settings.hide_after_silence_s, 0..=3600, " s");
             },
         );
         row(
@@ -287,13 +293,7 @@ impl SettingsWindow {
             "Unload after:",
             "Idle time before the tray icon tucks itself away. 0 keeps it up.",
             |ui| {
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.settings.tray_idle_minutes)
-                            .range(0..=1440)
-                            .suffix(" min"),
-                    )
-                    .changed();
+                changed |= number(ui, &mut self.settings.tray_idle_minutes, 0..=1440, " min");
             },
         );
         changed
