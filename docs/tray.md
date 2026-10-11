@@ -107,13 +107,23 @@ driven from three places instead:
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
 | **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu keeps what you reach for mid-video: Show captions, Listen to (system audio or microphone), Recent dictations (the last five, newest first, with Clear), the dictation key, Settings…, Start at login and Quit. Everything else (position, text size, transcripts, language, translation, shortcuts) is in the settings window, `vinowhisper-gui`, which Settings… opens |
-| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, `shortcuts`, `configure-shortcut`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. A language change while dictating is refused: `reload` exits 1 with the reason and the tray writes `language.json` back, so the window shows what is really in use. `shortcuts` prints what the desktop bound, as JSON. The settings window sends all three |
+| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, `shortcuts`, `configure-shortcut`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time, the hide-after-silence delay and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. A language change while dictating is refused: `reload` exits 1 with the reason and the tray writes `language.json` back, so the window shows what is really in use. `shortcuts` prints what the desktop bound, as JSON. The settings window sends all three |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,
 and scale-to-zero is why the server is socket-activated at all
 ([architecture.md](architecture.md)). Showing it again starts a fresh
 session, which also retries after an error.
+
+**Silence hides it too.** Once the capture has been silent for 3 seconds the
+status line counts down ("no signal 4s · … · hiding in 11s"), and at 15
+seconds of silence the box hides itself, stopping the session like any other
+hide. Speech before then cancels the countdown. Silence is the caption loop's
+own `Silence` event (whole-window RMS under `SILENCE_RMS_THRESHOLD`), so the
+count starts once the last window has gone quiet, not at the last word. The
+delay is `hide_after_silence_s` in `gui.json` ("Hide after silence" on the
+settings window's Captions page), and 0 keeps the box up. Untested on
+hardware as of 2026-10-11.
 
 After 30 minutes with the captions hidden and no dictation, the tray icon
 reports itself Passive, which Plasma moves into the hidden icons behind the

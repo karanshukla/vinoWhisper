@@ -161,6 +161,8 @@ pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
 pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
 
+pub const DEFAULT_HIDE_AFTER_SILENCE_S: u64 = 15;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -169,6 +171,8 @@ pub struct Settings {
     pub size: TextSize,
     pub shortcut: String,
     pub tray_idle_minutes: u64,
+    /// Seconds of silence before the captions hide themselves; 0 keeps them up.
+    pub hide_after_silence_s: u64,
     pub save_transcripts: bool,
 }
 
@@ -180,6 +184,7 @@ impl Default for Settings {
             size: TextSize::default(),
             shortcut: DEFAULT_SHORTCUT.to_owned(),
             tray_idle_minutes: DEFAULT_TRAY_IDLE_MINUTES,
+            hide_after_silence_s: DEFAULT_HIDE_AFTER_SILENCE_S,
             save_transcripts: false,
         }
     }
@@ -285,6 +290,7 @@ mod tests {
             size: TextSize::Large,
             shortcut: "CTRL+ALT+K".into(),
             tray_idle_minutes: 5,
+            hide_after_silence_s: 40,
             save_transcripts: true,
         };
         settings.save_to(&path).unwrap();
@@ -346,6 +352,7 @@ mod tests {
         assert_eq!(settings.source, Source::Output);
         assert_eq!(settings.shortcut, DEFAULT_SHORTCUT);
         assert_eq!(settings.tray_idle_minutes, DEFAULT_TRAY_IDLE_MINUTES);
+        assert_eq!(settings.hide_after_silence_s, DEFAULT_HIDE_AFTER_SILENCE_S);
         assert!(!settings.save_transcripts);
     }
 
@@ -364,6 +371,15 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"tray_idle_minutes": 0}"#).unwrap();
         assert_eq!(Settings::load_from(&path).tray_idle_minutes, 0);
+    }
+
+    #[test]
+    fn captions_hide_after_fifteen_seconds_of_silence_unless_the_file_says_otherwise() {
+        assert_eq!(Settings::default().hide_after_silence_s, 15);
+        let path = scratch("hide-after");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"hide_after_silence_s": 0}"#).unwrap();
+        assert_eq!(Settings::load_from(&path).hide_after_silence_s, 0);
     }
 
     #[test]

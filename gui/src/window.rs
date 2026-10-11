@@ -259,6 +259,20 @@ impl SettingsWindow {
         });
         row(
             ui,
+            "Hide after silence:",
+            "Seconds with no audio before the captions count down and hide. 0 keeps them up.",
+            |ui| {
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.settings.hide_after_silence_s)
+                            .range(0..=3600)
+                            .suffix(" s"),
+                    )
+                    .changed();
+            },
+        );
+        row(
+            ui,
             "Transcripts:",
             "Write each session to a file you can read back later.",
             |ui| {
