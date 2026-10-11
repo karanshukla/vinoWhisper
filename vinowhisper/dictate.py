@@ -13,7 +13,7 @@ from typing import Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, config, replacements
+from . import __version__, audio, cleanup, config, replacements
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
@@ -185,10 +185,16 @@ class _Decoder:
         self._thread = threading.Thread(target=self._run, name="dictate-decode", daemon=True)
         self._thread.start()
 
+    def spoken(self) -> str:
+        return clean(" ".join(self.texts))
+
     def joined(self) -> str:
         # Replacements run on the joined text, not per piece, so a phrase split
         # across two segments still matches.
-        return replacements.apply(clean(" ".join(self.texts)), self._table)
+        return replacements.apply(self.spoken(), self._table)
+
+    def apply_replacements(self, text: str) -> str:
+        return replacements.apply(text, self._table)
 
     def joined_with(self, tail: str) -> str:
         return replacements.apply(clean(" ".join([*self.texts, tail])), self._table)
@@ -271,6 +277,7 @@ class Dictation:
         client: _Client | None = None,
         recorder: Callable[[Callable[[np.ndarray], None]], _Recording] | None = None,
         trace: bool | None = None,
+        cleaner: Callable[[str], cleanup.Outcome | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._trace_on = (
@@ -281,6 +288,7 @@ class Dictation:
         self._emit = emit
         self._client = client or TranscriptionClient()
         self._recorder = recorder or (lambda tap: Recorder(source="mic", tap=tap))
+        self._cleaner = cleaner or _env_cleaner()
         self._commands: queue.Queue[str] = queue.Queue()
         self._active: _Recording | None = None
         self._warmup: _Warmup | None = None
@@ -543,21 +551,54 @@ class Dictation:
             print(f"[vinowhisper] {message}", file=sys.stderr)
             self._emit({"event": "Error", "message": message})
             return
+        text, cleaned = self._tidy(decoder)
         self._emit(
             {
                 "event": "Dictated",
-                "text": decoder.joined(),
+                "text": text,
+                "cleaned": cleaned,
                 "audio_s": audio_s,
                 "total_s": time.monotonic() - released_at,
                 "rms": level,
             }
         )
 
+    def _tidy(self, decoder: _Decoder) -> tuple[str, bool]:
+        spoken = decoder.spoken()
+        if not spoken or self._cleaner is None:
+            return decoder.apply_replacements(spoken), False
+        # The text is leaving the machine for the model, so the overlay says so.
+        self._emit({"event": "Cleaning"})
+        outcome = self._cleaner(spoken)
+        if outcome is None:
+            return decoder.apply_replacements(spoken), False
+        status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
+        print(
+            f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms",
+            file=sys.stderr,
+        )
+        return decoder.apply_replacements(outcome.text), outcome.cleaned
+
     def _close(self) -> None:
         if self._active is not None:
             self._active.__exit__(None, None, None)
             self._active = None
         self._discard()
+
+
+def _env_cleaner() -> Callable[[str], cleanup.Outcome | None] | None:
+    if not cleanup.enabled():
+        return None
+    resolved: list[cleanup.Settings | None] = []
+
+    def run(text: str) -> cleanup.Outcome | None:
+        # The wallet lookup waits for the first dictation, not the process start.
+        if not resolved:
+            resolved.append(cleanup.load_settings())
+        settings = resolved[0]
+        return None if settings is None else cleanup.clean_up(text, settings)
+
+    return run
 
 
 def _report_release(

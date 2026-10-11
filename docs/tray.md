@@ -407,6 +407,41 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
+**LLM cleanup, added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
+Set `VINOWHISPER_CLEANUP=1` and the final transcript (never the live
+previews) goes to an Anthropic-compatible `/v1/messages` endpoint, which drops
+fillers, applies self-corrections and applies spoken edits ("scratch that",
+"delete that last word"; "literal" before the phrase keeps it as text).
+**This is the one path where dictated text leaves the machine**: with a local
+endpoint it does not, with the hosted default it does.
+
+| Variable | Default |
+|---|---|
+| `VINOWHISPER_CLEANUP_URL` | `https://api.anthropic.com` |
+| `VINOWHISPER_CLEANUP_MODEL` | `claude-haiku-5-5` |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `2.0`, a hard deadline |
+| `ANTHROPIC_API_KEY` | else the Secret Service entry `service=vinowhisper account=anthropic-api-key`, read with `secret-tool` |
+
+- **Deletion only.** The answer is used only if its words are an ordered
+  subsequence of the transcript's (case and punctuation ignored). Anything
+  else, an empty answer, a timeout, an HTTP error or no key types the raw
+  transcript. That also means "three" becoming "3" is refused: v1 trades
+  that for a check with no heuristics, and a model answering a dictated
+  question or obeying it cannot get past it.
+- **Replacements run after it**, on the cleaned text, so the check sees the
+  words Whisper wrote.
+- **Not streamed.** The text is pasted once, after the whole answer has been
+  checked, so first-token time buys nothing; only the last token matters.
+- **No `temperature`**: current models reject any non-default sampling
+  parameter.
+- The pill says "Cleaning up with the model…" while the request is out, from
+  the `Cleaning` event.
+- `python -m vinowhisper.cleanup "um so scratch that"` runs one round trip and
+  prints the wall time on stderr, which is the measurement #81 asks for first.
+
+Not run against a real endpoint or on hardware: unit tests only, with a fake
+transport. The latency table and the prompt's test set are still to do.
+
 **Does the `pw-record` startup delay clip the first word? Not measured yet**
 ([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
 above is when audio arrives, not whether speech is lost. Keeping the mic open

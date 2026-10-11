@@ -769,3 +769,53 @@ def test_release_line_is_off_without_trace(capsys, monkeypatch):
     monkeypatch.delenv("VINOWHISPER_DICTATE_TRACE", raising=False)
     _trace(SPEECH, trace=None)
     assert "dictate-release" not in capsys.readouterr().err
+
+
+def _run_cleaned(cleaner, transcript="um hello there"):
+    records: list[dict] = []
+    client = FakeClient(transcript=transcript)
+
+    def recorder(tap):
+        return FakeRecording(tap, SPEECH)
+
+    dictation = dictate.Dictation(records.append, client=client, recorder=recorder, cleaner=cleaner)
+    dictation.feed(["start", "stop"]).join()
+    dictation.run()
+    return [r for r in records if r["event"] != "Level"]
+
+
+def _outcome(text, cleaned=True, reason=None):
+    return dictate.cleanup.Outcome(text, cleaned, reason, 0.1)
+
+
+def test_cleanup_announces_itself_then_types_the_cleaned_text():
+    records = _run_cleaned(lambda text: _outcome("Hello there."))
+    events = [r["event"] for r in records]
+    assert events == ["Listening", "Transcribing", "Ready", "Cleaning", "Dictated"]
+    assert records[-1]["text"] == "Hello there."
+    assert records[-1]["cleaned"] is True
+
+
+def test_a_refused_cleanup_types_the_raw_transcript():
+    records = _run_cleaned(lambda text: _outcome(text, cleaned=False, reason="timed out"))
+    assert records[-1]["text"] == "um hello there"
+    assert records[-1]["cleaned"] is False
+
+
+def test_cleanup_sees_the_text_before_replacements_and_replacements_still_apply(monkeypatch):
+    monkeypatch.setattr(dictate.replacements, "load", lambda: {"hello": "HELLO"})
+    seen = []
+
+    def cleaner(text):
+        seen.append(text)
+        return _outcome("hello there")
+
+    records = _run_cleaned(cleaner)
+    assert seen == ["um hello there"]
+    assert records[-1]["text"] == "HELLO there"
+
+
+def test_no_cleaner_means_no_cleaning_event():
+    records = _run_cleaned(None)
+    assert "Cleaning" not in [r["event"] for r in records]
+    assert records[-1]["cleaned"] is False
