@@ -64,8 +64,8 @@ the 135 crates it pulls in are a build-time cost only.
 A distro package is not available yet. Fedora cannot package the Python side:
 its openvino is 2025.1.0, older than the 2026.3.1 floor, and openvino-genai
 and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
-is planned. `vinowhisper-tray --export-desktop DIR` writes the launcher and
-icons for a packager, with the launcher naming the `vinowhisper-tray` command
+is planned. `vinowhisper-tray --export-desktop DIR` writes both desktop entries
+and the icons for a packager, with the launcher naming the `vinowhisper-tray` command
 rather than a path, since a buildroot path would be wrong once installed.
 `vinowhisper-setup --gui` already recognises a copy in /usr/bin.
 
@@ -78,8 +78,13 @@ search.
 is none: `--install` may have baked a `--caption` path into one, and a
 packaged launcher must not be shadowed by a copy in the home directory. The
 icons are the exception, rewritten whenever they differ, since they hold
-nothing of yours. The autostart entry runs `--hidden`, so it starts in the
-tray without touching the NPU until asked. The tray's "Start at login"
+nothing of yours. So is a second entry, "vinoWhisper Settings" in the app
+menu (`io.github.karanshukla.vinowhisper.settings.desktop`), which runs
+`vinowhisper-gui` from beside the tray. Its file name is the settings window's
+app id, which is how Plasma's task manager finds the window's icon. Without it
+the window showed the generic Wayland icon (found 2026-10-11). The autostart
+entry runs `--hidden`, so it starts in the tray without touching the NPU until
+asked. The tray's "Start at login"
 checkmark writes or removes that entry (baking in `--caption` if this instance
 was started with one); re-running `--install` without `--autostart` also
 turns it off.

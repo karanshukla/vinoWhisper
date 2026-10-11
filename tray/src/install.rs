@@ -7,6 +7,7 @@ use crate::settings;
 
 const COMMAND: &str = "vinowhisper-tray";
 const LEGACY_COMMAND: &str = "vinowhisper-gui";
+const SETTINGS_COMMAND: &str = "vinowhisper-gui";
 
 struct Dirs {
     data: PathBuf,
@@ -35,6 +36,10 @@ impl Dirs {
         icons_in(&self.data)
     }
 
+    fn settings_entry(&self) -> PathBuf {
+        settings_entry_in(&self.data)
+    }
+
     fn autostart(&self) -> PathBuf {
         self.config.join(format!("autostart/{APP_ID}.desktop"))
     }
@@ -49,6 +54,17 @@ impl Dirs {
 
 fn launcher_in(data: &Path) -> PathBuf {
     data.join(format!("applications/{APP_ID}.desktop"))
+}
+
+fn settings_entry_in(data: &Path) -> PathBuf {
+    data.join(format!(
+        "applications/{}.desktop",
+        settings::SETTINGS_APP_ID
+    ))
+}
+
+fn settings_command(exe: &Path) -> PathBuf {
+    exe.with_file_name(SETTINGS_COMMAND)
 }
 
 fn icons_in(data: &Path) -> [(PathBuf, String); 2] {
@@ -108,6 +124,10 @@ pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
         &launcher_in(data_dir),
         &desktop_entry(Path::new(COMMAND), None, false),
     )?];
+    written.push(write(
+        &settings_entry_in(data_dir),
+        &settings_desktop_entry(Path::new(SETTINGS_COMMAND)),
+    )?);
     written.extend(write_icons(data_dir)?);
     Ok(written)
 }
@@ -125,6 +145,10 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
         if std::fs::read_to_string(&path).ok().as_deref() != Some(svg.as_str()) {
             write(&path, &svg)?;
         }
+    }
+    let settings_entry = settings_desktop_entry(&settings_command(exe));
+    if std::fs::read_to_string(dirs.settings_entry()).ok() != Some(settings_entry.clone()) {
+        write(&dirs.settings_entry(), &settings_entry)?;
     }
     migrate_legacy_command(&dirs.launcher())?;
     migrate_legacy_command(&dirs.autostart())?;
@@ -190,6 +214,10 @@ fn install_into(
         &dirs.launcher(),
         &desktop_entry(exe, caption, false),
     )?];
+    written.push(write(
+        &dirs.settings_entry(),
+        &settings_desktop_entry(&settings_command(exe)),
+    )?);
     written.extend(write_icons(&dirs.data)?);
     written.extend(set_autostart_in(dirs, exe, autostart, caption)?);
     Ok(written)
@@ -219,7 +247,8 @@ fn autostart_into(dirs: &Dirs, exe: &Path, caption: Option<&Path>) -> io::Result
 
 fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
-    let paths = std::iter::once(dirs.launcher())
+    let paths = [dirs.launcher(), dirs.settings_entry()]
+        .into_iter()
         .chain(dirs.icons().map(|(path, _)| path))
         .chain([dirs.autostart()]);
     for path in paths {
@@ -272,6 +301,25 @@ StartupNotify=false
 Name=Show or Hide Captions
 Exec={exec} toggle
 "
+    )
+}
+
+// Named after the window's app id, which is how the task manager finds its icon.
+fn settings_desktop_entry(exe: &Path) -> String {
+    format!(
+        "[Desktop Entry]
+Type=Application
+Name=vinoWhisper Settings
+GenericName=Captions and Dictation Settings
+Comment=Caption position and size, audio source, language, and shortcuts
+Exec={}
+Icon={APP_ID}
+Terminal=false
+Categories=Settings;Utility;Accessibility;
+Keywords=captions;subtitles;dictation;whisper;shortcut;language;preferences;
+StartupNotify=false
+",
+        exec_arg(&exe.to_string_lossy())
     )
 }
 
@@ -369,11 +417,11 @@ mod tests {
     fn install_then_uninstall_leaves_nothing_behind() {
         let dirs = scratch("round-trip");
         let written = install_into(&dirs, Path::new("/bin/vinowhisper-tray"), true, None).unwrap();
-        assert_eq!(written.len(), 4);
+        assert_eq!(written.len(), 5);
         assert!(written.iter().all(|path| path.exists()));
 
         let removed = uninstall_from(&dirs).unwrap();
-        assert_eq!(removed.len(), 4);
+        assert_eq!(removed.len(), 5);
         assert!(written.iter().all(|path| !path.exists()));
     }
 
@@ -388,6 +436,26 @@ mod tests {
         assert_eq!(again, None);
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
         assert!(entry.contains("Exec=/first/vinowhisper-tray"));
+    }
+
+    #[test]
+    fn the_settings_window_gets_the_app_icon_even_when_the_launcher_already_exists() {
+        let dirs = scratch("settings-entry");
+        install_into(&dirs, Path::new("/old/vinowhisper-tray"), false, None).unwrap();
+        std::fs::remove_file(dirs.settings_entry()).unwrap();
+
+        ensure_launcher_in(&dirs, Path::new("/home/me/.local/bin/vinowhisper-tray")).unwrap();
+        let entry = std::fs::read_to_string(dirs.settings_entry()).unwrap();
+        assert_eq!(
+            exec_line(&entry),
+            "Exec=/home/me/.local/bin/vinowhisper-gui"
+        );
+        assert!(entry.contains(&format!("Icon={APP_ID}")));
+        assert!(!entry.contains("NoDisplay"));
+        assert!(
+            dirs.settings_entry()
+                .ends_with(format!("{}.desktop", settings::SETTINGS_APP_ID))
+        );
     }
 
     #[test]
@@ -406,9 +474,14 @@ mod tests {
         let dirs = scratch("export");
         let written = export(&dirs.data).unwrap();
         let icons = dirs.icons().map(|(path, _)| path);
-        assert_eq!(written, [vec![dirs.launcher()], icons.to_vec()].concat());
+        assert_eq!(
+            written,
+            [vec![dirs.launcher(), dirs.settings_entry()], icons.to_vec()].concat()
+        );
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
         assert_eq!(exec_line(&entry), "Exec=vinowhisper-tray");
+        let settings = std::fs::read_to_string(dirs.settings_entry()).unwrap();
+        assert_eq!(exec_line(&settings), "Exec=vinowhisper-gui");
     }
 
     #[test]
