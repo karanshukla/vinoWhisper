@@ -661,7 +661,8 @@ class _FileCleaner:
 
     def __call__(self, text: str) -> cleanup.Outcome:
         self._ready.wait()
-        assert self._settings is not None
+        if self._settings is None:
+            return cleanup.Outcome(text, False, "disabled", 0.0)
         return cleanup.clean_up(text, self._settings, cleanup.post)
 
 

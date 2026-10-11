@@ -402,3 +402,13 @@ def test_an_inverted_question_mark_the_model_adds_is_refused_but_a_spoken_one_is
     spoken = "\u00bfCu\u00e1l es la capital de Francia?"
     assert cleanup.only_deletes(spoken, spoken)
     assert not cleanup.only_deletes("Cu\u00e1l es la capital de Francia", spoken)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["file:///etc/passwd", "ftp://example.test", "gopher://example.test", "example.test/v1"],
+)
+def test_only_http_and_https_addresses_are_requested(url):
+    settings = cleanup.Settings(base_url=url, api_key="k", budget_s=0.5, mode="always")
+    outcome = cleanup.clean_up("hello there", settings)
+    assert (outcome.text, outcome.cleaned, outcome.reason) == ("hello there", False, "bad address")

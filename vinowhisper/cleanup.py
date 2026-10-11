@@ -6,6 +6,7 @@ import threading
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -395,7 +396,10 @@ def parse_response(payload: bytes) -> str:
 
 
 def post(settings: Settings, text: str) -> str:
-    request = urllib.request.Request(
+    # urlopen also opens file: and custom schemes, and the address is user-configured.
+    if urllib.parse.urlsplit(settings.endpoint).scheme not in ("http", "https"):
+        raise ValueError("bad address")
+    request = urllib.request.Request(  # noqa: S310
         settings.endpoint,
         data=json.dumps(request_body(settings, text)).encode("utf-8"),
         headers={
@@ -405,7 +409,7 @@ def post(settings: Settings, text: str) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=settings.budget_s) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=settings.budget_s) as response:  # noqa: S310  # nosec B310
         return parse_response(response.read())
 
 
@@ -415,7 +419,7 @@ def _failure(exc: BaseException) -> str:
     if isinstance(exc, urllib.error.URLError):
         return "unreachable"
     if isinstance(exc, ValueError):
-        return "truncated" if str(exc) == "truncated" else "bad response"
+        return str(exc) if str(exc) in ("truncated", "bad address") else "bad response"
     return type(exc).__name__
 
 
@@ -462,7 +466,8 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     text = " ".join(args) if args else sys.stdin.read()
     settings = load_settings({**os.environ, ENABLE_ENV: "1"})
-    assert settings is not None
+    if settings is None:
+        return 1
     outcome = clean_up(text.strip(), settings)
     print(outcome.text)
     status = "cleaned" if outcome.cleaned else f"raw ({outcome.reason})"
