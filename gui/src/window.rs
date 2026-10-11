@@ -747,8 +747,12 @@ impl eframe::App for SettingsWindow {
                     .inner_margin(egui::Margin::symmetric(24, 4)),
             )
             .show(ctx, |ui| {
+                // A solid bar, always drawn: the floating one only shows on hover, so a page
+                // that runs past the window gave no sign there was more below.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width().min(FORM_MAX_WIDTH));
                         match self.page {
@@ -788,7 +792,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title("vinoWhisper settings")
             .with_app_id(app_id)
-            .with_inner_size([760.0, 480.0])
+            .with_inner_size([820.0, 740.0])
             .with_min_inner_size([340.0, 320.0]),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.
