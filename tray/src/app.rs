@@ -446,7 +446,10 @@ impl App {
                 if self.is_current(generation) {
                     let before = self.captions.frame();
                     self.captions.apply(event);
-                    if self.captions.frame() != before {
+                    if self.captions.silent_long_enough_to_hide() {
+                        trace(format_args!("silent past hide_after_silence_s, hiding"));
+                        self.hide();
+                    } else if self.captions.frame() != before {
                         self.draw();
                     }
                 }
@@ -554,6 +557,8 @@ impl App {
         if changes.placement {
             self.place();
         }
+        self.captions
+            .set_hide_after(self.settings.hide_after_silence_s);
         if changes.tray_idle && std::mem::take(&mut self.idle) {
             // Disarmed here, armed again with the new time at the end of handle().
             if let Some(timer) = &self.idle_timer {
@@ -704,6 +709,8 @@ impl App {
         }
         self.generation += 1;
         self.captions.reset();
+        self.captions
+            .set_hide_after(self.settings.hide_after_silence_s);
         match &self.caption_program {
             None => self.captions.fail(session::not_found_message()),
             Some(program) => {

@@ -65,6 +65,7 @@ pub struct Captions {
     warning: Option<String>,
     cycles: VecDeque<f64>,
     silent_for: Option<f64>,
+    hide_after_s: Option<f64>,
 }
 
 impl Default for Captions {
@@ -87,11 +88,29 @@ impl Captions {
             warning: None,
             cycles: VecDeque::new(),
             silent_for: None,
+            hide_after_s: None,
         }
     }
 
     pub fn reset(&mut self) {
+        let hide_after_s = self.hide_after_s;
         *self = Self::new();
+        self.hide_after_s = hide_after_s;
+    }
+
+    pub fn set_hide_after(&mut self, seconds: u64) {
+        self.hide_after_s = (seconds > 0).then_some(seconds as f64);
+    }
+
+    pub fn silent_long_enough_to_hide(&self) -> bool {
+        self.phase == Phase::Live
+            && matches!((self.silent_for, self.hide_after_s), (Some(silent), Some(limit)) if silent >= limit)
+    }
+
+    fn hiding_in(&self) -> Option<u64> {
+        let silent = self.silent_for.filter(|s| *s >= NO_SIGNAL_AFTER_S)?;
+        let left = self.hide_after_s? - silent;
+        (left > 0.0).then(|| left.ceil() as u64)
     }
 
     pub fn phase(&self) -> &Phase {
@@ -263,6 +282,11 @@ impl Captions {
         }
         if !self.speech.is_empty() {
             spans.push(Span::new(format!(" · {}", self.speech), Tone::Dim));
+        }
+        if self.phase == Phase::Live
+            && let Some(seconds) = self.hiding_in()
+        {
+            spans.push(Span::new(format!(" · hiding in {seconds}s"), Tone::Warn));
         }
         if self.phase == Phase::Live
             && let Some(lag) = self.lag_s()
@@ -547,6 +571,78 @@ mod tests {
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Bad);
         assert_eq!(status[0].text, "no signal 12s");
+    }
+
+    fn status_text(captions: &Captions) -> String {
+        captions
+            .status()
+            .1
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect()
+    }
+
+    fn live(hide_after_s: u64) -> Captions {
+        let mut captions = Captions::new();
+        captions.set_hide_after(hide_after_s);
+        captions.apply(Event::Ready {
+            device: "NPU".into(),
+            degraded: false,
+            warnings: vec![],
+            language: String::new(),
+            task: String::new(),
+        });
+        captions
+    }
+
+    #[test]
+    fn silence_counts_down_to_hiding() {
+        let mut captions = live(15);
+        captions.apply(silence(1.0));
+        assert_eq!(
+            status_text(&captions),
+            "live · NPU",
+            "a breath shows no countdown"
+        );
+        captions.apply(silence(4.2));
+        assert_eq!(status_text(&captions), "no signal 4s · NPU · hiding in 11s");
+        assert!(!captions.silent_long_enough_to_hide());
+        captions.apply(silence(14.6));
+        assert!(status_text(&captions).ends_with("hiding in 1s"));
+        captions.apply(silence(15.0));
+        assert!(captions.silent_long_enough_to_hide());
+    }
+
+    #[test]
+    fn speech_stops_the_countdown() {
+        let mut captions = live(15);
+        captions.apply(silence(10.0));
+        captions.apply(cycle(&["back"], &[]));
+        assert_eq!(status_text(&captions), "live · NPU · lag ~2.4s");
+        assert!(!captions.silent_long_enough_to_hide());
+    }
+
+    #[test]
+    fn zero_never_hides() {
+        let mut captions = live(0);
+        captions.apply(silence(600.0));
+        assert!(!status_text(&captions).contains("hiding"));
+        assert!(!captions.silent_long_enough_to_hide());
+    }
+
+    #[test]
+    fn the_hide_delay_survives_a_new_session() {
+        let mut captions = live(5);
+        captions.reset();
+        captions.apply(Event::Ready {
+            device: "NPU".into(),
+            degraded: false,
+            warnings: vec![],
+            language: String::new(),
+            task: String::new(),
+        });
+        captions.apply(silence(5.0));
+        assert!(captions.silent_long_enough_to_hide());
     }
 
     #[test]
