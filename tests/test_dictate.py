@@ -962,35 +962,45 @@ def test_characterization_a_quiet_remnant_after_a_cut_is_not_decoded():
     assert final2.size == 0
 
 
-def _fixture(name: str) -> np.ndarray:
-    import wave
-    from pathlib import Path
+def _room_noise(seconds: float, seed: int = 11) -> np.ndarray:
+    """Machine-generated room noise that swings the way a real room does.
 
-    with wave.open(str(Path(__file__).parent / "fixtures" / name), "rb") as source:
-        raw = source.readframes(source.getnframes())
-    return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    A recorded room (2026-10-11) read 0.011-0.028 rms in 100ms steps, a 2.5x swing, and
+    Whisper wrote a sentence for it. Uniform noise has rms amplitude / sqrt(3), so the
+    per-100ms amplitude is drawn from 0.019-0.048 to land in that band. Nothing here is a
+    recording of anyone.
+    """
+    state = seed
+    steps = int(round(seconds * 10))
+    out = []
+    for step in range(steps):
+        state = (1664525 * state + 1013904223) % 2**32
+        amplitude = 0.019 + (state >> 8) % 1000 / 1000 * 0.029
+        out.append(pcm.noise(0.1, amplitude=amplitude, seed=step + 1 + seed))
+    return np.concatenate(out)
 
 
-def test_characterization_the_real_room_noise_that_became_sentences_is_not_decoded():
-    """characterization: both clips are the reporter's room, recorded 2026-10-11.
+def test_characterization_room_noise_that_became_sentences_is_not_decoded():
+    """characterization: reported 2026-10-11, a quiet room typed as sentences.
 
-    4.2s and 0.34s of ambient noise (0.011-0.028 rms, no speech) that whisper-small.en
-    and whisper-small each turned into a different sentence on every decode ("When you
-    do back your leg...", "you"). Nothing in them is speech, whatever it is called.
+    4s of ambient noise (0.011-0.028 rms, no speech) that whisper-small.en and
+    whisper-small each turned into a different sentence on every decode ("When you do
+    back your leg...", "you"). The noise here is synthetic with the same swing; nothing
+    in this repo is a recording of a person.
     """
     segmenter = dictate._Segmenter()
-    pieces, final = _fed(segmenter, _fixture("room_noise_4s.wav"))
+    pieces, final = _fed(segmenter, _room_noise(4.2))
     assert segmenter.stationary
     assert pieces == []
     assert final.size == 0
 
 
-@pytest.mark.parametrize("name", ["room_noise_4s.wav", "room_noise_tail_0p34s.wav"])
-def test_that_room_noise_after_real_speech_is_still_dropped_and_the_speech_is_kept(name):
+@pytest.mark.parametrize("seconds", [4.2, 0.34])
+def test_that_room_noise_after_real_speech_is_still_dropped_and_the_speech_is_kept(seconds):
     speech = pcm.sine(220.0, 5.2, amplitude=0.1)
     gap = pcm.noise(0.4, amplitude=0.004)
     segmenter = dictate._Segmenter()
-    pieces, final = _fed(segmenter, np.concatenate([speech, gap, _fixture(name)]))
+    pieces, final = _fed(segmenter, np.concatenate([speech, gap, _room_noise(seconds)]))
     assert len(pieces) == 1
     assert pieces[0].size >= pcm.samples_for(5.0)
     assert final.size == 0, segmenter.note()

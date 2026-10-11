@@ -509,8 +509,9 @@ rules in `_Segmenter`, constants in `config.py`:
 
 Tuned on one room and one microphone, and the failure mode of being wrong is a
 dropped quiet word, so `VINOWHISPER_CLEANUP_DEBUG=1` prints the floor, speech
-level and verdict for each dictation (`gate: floor=... speech=...`). The two
-noise clips are fixtures in `tests/fixtures/`.
+level and verdict for each dictation (`gate: floor=... speech=...`). The tests
+use machine-generated noise with the measured swing; no recording of a person is
+kept in the repo.
 
 **Debugging switches that keep what you said, off by default.**
 `VINOWHISPER_CLEANUP_DEBUG=1` prints the dictated text and the model's answer

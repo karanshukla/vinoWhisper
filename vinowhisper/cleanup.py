@@ -149,7 +149,7 @@ def _budget(value: object) -> float:
 
 def load_settings(
     env: Mapping[str, str] | None = None,
-    lookup: Callable[[], str] = stored_key,
+    lookup: Callable[[], str] | None = None,
     path: Path | None = None,
 ) -> Settings | None:
     """The file is what the settings window writes; an environment variable beats it."""
@@ -161,7 +161,7 @@ def load_settings(
         base_url=env.get(URL_ENV) or str(saved.get("url") or "") or DEFAULT_URL,
         model=env.get(MODEL_ENV) or str(saved.get("model") or "") or DEFAULT_MODEL,
         budget_s=_budget(env.get(BUDGET_ENV, saved.get("budget_s"))),
-        api_key=env.get(KEY_ENV) or lookup(),
+        api_key=env.get(KEY_ENV) or (lookup or stored_key)(),
         mode=_mode(env.get(MODE_ENV) or saved.get("mode")),
     )
 
