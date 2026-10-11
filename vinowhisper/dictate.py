@@ -686,22 +686,41 @@ def _report_release(
     )
 
 
+_KEPT_PIECES = 10
+
+
 def _keep_audio(raw: np.ndarray, decoded: np.ndarray) -> None:
-    """Opt in with VINOWHISPER_DICTATE_AUDIO_DIR: the last piece as heard and as decoded."""
+    """Opt in with VINOWHISPER_DICTATE_AUDIO_DIR: the last piece as heard and as decoded.
+
+    It is a recording of the user's voice, so it is private to them (0700 / 0600) and only
+    the newest few are kept.
+    """
     target = os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")
     if not target:
         return
     directory = Path(target).expanduser()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if directory.is_symlink() or directory.stat().st_uid != os.getuid():
+            print(f"[vinowhisper] not keeping audio in {directory}: not yours", file=sys.stderr)
+            return
+        directory.chmod(0o700)
         for name, samples in (("raw", raw), ("decoded", decoded)):
             pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
-            with wave.open(str(directory / f"{stamp}-{name}.wav"), "wb") as out:
+            descriptor = os.open(
+                directory / f"{stamp}-{name}.wav",
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(descriptor, "wb") as handle, wave.open(handle, "wb") as out:
                 out.setnchannels(1)
                 out.setsampwidth(2)
                 out.setframerate(config.SAMPLE_RATE_HZ)
                 out.writeframes(pcm16.tobytes())
+        kept = sorted(directory.glob("*.wav"))
+        for old in kept[: max(0, len(kept) - 2 * _KEPT_PIECES)]:
+            old.unlink(missing_ok=True)
     except OSError as exc:
         print(f"[vinowhisper] could not keep audio: {exc}", file=sys.stderr)
 

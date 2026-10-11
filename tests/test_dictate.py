@@ -907,3 +907,21 @@ def test_audio_is_kept_only_when_asked_and_never_crashes_a_dictation(monkeypatch
     monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", "/proc/forbidden/kept")
     records, _, _ = _run(["start", "stop"], signal=signal)
     assert records[-1]["event"] == "Dictated"
+
+
+def test_kept_audio_is_private_and_only_the_newest_are_kept(monkeypatch, tmp_path):
+    """A recording of the user's voice: owner-only, and not an ever-growing archive."""
+    import stat
+
+    kept = tmp_path / "kept"
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", str(kept))
+    monkeypatch.setattr(dictate, "_KEPT_PIECES", 2)
+    stamps = iter(f"20261011-0000{n:02d}" for n in range(10))
+    monkeypatch.setattr(dictate.time, "strftime", lambda fmt: next(stamps))
+    for _ in range(5):
+        _run(["start", "stop"], signal=pcm.sine(220.0, 1.0, amplitude=0.1))
+    files = sorted(kept.iterdir())
+    assert len(files) == 4
+    assert stat.S_IMODE(kept.stat().st_mode) == 0o700
+    assert all(stat.S_IMODE(f.stat().st_mode) == 0o600 for f in files)
+    assert files[-1].name.startswith("20261011-000004")

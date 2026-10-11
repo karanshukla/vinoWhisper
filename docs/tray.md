@@ -489,6 +489,14 @@ the address is loopback (text stays here) or not (text and key leave).
 Not run against a real endpoint or on hardware: unit tests only, with a fake
 transport. The latency table and the prompt's test set are still to do.
 
+**Debugging switches that keep what you said, off by default.**
+`VINOWHISPER_CLEANUP_DEBUG=1` prints the dictated text and the model's answer
+to the tray's stderr. `VINOWHISPER_DICTATE_AUDIO_DIR=<dir>` writes the raw and
+decoded audio of each dictation there as WAV, in a `0700` directory with `0600`
+files, newest ten dictations only; `scripts/decode_wav.py` replays them. Both
+put your voice or words on disk or in whatever captures stderr, so leave them
+unset except while chasing a bug, and delete the directory after.
+
 **Does the `pw-record` startup delay clip the first word? Not measured yet**
 ([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
 above is when audio arrives, not whether speech is lost. Keeping the mic open
