@@ -7,6 +7,7 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -126,10 +127,10 @@ def enabled(env: Mapping[str, str] | None = None, path: Path | None = None) -> b
     return _truthy(read_file(path).get("enabled"))
 
 
-def stored_key() -> str:
+def stored_key(attributes: tuple[str, ...] = SECRET_ATTRIBUTES) -> str:
     try:
         done = subprocess.run(
-            ["secret-tool", "lookup", *SECRET_ATTRIBUTES],
+            ["secret-tool", "lookup", *attributes],
             capture_output=True,
             text=True,
             timeout=_SECRET_TOOL_TIMEOUT_S,
@@ -181,15 +182,25 @@ _ADDABLE = frozenset(".,!?:'\"-\u2013\u2014\u2026")
 def _safe_characters(original: str, edited: str) -> bool:
     if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in edited):
         return False
-    spoken = set(original)
-    return all(ch.isalnum() or ch == " " or ch in _ADDABLE or ch in spoken for ch in edited)
+    # Per character, not per kind: one "&&" in the transcript is not a licence for more.
+    allowance = Counter(ch for ch in original if not ch.isalnum())
+    for ch in edited:
+        if ch.isalnum() or ch == " " or ch in _ADDABLE:
+            continue
+        if allowance[ch] <= 0:
+            return False
+        allowance[ch] -= 1
+    return True
 
 
 def only_deletes(original: str, edited: str) -> bool:
     if not _safe_characters(original, edited):
         return False
+    kept = _words(edited)
+    if not kept:
+        return False
     source = iter(_words(original))
-    return all(word in source for word in _words(edited))
+    return all(word in source for word in kept)
 
 
 def _max_tokens(text: str) -> int:

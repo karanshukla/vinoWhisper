@@ -209,21 +209,28 @@ impl Cleanup {
     }
 
     /// Whether dictated text stays on this machine. Anything that is not plainly
-    /// loopback counts as leaving it, including a LAN address.
+    /// loopback counts as leaving it, including a LAN address. The host is cut out
+    /// the way Python's urllib does, which ends the authority at `/`, `?` or `#`.
     pub fn is_local(&self) -> bool {
-        let rest = self
-            .url
-            .split_once("://")
-            .map_or(self.url.as_str(), |(_, r)| r);
-        let authority = rest.split('/').next().unwrap_or("");
-        let authority = authority
-            .rsplit_once('@')
-            .map_or(authority, |(_, host)| host);
+        let Some((scheme, rest)) = self.url.split_once("://") else {
+            return false;
+        };
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return false;
+        }
+        let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+        let authority = &rest[..end];
+        if authority.contains('@') {
+            return false;
+        }
         let host = match authority.strip_prefix('[') {
             Some(v6) => v6.split(']').next().unwrap_or(""),
             None => authority.split(':').next().unwrap_or(""),
         };
-        matches!(host, "localhost" | "127.0.0.1" | "::1")
+        matches!(
+            host.to_ascii_lowercase().as_str(),
+            "localhost" | "127.0.0.1" | "::1"
+        )
     }
 }
 
@@ -559,7 +566,13 @@ mod tests {
         assert!(local("http://localhost:8080"));
         assert!(local("http://127.0.0.1:11434/v1"));
         assert!(local("http://[::1]:9000"));
-        assert!(local("localhost"));
+        assert!(local("HTTP://LOCALHOST:8080"));
+        assert!(!local("localhost"));
+        assert!(!local("ftp://localhost"));
+        assert!(!local("http://evil.example?@localhost"));
+        assert!(!local("http://evil.example#@localhost"));
+        assert!(!local("http://evil.example\\@localhost"));
+        assert!(!local("http://user@localhost"));
         assert!(!local("https://api.anthropic.com"));
         assert!(!local("http://192.168.1.20:8080"));
         assert!(!local("http://localhost.evil.example"));

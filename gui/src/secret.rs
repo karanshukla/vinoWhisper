@@ -23,19 +23,22 @@ fn tool() -> Command {
     Command::new("secret-tool")
 }
 
-fn lookup_args() -> Vec<&'static str> {
-    ["lookup"].into_iter().chain(SECRET_ATTRIBUTES).collect()
-}
-
-fn store_args() -> Vec<&'static str> {
-    ["store", "--label", LABEL]
+fn lookup_args(entry: &[&'static str]) -> Vec<&'static str> {
+    ["lookup"]
         .into_iter()
-        .chain(SECRET_ATTRIBUTES)
+        .chain(entry.iter().copied())
         .collect()
 }
 
-fn clear_args() -> Vec<&'static str> {
-    ["clear"].into_iter().chain(SECRET_ATTRIBUTES).collect()
+fn store_args(entry: &[&'static str]) -> Vec<&'static str> {
+    ["store", "--label", LABEL]
+        .into_iter()
+        .chain(entry.iter().copied())
+        .collect()
+}
+
+fn clear_args(entry: &[&'static str]) -> Vec<&'static str> {
+    ["clear"].into_iter().chain(entry.iter().copied()).collect()
 }
 
 fn missing_tool(err: &std::io::Error) -> bool {
@@ -44,8 +47,20 @@ fn missing_tool(err: &std::io::Error) -> bool {
 
 /// Whether a key is stored. The value is read to find out and dropped, never kept.
 pub fn status() -> Key {
+    status_of(&SECRET_ATTRIBUTES)
+}
+
+pub fn store(key: &str) -> Key {
+    store_in(&SECRET_ATTRIBUTES, key)
+}
+
+pub fn clear() -> Key {
+    clear_of(&SECRET_ATTRIBUTES)
+}
+
+fn status_of(entry: &[&'static str]) -> Key {
     match tool()
-        .args(lookup_args())
+        .args(lookup_args(entry))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -57,9 +72,9 @@ pub fn status() -> Key {
     }
 }
 
-pub fn store(key: &str) -> Key {
+fn store_in(entry: &[&'static str], key: &str) -> Key {
     let spawned = tool()
-        .args(store_args())
+        .args(store_args(entry))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -82,15 +97,19 @@ pub fn store(key: &str) -> Key {
     }
 }
 
-pub fn clear() -> Key {
+fn clear_of(entry: &[&'static str]) -> Key {
     match tool()
-        .args(clear_args())
+        .args(clear_args(entry))
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
         .output()
     {
         Ok(output) if output.status.success() => Key::Missing,
-        Ok(output) => Key::Failed(failure(&output.stderr, "the wallet refused")),
+        // secret-tool exits 1 for an entry that is not there, with nothing on stderr.
+        Ok(output) => match status_of(entry) {
+            Key::Missing => Key::Missing,
+            _ => Key::Failed(failure(&output.stderr, "the wallet refused")),
+        },
         Err(err) if missing_tool(&err) => Key::NoTool,
         Err(err) => Key::Failed(err.to_string()),
     }
@@ -110,20 +129,24 @@ mod tests {
     fn the_key_is_stored_under_the_entry_the_dictation_process_looks_up() {
         let tail = ["service", "vinowhisper", "account", "anthropic-api-key"];
         assert_eq!(
-            lookup_args(),
+            lookup_args(&SECRET_ATTRIBUTES),
             ["lookup"].into_iter().chain(tail).collect::<Vec<_>>()
         );
-        assert_eq!(&store_args()[3..], tail);
-        assert_eq!(clear_args()[0], "clear");
+        assert_eq!(&store_args(&SECRET_ATTRIBUTES)[3..], tail);
+        assert_eq!(clear_args(&SECRET_ATTRIBUTES)[0], "clear");
     }
 
     #[test]
     fn no_argument_is_ever_the_key() {
         // The value reaches secret-tool on stdin only; there is no argv slot for it.
-        for args in [lookup_args(), store_args(), clear_args()] {
+        for args in [
+            lookup_args(&SECRET_ATTRIBUTES),
+            store_args(&SECRET_ATTRIBUTES),
+            clear_args(&SECRET_ATTRIBUTES),
+        ] {
             assert!(args.iter().all(|arg| !arg.starts_with("sk-")));
         }
-        assert!(!store_args().contains(&"--password"));
+        assert!(!store_args(&SECRET_ATTRIBUTES).contains(&"--password"));
     }
 
     #[test]
@@ -133,5 +156,21 @@ mod tests {
             "Cannot create an item in a locked collection"
         );
         assert_eq!(failure(b"", "the wallet refused"), "the wallet refused");
+    }
+
+    // Against the real wallet, under an entry of its own so a stored key is never touched:
+    // `cargo test -- --ignored wallet`. The test value is printed to python by the caller.
+    #[test]
+    #[ignore = "needs a running Secret Service"]
+    fn wallet_round_trip() {
+        let entry = ["service", "vinowhisper-test", "account", "round-trip"];
+        assert_eq!(clear_of(&entry), Key::Missing);
+        assert_eq!(status_of(&entry), Key::Missing);
+        assert_eq!(store_in(&entry, "sk-test-value"), Key::Stored);
+        assert_eq!(status_of(&entry), Key::Stored);
+        let read = tool().args(lookup_args(&entry)).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&read.stdout), "sk-test-value");
+        assert_eq!(clear_of(&entry), Key::Missing);
+        assert_eq!(status_of(&entry), Key::Missing);
     }
 }

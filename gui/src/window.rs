@@ -347,13 +347,13 @@ impl SettingsWindow {
                 |ui| {
                     let edit = ui
                         .add(egui::TextEdit::singleline(&mut self.cleanup.url).desired_width(wide));
-                    self.cleanup_dirty |= edit.lost_focus() && edit.changed();
+                    self.cleanup_dirty |= edit.changed();
                 },
             );
             row(ui, "Model:", "Any model name the endpoint accepts.", |ui| {
                 let edit =
                     ui.add(egui::TextEdit::singleline(&mut self.cleanup.model).desired_width(wide));
-                self.cleanup_dirty |= edit.lost_focus() && edit.changed();
+                self.cleanup_dirty |= edit.changed();
             });
             row(
                 ui,
@@ -384,6 +384,16 @@ impl SettingsWindow {
             row(ui, "", "", |ui| {
                 ui.label(RichText::new(text).color(tone));
             });
+            if let Some(name) = overriding_variable() {
+                row(
+                    ui,
+                    "",
+                    &format!(
+                        "{name} is set in this window's environment and beats this page, so the address above may not be the one in use."
+                    ),
+                    |_| {},
+                );
+            }
         });
 
         section(ui, "API key");
@@ -497,6 +507,17 @@ impl SettingsWindow {
         );
         changed
     }
+}
+
+fn overriding_variable() -> Option<&'static str> {
+    [
+        "VINOWHISPER_CLEANUP",
+        "VINOWHISPER_CLEANUP_URL",
+        "VINOWHISPER_CLEANUP_MODEL",
+        "VINOWHISPER_CLEANUP_BUDGET_S",
+    ]
+    .into_iter()
+    .find(|name| std::env::var_os(name).is_some())
 }
 
 fn keys(ui: &mut egui::Ui, trigger: &str) {

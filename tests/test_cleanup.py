@@ -23,7 +23,6 @@ def _reply(text: str):
         ("So um I think we should ship it.", "So I think we should ship it."),
         ("meet at 3, no wait, 4 in the lobby", "Meet at 4 in the lobby."),
         ("It’s done, scratch that.", "It's done,"),
-        ("a b c", ""),
     ],
 )
 def test_deleting_words_is_accepted(original, edited):
@@ -63,6 +62,23 @@ def test_characterization_anything_but_deletion_is_refused(original, edited):
 )
 def test_added_control_or_shell_characters_are_refused(edited):
     assert not cleanup.only_deletes("git status rm", edited)
+
+
+def test_characterization_one_spoken_symbol_is_not_a_licence_for_more():
+    """characterization: allowance is counted per character, not per kind.
+
+    A set of "characters seen in the transcript" would let one spoken "&&" put it
+    between any two words of the answer. Counting keeps the answer's symbols to
+    what was dictated, in number.
+    """
+    assert cleanup.only_deletes("ls && pwd", "ls && pwd")
+    assert not cleanup.only_deletes("ls pwd cd", "ls && pwd && cd")
+    assert not cleanup.only_deletes("ls && pwd cd", "ls && pwd && cd")
+
+
+def test_an_answer_with_no_words_is_not_used():
+    assert not cleanup.only_deletes("hello there", "...")
+    assert not cleanup.only_deletes("hello there", "\u2014")
 
 
 def test_punctuation_the_speaker_already_produced_survives():
