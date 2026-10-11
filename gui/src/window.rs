@@ -29,6 +29,10 @@ impl Page {
             .find(|page| page.title().eq_ignore_ascii_case(name))
     }
 
+    fn beta(self) -> bool {
+        self == Page::Cleanup
+    }
+
     fn title(self) -> &'static str {
         match self {
             Page::Shortcuts => "Shortcuts",
@@ -333,6 +337,27 @@ impl SettingsWindow {
 
     fn cleanup(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui.ctx());
+        ui.add_space(10.0);
+        egui::Frame::NONE
+            .fill(p.code_bg)
+            .stroke(Stroke::new(1.0_f32, p.rule))
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Beta").family(theme::bold()));
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "New, and tuned on one microphone. It may skip a quiet word, or leave \
+                             text as you said it when the model's answer does not check out. Tell us \
+                             what it gets wrong.",
+                        )
+                        .size(12.5)
+                        .color(p.muted),
+                    )
+                    .wrap(),
+                );
+            });
         section(ui, "Dictation cleanup");
         row(
             ui,
@@ -628,6 +653,15 @@ fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
         FontId::proportional(14.0),
         p.text,
     );
+    if page.beta() {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(10.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            "beta",
+            FontId::proportional(11.5),
+            p.muted,
+        );
+    }
     if response.clicked() {
         *current = page;
     }
@@ -636,7 +670,11 @@ fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
 fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::Header) {
     let active = *current == page;
     let galley = ui.painter().layout_no_wrap(
-        page.title().to_owned(),
+        if page.beta() {
+            format!("{} (beta)", page.title())
+        } else {
+            page.title().to_owned()
+        },
         if active {
             FontId::new(14.0, theme::bold())
         } else {

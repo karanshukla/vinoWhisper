@@ -407,7 +407,11 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
-**LLM cleanup, added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
+**LLM cleanup (beta), added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
+Beta means: the behaviour is measured (below) but on one laptop, one microphone
+and one hosted model, the thresholds may move, and the settings file keys may
+change. It is safe to leave on in the sense that every failure types the raw
+transcript; it is not yet tuned for other rooms or voices.
 Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and the final transcript (never the live
 previews) goes to an Anthropic-compatible `/v1/messages` endpoint, which drops
 fillers, applies self-corrections and applies spoken edits ("scratch that",
