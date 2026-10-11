@@ -96,6 +96,10 @@ const TRAY_MARKS: [(Shape, Tone); 6] = [
     (Shape::line(11.0, 11.0, 2.0, 1.0), Tone::Pending),
 ];
 
+// The symbolic icon sits straight on the panel, light or dark, so its voice
+// marks use a darker shade of the overlay's green that keeps 3:1 against both.
+const TRAY_GREEN: Rgba = Rgba(40, 150, 80, 255);
+
 fn box_rgba() -> Rgba {
     Rgba(BACKGROUND.0, BACKGROUND.1, BACKGROUND.2, 255)
 }
@@ -128,7 +132,7 @@ pub fn app_svg() -> String {
 
 pub fn symbolic_svg() -> String {
     let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
-    let green = hex(tone_rgba(Tone::Good));
+    let green = hex(TRAY_GREEN);
     let (mut voice, mut words, mut pending) = (String::new(), String::new(), String::new());
     for (shape, tone) in TRAY_MARKS {
         match tone {
@@ -236,6 +240,28 @@ mod tests {
             for edge in [shape.x, shape.y, shape.w, shape.h, TRAY_LINE] {
                 assert_eq!(edge.fract(), 0.0, "{shape:?} is off the pixel grid");
             }
+        }
+    }
+
+    fn luminance(Rgba(r, g, b, _): Rgba) -> f32 {
+        let channel = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    #[test]
+    fn the_symbolic_green_shows_on_light_and_dark_panels() {
+        // Breeze Light and Breeze Dark panel backgrounds.
+        for panel in [Rgba(239, 240, 241, 255), Rgba(32, 35, 38, 255)] {
+            let (a, b) = (luminance(TRAY_GREEN) + 0.05, luminance(panel) + 0.05);
+            let contrast = a.max(b) / a.min(b);
+            assert!(contrast >= 3.0, "{panel:?}: only {contrast:.2}:1");
         }
     }
 
