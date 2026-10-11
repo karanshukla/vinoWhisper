@@ -1,8 +1,10 @@
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke, TextStyle};
+use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke};
 
-use crate::forward;
+use crate::forward::{self, Shortcuts};
 use crate::theme;
 use vinowhisper_settings::{
     Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
@@ -100,6 +102,11 @@ struct SettingsWindow {
     multilingual: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
+    shortcuts: Arc<Mutex<Shortcuts>>,
+    // Which page last asked the tray, so arriving on Shortcuts asks again.
+    shown: Option<Page>,
+    refused: Arc<Mutex<Option<String>>>,
+    notice: Option<String>,
 }
 
 impl SettingsWindow {
@@ -111,32 +118,107 @@ impl SettingsWindow {
             multilingual: multilingual_installed(),
             focused: true,
             kde_header: theme::kde_header(),
+            shortcuts: Arc::new(Mutex::new(Shortcuts::Asking)),
+            shown: None,
+            refused: Arc::new(Mutex::new(None)),
+            notice: None,
         }
     }
 
-    fn shortcuts(&mut self, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
-        section(ui, "Captions");
-        row(
-            ui,
-            "Preferred shortcut:",
-            "Asked of the desktop the first time captions are bound. Once bound, change it from the tray menu or your desktop's keyboard settings.",
-            |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.shortcut)
-                        .font(TextStyle::Monospace)
-                        .desired_width(COMBO_WIDTH),
+    fn ask_shortcuts(&self, ctx: &egui::Context, after: Duration) {
+        let shortcuts = Arc::clone(&self.shortcuts);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(after);
+            let answer = forward::query_shortcuts();
+            *shortcuts.lock().unwrap() = answer;
+            ctx.request_repaint();
+        });
+    }
+
+    fn shortcuts(&mut self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        let state = self.shortcuts.lock().unwrap().clone();
+        section(ui, "Global shortcuts");
+        match state {
+            Shortcuts::Asking | Shortcuts::Pending => {
+                row(ui, "", "", |ui| {
+                    ui.label("Asking the desktop…");
+                });
+            }
+            Shortcuts::Bound {
+                captions,
+                dictate,
+                configurable,
+            } => {
+                row(
+                    ui,
+                    "Captions:",
+                    "Shows or hides the floating captions.",
+                    |ui| keys(ui, &captions),
                 );
-                // Only a finished edit is saved, so a half-typed trigger never reaches the tray.
-                if response.lost_focus() {
-                    if self.settings.shortcut.trim().is_empty() {
-                        self.settings.shortcut = vinowhisper_settings::DEFAULT_SHORTCUT.to_owned();
-                    }
-                    changed = true;
+                row(
+                    ui,
+                    "Dictation:",
+                    "Hold to talk and release to type, or tap to start and tap again to finish.",
+                    |ui| keys(ui, &dictate),
+                );
+                if configurable {
+                    row(ui, "", "Opens your desktop's shortcut settings.", |ui| {
+                        if ui.button("Change…").clicked() {
+                            forward::run_tray(&["configure-shortcut"]);
+                        }
+                    });
+                } else {
+                    row(
+                        ui,
+                        "",
+                        "Change them in your desktop's shortcut settings, where they are listed under vinoWhisper.",
+                        |_| {},
+                    );
                 }
-            },
-        );
-        changed
+            }
+            Shortcuts::Stopped => {
+                row(
+                    ui,
+                    "",
+                    "vinoWhisper is not running, so no shortcut is active.",
+                    |ui| {
+                        if ui.button("Start vinoWhisper").clicked() {
+                            forward::run_tray(&["--hidden"]);
+                            // The portal takes a moment to answer a fresh tray.
+                            self.ask_shortcuts(ui.ctx(), Duration::from_millis(1500));
+                        }
+                    },
+                );
+            }
+            Shortcuts::Unavailable => {
+                ui.label(
+                    RichText::new(
+                        "This desktop has no global shortcuts portal. Bind these commands to keys in its keyboard settings instead:",
+                    )
+                    .color(p.muted),
+                );
+                ui.add_space(6.0);
+                row(ui, "Captions:", "", |ui| {
+                    command(ui, "vinowhisper-tray toggle");
+                });
+                row(
+                    ui,
+                    "Dictation:",
+                    "On the key's press and release, for hold to talk. Or vinowhisper-tray dictate on one key, to tap.",
+                    |ui| {
+                        command(ui, "vinowhisper-tray dictate-press");
+                        command(ui, "vinowhisper-tray dictate-release");
+                    },
+                );
+            }
+            Shortcuts::Unknown(reason) => {
+                row(ui, "", "", |ui| {
+                    ui.label(RichText::new(reason).color(p.muted));
+                });
+            }
+        }
     }
 
     fn captions(&mut self, ui: &mut egui::Ui) -> bool {
@@ -205,6 +287,10 @@ impl SettingsWindow {
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
+        if let Some(notice) = &self.notice {
+            ui.add_space(10.0);
+            ui.label(RichText::new(notice).color(ui.visuals().error_fg_color));
+        }
         section(ui, "Recognition");
         let multilingual = self.multilingual;
         row(
@@ -256,6 +342,26 @@ impl SettingsWindow {
     }
 }
 
+fn keys(ui: &mut egui::Ui, trigger: &str) {
+    let p = theme::palette(ui.ctx());
+    if trigger.is_empty() {
+        ui.label(RichText::new("Not bound").color(p.muted));
+        return;
+    }
+    egui::Frame::NONE
+        .fill(p.code_bg)
+        .stroke(Stroke::new(1.0_f32, p.rule))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.label(RichText::new(trigger).family(theme::bold()));
+        });
+}
+
+fn command(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).monospace());
+}
+
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(14.0);
     ui.label(RichText::new(title).family(theme::bold()).size(14.0));
@@ -268,10 +374,12 @@ fn row(ui: &mut egui::Ui, label: &str, help: &str, control: impl FnOnce(&mut egu
     let p = theme::palette(ui.ctx());
     let help = |ui: &mut egui::Ui| {
         if !help.is_empty() {
-            ui.label(RichText::new(help).size(12.5).color(p.muted));
+            ui.add(egui::Label::new(RichText::new(help).size(12.5).color(p.muted)).wrap());
         }
     };
-    if ui.available_width() >= TWO_COLUMNS_FROM {
+    let width = ui.available_width();
+    if width >= TWO_COLUMNS_FROM {
+        let column = width - LABEL_WIDTH - ui.spacing().item_spacing.x;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(LABEL_WIDTH, ui.spacing().interact_size.y),
@@ -282,12 +390,16 @@ fn row(ui: &mut egui::Ui, label: &str, help: &str, control: impl FnOnce(&mut egu
                 },
             );
             ui.vertical(|ui| {
+                // A horizontal parent leaves its children unbounded; wrap at the window's edge.
+                ui.set_max_width(column);
                 control(ui);
                 help(ui);
             });
         });
     } else {
-        ui.label(label);
+        if !label.is_empty() {
+            ui.label(label);
+        }
         control(ui);
         help(ui);
     }
@@ -360,7 +472,17 @@ impl eframe::App for SettingsWindow {
             theme::follow_desktop(ctx);
             self.kde_header = theme::kde_header();
         }
+        let regained = focused && !self.focused;
         self.focused = focused;
+        if self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)) {
+            self.ask_shortcuts(ctx, Duration::ZERO);
+        }
+        self.shown = Some(self.page);
+        if let Some(reason) = self.refused.lock().unwrap().take() {
+            // The tray put the file back; show what is really in use.
+            self.speech = Speech::load();
+            self.notice = Some(reason);
+        }
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), focused);
         let wide = ctx.content_rect().width() >= SIDEBAR_FROM;
@@ -419,9 +541,9 @@ impl eframe::App for SettingsWindow {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_max_width(FORM_MAX_WIDTH);
+                        ui.set_max_width(ui.available_width().min(FORM_MAX_WIDTH));
                         match self.page {
-                            Page::Shortcuts => saved_settings = self.shortcuts(ui),
+                            Page::Shortcuts => self.shortcuts(ui),
                             Page::Captions => saved_settings = self.captions(ui),
                             Page::Speech => saved_speech = self.speech(ui),
                         }
@@ -431,11 +553,17 @@ impl eframe::App for SettingsWindow {
 
         if saved_settings {
             self.settings.save();
-            forward::reload_tray();
+            forward::reload_tray(|_| {});
         }
         if saved_speech {
             self.speech.save();
-            forward::reload_tray();
+            self.notice = None;
+            let refused = Arc::clone(&self.refused);
+            let ctx = ctx.clone();
+            forward::reload_tray(move |reason| {
+                *refused.lock().unwrap() = Some(reason);
+                ctx.request_repaint();
+            });
         }
     }
 }
@@ -448,6 +576,9 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
             .with_app_id(app_id)
             .with_inner_size([760.0, 480.0])
             .with_min_inner_size([340.0, 320.0]),
+        // With vsync, a swap waits on a frame callback KWin holds back from a window it
+        // considers hidden, and the window stops answering pings. It only redraws on input.
+        vsync: false,
         ..Default::default()
     };
     let result = eframe::run_native(

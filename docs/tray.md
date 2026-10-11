@@ -106,8 +106,8 @@ driven from three places instead:
 | | |
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
-| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut…, Save transcripts and Quit |
-| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. The settings window sends it after each save |
+| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu keeps what you reach for mid-video: Show captions, Listen to (system audio or microphone), Recent dictations (the last five, newest first, with Clear), the dictation key, Settings…, Start at login and Quit. Everything else (position, text size, transcripts, language, translation, shortcuts) is in the settings window, `vinowhisper-gui`, which Settings… opens |
+| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, `shortcuts`, `configure-shortcut`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. A language change while dictating is refused: `reload` exits 1 with the reason and the tray writes `language.json` back, so the window shows what is really in use. `shortcuts` prints what the desktop bound, as JSON. The settings window sends all three |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,
@@ -138,7 +138,7 @@ toggling it while they are showing changes nothing until they are hidden and
 shown again. Not run against a live overlay as of 2026-10-07; the argv and the
 settings file are covered by unit tests.
 
-Tray choices are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
+Settings are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
 unreadable one is reported and ignored, and every field has a default, so a
 bad settings file never stops captions from starting. The top position is for
 video that burns its own subtitles into the bottom of the frame.
@@ -149,9 +149,10 @@ Wayland does not let an app grab a key while another window has focus, so the
 shortcut goes through the desktop portal: the app asks for one, the desktop
 decides. On Plasma a dialog asks you to confirm it the first time. You can
 also pick a different key right there. After that the binding lives in the
-desktop's own settings, like any other shortcut. Change it with
-**Change shortcut…** in the tray menu, which opens that settings page, or in
-System Settings > Shortcuts, where it is listed under *vinoWhisper*.
+desktop's own settings, like any other shortcut. The settings window's
+Shortcuts page shows what is bound, and its **Change…** button opens that
+settings page; or go to System Settings > Shortcuts, where it is listed under
+*vinoWhisper*.
 
 The preferred trigger only matters the first time. It is `shortcut` in
 `gui.json`, in the XDG shortcuts syntax (`LOGO+ALT+C`). Editing it later does
@@ -164,7 +165,7 @@ the first run writes the launcher itself if `--install` never did. With no
 portal at all, bind `vinowhisper-tray toggle` in your desktop's keyboard
 settings; it reaches the running instance the same way.
 
-**Change shortcut…** needs version 2 of the shortcut portal, where
+**Change…** needs version 2 of the shortcut portal, where
 ConfigureShortcuts first appears. On version 1 the binding is still an
 ordinary desktop shortcut, so change it in System Settings instead.
 
@@ -204,7 +205,7 @@ key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-tray
 dictate-press` to the key's press and `vinowhisper-tray dictate-release` to its
 release (sway: `bindsym` and `bindsym --release`; Hyprland has the portal).
 
-Rebinding works like the captions shortcut: **Change shortcut…** or System
+Rebinding works like the captions shortcut: **Change…** in the settings window or System
 Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
 Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
 "Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.

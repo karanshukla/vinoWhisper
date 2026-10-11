@@ -2269,6 +2269,7 @@ name = "vinowhisper-gui"
 version = "0.9.0"
 dependencies = [
  "eframe",
+ "serde_json",
  "vinowhisper-settings",
 ]
 

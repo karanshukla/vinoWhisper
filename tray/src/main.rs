@@ -48,7 +48,11 @@ Commands go to the running instance, starting one if there is none:
               letting go types
   quit        stop everything, tray icon included
   reload      re-read the settings files, after changing them by hand or
-              in vinowhisper-gui (it sends this itself)
+              in vinowhisper-gui (it sends this itself). Exits 1 when a
+              language change is refused because dictation is running
+  shortcuts   print the bound shortcuts as JSON, for vinowhisper-gui
+  configure-shortcut
+              open the desktop's dialog for changing them
 
 Options:
   --hidden          start in the tray, captions off (for autostart)
@@ -71,9 +75,9 @@ type, or tap it to start and tap again to finish. The text goes on the
 clipboard and is pasted with Shift+Insert: from /dev/uinput when that is
 writable, else through the compositor's virtual keyboard, else through the
 remote-desktop portal, which asks permission once. Change either shortcut
-from the tray menu (\"Change shortcut…\") or in your desktop's shortcut
-settings, where they are listed under vinoWhisper. Tray choices are
-remembered in $XDG_CONFIG_HOME/vinowhisper/gui.json.";
+from vinowhisper-gui (Shortcuts) or in your desktop's shortcut settings,
+where they are listed under vinoWhisper. Settings are kept in
+$XDG_CONFIG_HOME/vinowhisper/gui.json and language.json.";
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
@@ -168,18 +172,33 @@ fn main() -> ExitCode {
         Request::Show
     });
     match ipc::send(request) {
-        Ok(()) => return ExitCode::SUCCESS,
+        Ok(answer) => {
+            if !answer.is_empty() {
+                println!("{answer}");
+            }
+            return ExitCode::SUCCESS;
+        }
+        Err(ipc::SendError::Refused(reason)) => {
+            eprintln!("vinowhisper-tray: {reason}");
+            return ExitCode::FAILURE;
+        }
         Err(ipc::SendError::NotRunning) => {}
         Err(ipc::SendError::Io(err)) => {
             eprintln!("vinowhisper-tray: could not reach the running instance: {err}");
             return ExitCode::FAILURE;
         }
     }
+    if request == Request::Shortcuts {
+        // An answer, not an error: the settings window shows it as "not running".
+        println!("{{\"state\":\"stopped\"}}");
+        return ExitCode::SUCCESS;
+    }
     if matches!(
         request,
         Request::Hide
             | Request::Quit
             | Request::Reload
+            | Request::ConfigureShortcut
             | Request::Dictate
             | Request::DictatePress
             | Request::DictateRelease

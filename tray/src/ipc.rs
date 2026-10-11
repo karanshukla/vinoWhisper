@@ -20,11 +20,14 @@ pub enum Request {
     Quit,
     /// Re-read gui.json and language.json: the settings window saved something.
     Reload,
+    /// What the desktop bound, as JSON, for the settings window.
+    Shortcuts,
+    ConfigureShortcut,
     Ping,
 }
 
 impl Request {
-    const ALL: [Request; 9] = [
+    const ALL: [Request; 11] = [
         Request::Show,
         Request::Hide,
         Request::Toggle,
@@ -33,6 +36,8 @@ impl Request {
         Request::DictateRelease,
         Request::Quit,
         Request::Reload,
+        Request::Shortcuts,
+        Request::ConfigureShortcut,
         Request::Ping,
     ];
 
@@ -46,6 +51,8 @@ impl Request {
             Request::DictateRelease => "dictate-release",
             Request::Quit => "quit",
             Request::Reload => "reload",
+            Request::Shortcuts => "shortcuts",
+            Request::ConfigureShortcut => "configure-shortcut",
             Request::Ping => "ping",
         }
     }
@@ -57,9 +64,13 @@ impl Request {
     }
 }
 
+// Ok carries what the request answers (empty for most), Err why it was refused.
+pub type Reply = Result<String, String>;
+
 #[derive(Debug)]
 pub enum SendError {
     NotRunning,
+    Refused(String),
     Io(io::Error),
 }
 
@@ -103,11 +114,11 @@ fn same_user(stream: &UnixStream) -> bool {
         .is_ok_and(|cred| cred.uid == rustix::process::getuid())
 }
 
-pub fn send(request: Request) -> Result<(), SendError> {
+pub fn send(request: Request) -> Result<String, SendError> {
     send_to(&socket_path().map_err(SendError::Io)?, request)
 }
 
-fn send_to(path: &Path, request: Request) -> Result<(), SendError> {
+fn send_to(path: &Path, request: Request) -> Result<String, SendError> {
     let mut stream = match UnixStream::connect(path) {
         Ok(stream) => stream,
         Err(err)
@@ -128,11 +139,28 @@ fn send_to(path: &Path, request: Request) -> Result<(), SendError> {
     BufReader::new(&stream)
         .read_line(&mut reply)
         .map_err(SendError::Io)?;
-    match reply.trim() {
-        "ok" => Ok(()),
-        other => Err(SendError::Io(io::Error::other(format!(
-            "the running instance replied {other:?}"
-        )))),
+    let reply = reply.trim_end_matches('\n');
+    if reply == "ok" {
+        return Ok(String::new());
+    }
+    if let Some(payload) = reply.strip_prefix("ok ") {
+        return Ok(payload.to_owned());
+    }
+    if let Some(reason) = reply.strip_prefix("refused ") {
+        return Err(SendError::Refused(reason.to_owned()));
+    }
+    Err(SendError::Io(io::Error::other(format!(
+        "the running instance replied {reply:?}"
+    ))))
+}
+
+// One line each way, so a payload or a reason may not break the line.
+fn reply_line(reply: &Reply) -> String {
+    let one_line = |text: &str| text.replace(['\n', '\r'], " ");
+    match reply {
+        Ok(payload) if payload.is_empty() => "ok".to_owned(),
+        Ok(payload) => format!("ok {}", one_line(payload)),
+        Err(reason) => format!("refused {}", one_line(reason)),
     }
 }
 
@@ -146,11 +174,14 @@ impl Drop for Listener {
     }
 }
 
-pub fn listen(on_request: impl Fn(Request) + Send + 'static) -> io::Result<Listener> {
+pub fn listen(on_request: impl Fn(Request) -> Reply + Send + 'static) -> io::Result<Listener> {
     listen_at(socket_path()?, on_request)
 }
 
-fn listen_at(path: PathBuf, on_request: impl Fn(Request) + Send + 'static) -> io::Result<Listener> {
+fn listen_at(
+    path: PathBuf,
+    on_request: impl Fn(Request) -> Reply + Send + 'static,
+) -> io::Result<Listener> {
     let listener = match UnixListener::bind(&path) {
         Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
@@ -176,19 +207,16 @@ fn listen_at(path: PathBuf, on_request: impl Fn(Request) + Send + 'static) -> io
     Ok(Listener { path })
 }
 
-fn serve(stream: UnixStream, on_request: &impl Fn(Request)) {
+fn serve(stream: UnixStream, on_request: &impl Fn(Request) -> Reply) {
     let _ = stream.set_read_timeout(Some(TIMEOUT));
     let mut line = String::new();
     if BufReader::new(&stream).read_line(&mut line).is_err() {
         return;
     }
     let reply = match Request::parse(line.trim()) {
-        Some(Request::Ping) => "ok",
-        Some(request) => {
-            on_request(request);
-            "ok"
-        }
-        None => "unknown command",
+        Some(Request::Ping) => "ok".to_owned(),
+        Some(request) => reply_line(&on_request(request)),
+        None => "unknown command".to_owned(),
     };
     let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
 }
@@ -208,7 +236,11 @@ mod tests {
     fn a_request_reaches_the_running_instance() {
         let path = scratch_socket("reach");
         let (tx, rx) = mpsc::channel();
-        let _listener = listen_at(path.clone(), move |request| tx.send(request).unwrap()).unwrap();
+        let _listener = listen_at(path.clone(), move |request| {
+            tx.send(request).unwrap();
+            Ok(String::new())
+        })
+        .unwrap();
 
         send_to(&path, Request::Toggle).unwrap();
         assert_eq!(rx.recv_timeout(TIMEOUT).unwrap(), Request::Toggle);
@@ -218,10 +250,33 @@ mod tests {
     fn a_ping_is_answered_without_doing_anything() {
         let path = scratch_socket("ping");
         let (tx, rx) = mpsc::channel();
-        let _listener = listen_at(path.clone(), move |request| tx.send(request).unwrap()).unwrap();
+        let _listener = listen_at(path.clone(), move |request| {
+            tx.send(request).unwrap();
+            Ok(String::new())
+        })
+        .unwrap();
 
         send_to(&path, Request::Ping).unwrap();
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn an_answer_and_a_refusal_come_back_to_the_sender() {
+        let path = scratch_socket("answer");
+        let _listener = listen_at(path.clone(), |request| match request {
+            Request::Shortcuts => Ok("{\"state\":\"pending\"}".to_owned()),
+            _ => Err("Finish dictating\nfirst".to_owned()),
+        })
+        .unwrap();
+
+        assert_eq!(
+            send_to(&path, Request::Shortcuts).unwrap(),
+            "{\"state\":\"pending\"}"
+        );
+        match send_to(&path, Request::Reload) {
+            Err(SendError::Refused(reason)) => assert_eq!(reason, "Finish dictating first"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
     }
 
     #[test]
@@ -238,14 +293,14 @@ mod tests {
         let path = scratch_socket("stale");
         drop(UnixListener::bind(&path).unwrap()); // leaves the file behind
         assert!(path.exists());
-        assert!(listen_at(path.clone(), |_| {}).is_ok());
+        assert!(listen_at(path.clone(), |_| Ok(String::new())).is_ok());
     }
 
     #[test]
     fn a_second_instance_is_refused() {
         let path = scratch_socket("second");
-        let _first = listen_at(path.clone(), |_| {}).unwrap();
-        let second = listen_at(path.clone(), |_| {});
+        let _first = listen_at(path.clone(), |_| Ok(String::new())).unwrap();
+        let second = listen_at(path.clone(), |_| Ok(String::new()));
         assert_eq!(
             second.err().map(|err| err.kind()),
             Some(io::ErrorKind::AddrInUse)
@@ -255,7 +310,7 @@ mod tests {
     #[test]
     fn dropping_the_listener_removes_the_socket() {
         let path = scratch_socket("cleanup");
-        drop(listen_at(path.clone(), |_| {}).unwrap());
+        drop(listen_at(path.clone(), |_| Ok(String::new())).unwrap());
         assert!(!path.exists());
     }
 

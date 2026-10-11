@@ -24,6 +24,27 @@ pub enum State {
     Unavailable(String),
 }
 
+// For `vinowhisper-tray shortcuts`, which the settings window reads.
+pub fn to_json(state: &State) -> String {
+    let value = match state {
+        State::Pending => serde_json::json!({ "state": "pending" }),
+        State::Bound {
+            trigger,
+            dictate,
+            configurable,
+        } => serde_json::json!({
+            "state": "bound",
+            "captions": trigger,
+            "dictate": dictate,
+            "configurable": configurable,
+        }),
+        State::Unavailable(reason) => {
+            serde_json::json!({ "state": "unavailable", "reason": reason })
+        }
+    };
+    value.to_string()
+}
+
 pub struct Shortcut {
     configure: async_channel::Sender<()>,
 }
@@ -160,4 +181,24 @@ fn report(tx: &Sender<Command>, shortcuts: &[Bound], configurable: bool) {
         dictate: trigger(DICTATE),
         configurable,
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_settings_window_reads_what_was_bound() {
+        let bound = State::Bound {
+            trigger: "Meta+Alt+C".into(),
+            dictate: "Meta+H".into(),
+            configurable: true,
+        };
+        let value: serde_json::Value = serde_json::from_str(&to_json(&bound)).unwrap();
+        assert_eq!(value["state"], "bound");
+        assert_eq!(value["captions"], "Meta+Alt+C");
+        assert_eq!(value["dictate"], "Meta+H");
+        assert_eq!(value["configurable"], true);
+        assert!(!to_json(&State::Unavailable("no\nportal".into())).contains('\n'));
+    }
 }
