@@ -584,9 +584,16 @@ class Dictation:
         outcome = self._cleaner(spoken)
         status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
         print(
-            f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms",
+            f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms "
+            f"(in {len(spoken)} chars, out {len(outcome.text)}, {len(decoder.texts)} pieces)",
             file=sys.stderr,
         )
+        if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
+            print(f"[vinowhisper] cleanup-debug pieces={decoder.texts!r}", file=sys.stderr)
+            print(f"[vinowhisper] cleanup-debug in ={spoken!r}", file=sys.stderr)
+            print(f"[vinowhisper] cleanup-debug out={outcome.text!r}", file=sys.stderr)
+            if outcome.answer is not None:
+                print(f"[vinowhisper] cleanup-debug model={outcome.answer!r}", file=sys.stderr)
         return decoder.apply_replacements(outcome.text), outcome.cleaned
 
     def _close(self) -> None:
@@ -628,7 +635,7 @@ class _FileCleaner:
     def __call__(self, text: str) -> cleanup.Outcome:
         self._ready.wait()
         assert self._settings is not None
-        return cleanup.clean_up(text, self._settings)
+        return cleanup.clean_up(text, self._settings, cleanup.post)
 
 
 def _report_release(

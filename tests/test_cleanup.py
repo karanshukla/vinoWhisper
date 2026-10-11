@@ -165,7 +165,9 @@ def test_characterization_the_request_turns_thinking_off():
 def test_the_request_has_no_sampling_parameters_and_a_bounded_output():
     body = cleanup.request_body(SETTINGS, "one two three")
     assert "temperature" not in body
-    assert body["messages"] == [{"role": "user", "content": "one two three"}]
+    assert body["messages"] == [
+        {"role": "user", "content": "<transcript>one two three</transcript>"}
+    ]
     assert body["system"] == cleanup.PROMPT
     assert body["max_tokens"] <= 4096
 
@@ -173,6 +175,8 @@ def test_the_request_has_no_sampling_parameters_and_a_bounded_output():
 def test_the_response_text_blocks_are_joined_and_truncation_is_refused():
     ok = json.dumps({"content": [{"type": "text", "text": " Hello "}], "stop_reason": "end_turn"})
     assert cleanup.parse_response(ok.encode()) == "Hello"
+    echoed = json.dumps({"content": [{"type": "text", "text": "<transcript>Hi</transcript>"}]})
+    assert cleanup.parse_response(echoed.encode()) == "Hi"
     cut = json.dumps({"content": [{"type": "text", "text": "Hel"}], "stop_reason": "max_tokens"})
     with pytest.raises(ValueError, match="truncated"):
         cleanup.parse_response(cut.encode())
@@ -289,3 +293,112 @@ def test_the_mode_comes_from_the_file_and_an_unknown_one_is_smart(tmp_path):
     assert cleanup.load_settings({}, lambda: "k", path).mode == "always"
     path.write_text(json.dumps({"enabled": True, "mode": "sometimes"}))
     assert cleanup.load_settings({}, lambda: "k", path).mode == "smart"
+
+
+@pytest.mark.parametrize(
+    ("original", "edited"),
+    [
+        (
+            "So um I think we should uh ship it on Friday.",
+            "So I think we should ship it on Friday.",
+        ),
+        ("Let's meet at 3, no wait, 4 in the lobby.", "Let's meet at 4 in the lobby."),
+        ("Send it. Also remind Sam. Scratch that. Call Sam.", "Send it. Call Sam."),
+        ("The release is ready for review, delete that last word.", "The release is ready for."),
+        ("To undo it, say literal scratch that.", "To undo it, say scratch that."),
+        ("We need that that fixed by Friday.", "We need that fixed by Friday."),
+        ("It is, you know, fine.", "It is, fine."),
+        ("Um, actually, like, what is it?", "What is it?"),
+        (
+            "Okay so the thing is, the thing is that we need um the build to pass.",
+            "The thing is that we need the build to pass.",
+        ),
+    ],
+)
+def test_a_deletion_with_a_reason_is_kept(original, edited):
+    assert cleanup.deletions_justified(original, edited)
+
+
+@pytest.mark.parametrize(
+    ("original", "edited"),
+    [
+        # Reported 2026-10-11: the second sentence was simply dropped.
+        ("Um, actually, like, what is it? Something's wrong.", "What is it?"),
+        ("Send the report to Sam by Friday.", "Send the report."),
+        ("I like the new design a lot.", "I like the design."),
+        ("First fix the build. Then update the docs.", "First fix the build."),
+    ],
+)
+def test_characterization_a_deletion_nothing_asked_for_is_refused(original, edited):
+    """characterization: "only deleted" is not "deleted what it was told to".
+
+    Reported 2026-10-11 from real use: the model removed a whole sentence nobody asked
+    it to and the subsequence check passed it, because removing words is what that
+    check allows. Every removed stretch now has to be a filler, a stammer, or hold a
+    correction or spoken-edit cue. Dropping this makes a model's guess about what
+    "doesn't matter" the thing that decides what gets typed.
+    """
+    assert not cleanup.deletions_justified(original, edited)
+
+
+def test_an_unjustified_deletion_falls_back_to_the_transcript_and_keeps_the_answer():
+    original = "Um, actually, like, what is it? Something's wrong."
+    outcome = cleanup.clean_up(original, SETTINGS, _reply("What is it?"))
+    assert (outcome.text, outcome.cleaned, outcome.reason) == (
+        original,
+        False,
+        "deleted without cause",
+    )
+    assert outcome.answer == "What is it?"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Alors euh, on se retrouve \u00e0 trois heures.",
+        "On se retrouve \u00e0 trois heures, non attends, quatre.",
+        "Envoie \u00e7a. Supprime \u00e7a. Appelle Sam.",
+        "Wir treffen uns, \u00e4hm, um drei.",
+        "Um drei, nein warte, um vier.",
+        "Streich das. Ruf Sam an.",
+        "Nos vemos a las tres, no espera, a las cuatro.",
+        "Eh, creo que deber\u00edamos ir.",
+        "Env\u00eda eso. Borra eso. Llama a Sam.",
+    ],
+)
+def test_other_languages_cues_are_sent(text):
+    assert cleanup.needs_cleanup(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Quelle est la capitale de la France ?",
+        "Wie sp\u00e4t ist es?",
+        "\u00bfCu\u00e1l es la capital de Francia?",
+    ],
+)
+def test_other_languages_clean_sentences_are_not_sent(text):
+    assert not cleanup.needs_cleanup(text)
+
+
+@pytest.mark.parametrize(
+    ("original", "edited"),
+    [
+        (
+            "Alors euh, on se retrouve \u00e0 trois heures.",
+            "Alors, on se retrouve \u00e0 trois heures.",
+        ),
+        ("Wir treffen uns um drei, nein warte, um vier.", "Wir treffen uns um vier."),
+        ("Nos vemos a las tres, no espera, a las cuatro.", "Nos vemos a las cuatro."),
+    ],
+)
+def test_other_languages_deletions_have_a_reason(original, edited):
+    assert cleanup.deletions_justified(original, edited)
+    assert cleanup.only_deletes(original, edited)
+
+
+def test_an_inverted_question_mark_the_model_adds_is_refused_but_a_spoken_one_is_kept():
+    spoken = "\u00bfCu\u00e1l es la capital de Francia?"
+    assert cleanup.only_deletes(spoken, spoken)
+    assert not cleanup.only_deletes("Cu\u00e1l es la capital de Francia", spoken)

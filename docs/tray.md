@@ -452,11 +452,19 @@ the address is loopback (text stays here) or not (text and key leave).
   prompt moved the median 4%. Nothing hides that second except not paying it, so
   `smart` (the default) sends only text with a filler (um, uh, er), a cue
   (actually, sorry, wait, "I mean", "scratch that", "delete that", "you know",
-  literal) or an adjacent repeated word, and types everything else at once with
+  literal, and the French, German and Spanish equivalents: euh, ähm, "non attends",
+  "nein warte", "streich das", "no espera", "borra eso"…) or an adjacent repeated word, and types everything else at once with
   no `Cleaning` state. A correction spoken with none of those words, like
   "three, four", goes through only in `always`. Overlapping the call with the
   final decode was considered and not built: previews are up to 1.5s stale and
   skipped at pauses, so the text at release rarely equals the last preview's.
+- **Other languages.** The prompt asks for the same edits in the transcript's
+  language, with a French, a German and a Spanish example. Measured 2026-10-11
+  on `claude-haiku-5-5`: 11 of 12 correct across fr, de and es (corrections,
+  spoken edits, fillers, questions left alone). The miss paraphrased "genre",
+  which the check refused, so the raw text was typed. The cue lists are merged
+  across languages because the language is `auto` here and a stray match only
+  costs a request.
 - **Not streamed.** The text is pasted once, after the whole answer has been
   checked, so first-token time buys nothing; only the last token matters.
 - **No `temperature`**: current models reject any non-default sampling
