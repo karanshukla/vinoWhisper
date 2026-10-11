@@ -157,6 +157,9 @@ pub fn multilingual_installed() -> bool {
         })
 }
 
+// The settings window's Wayland app id; the tray installs a desktop entry under it for the icon.
+pub const SETTINGS_APP_ID: &str = "io.github.karanshukla.vinowhisper.settings";
+
 pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
 pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
