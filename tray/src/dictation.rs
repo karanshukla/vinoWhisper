@@ -132,6 +132,7 @@ pub struct Dictation {
     epoch: u64,
     notice: Option<(u64, String)>,
     notices: u64,
+    cleaning: bool,
 }
 
 impl Dictation {
@@ -145,6 +146,7 @@ impl Dictation {
             epoch: 0,
             notice: None,
             notices: 0,
+            cleaning: false,
         }
     }
 
@@ -182,6 +184,7 @@ impl Dictation {
     fn set(&mut self, phase: Phase) {
         if phase != self.phase {
             self.phase = phase;
+            self.cleaning = false;
             self.epoch += 1;
         }
     }
@@ -273,6 +276,12 @@ impl Dictation {
                     self.swallow_release = true;
                 }
                 self.set(Phase::Transcribing);
+            }
+            Dictate::Cleaning => {
+                if self.phase == Phase::Transcribing && !self.cleaning {
+                    self.cleaning = true;
+                    self.epoch += 1;
+                }
             }
             Dictate::Ready { device, degraded } => self.device = Some((device, degraded)),
             Dictate::Dictated { text } => {
@@ -384,6 +393,9 @@ impl Dictation {
     }
 
     fn transcribing_text(&self) -> String {
+        if self.cleaning {
+            return "Cleaning up with the model…".to_owned();
+        }
         match &self.device {
             Some((device, true)) => format!("Transcribing on {device}…"),
             _ => "Transcribing…".to_owned(),
@@ -520,6 +532,32 @@ mod tests {
         assert_eq!(d.key(true, at(1100, t)), None);
         assert_eq!(d.key(false, at(1200, t)), None);
         assert_eq!(d.phase(), &Phase::Transcribing);
+    }
+
+    #[test]
+    fn cleaning_says_the_text_is_with_the_model_and_ends_with_the_result() {
+        let mut d = Dictation::new();
+        d.key(true, Instant::now());
+        d.event(Dictate::Transcribing);
+        let before = d.epoch();
+        assert_eq!(d.pill().unwrap().text, "Transcribing…");
+        d.event(Dictate::Cleaning);
+        assert_eq!(d.phase(), &Phase::Transcribing);
+        assert_eq!(d.pill().unwrap().text, "Cleaning up with the model…");
+        assert!(d.epoch() > before);
+        d.event(Dictate::Dictated {
+            text: "Hello.".into(),
+        });
+        assert_eq!(d.pill().unwrap().text, "Hello.");
+    }
+
+    #[test]
+    fn a_stray_cleaning_outside_transcribing_changes_nothing() {
+        let mut d = Dictation::new();
+        let before = d.epoch();
+        d.event(Dictate::Cleaning);
+        assert_eq!(d.epoch(), before);
+        assert_eq!(d.phase(), &Phase::Idle);
     }
 
     #[test]

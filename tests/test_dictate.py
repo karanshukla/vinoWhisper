@@ -106,8 +106,11 @@ def test_start_then_stop_decodes_once_and_reports_the_device():
 
 
 def test_audio_is_normalized_before_it_is_decoded():
-    quiet = pcm.sine(220.0, 2.0, amplitude=0.01)
+    # Speech-like: a room bed with a quiet word in it. A bare constant tone is room noise.
+    bed = pcm.noise(0.5, amplitude=0.004)
+    quiet = np.concatenate([bed, pcm.sine(220.0, 1.5, amplitude=0.01), bed])
     _, _, client = _run(["start", "stop"], signal=quiet)
+    assert len(client.decoded) == 1
     assert dictate.audio.rms(client.decoded[0]) > dictate.audio.rms(quiet)
 
 
@@ -619,7 +622,8 @@ def test_a_silent_segment_is_not_decoded_but_the_utterance_still_is():
     signal = np.concatenate([pcm.silence(5.5), pcm.sine(220.0, 1.0, amplitude=0.1)])
     _, _, client = _run(["start", "stop"], signal=signal)
     assert len(client.decoded) == 1
-    assert client.decoded[0].size == pcm.samples_for(1.5)
+    # The 0.5s of quiet before the word is cut to the pad, not decoded whole.
+    assert client.decoded[0].size == pcm.samples_for(1.0 + dictate.config.TRIM_PAD_S)
 
 
 def test_a_failed_segment_decode_is_reported_once():
@@ -769,3 +773,255 @@ def test_release_line_is_off_without_trace(capsys, monkeypatch):
     monkeypatch.delenv("VINOWHISPER_DICTATE_TRACE", raising=False)
     _trace(SPEECH, trace=None)
     assert "dictate-release" not in capsys.readouterr().err
+
+
+class FakeCleaner:
+    def __init__(self, answer=None, wants: bool = True) -> None:
+        self._answer = answer
+        self._wants = wants
+        self.prepared = 0
+        self.seen: list[str] = []
+
+    def prepare(self) -> None:
+        self.prepared += 1
+
+    @property
+    def active(self) -> bool:
+        return self._answer is not None
+
+    def wants(self, text: str) -> bool:
+        return self._wants
+
+    def __call__(self, text: str):
+        self.seen.append(text)
+        return self._answer(text)
+
+
+def _run_cleaned(cleaner, transcript="um hello there"):
+    records: list[dict] = []
+    client = FakeClient(transcript=transcript)
+
+    def recorder(tap):
+        return FakeRecording(tap, SPEECH)
+
+    dictation = dictate.Dictation(records.append, client=client, recorder=recorder, cleaner=cleaner)
+    dictation.feed(["start", "stop"]).join()
+    dictation.run()
+    return [r for r in records if r["event"] != "Level"]
+
+
+def _outcome(text, cleaned=True, reason=None):
+    return dictate.cleanup.Outcome(text, cleaned, reason, 0.1)
+
+
+def test_cleanup_announces_itself_then_types_the_cleaned_text():
+    cleaner = FakeCleaner(lambda text: _outcome("Hello there."))
+    records = _run_cleaned(cleaner)
+    events = [r["event"] for r in records]
+    assert events == ["Listening", "Transcribing", "Ready", "Cleaning", "Dictated"]
+    assert records[-1]["text"] == "Hello there."
+    assert records[-1]["cleaned"] is True
+    assert cleaner.prepared == 1
+
+
+def test_a_refused_cleanup_types_the_raw_transcript():
+    cleaner = FakeCleaner(lambda text: _outcome(text, cleaned=False, reason="timed out"))
+    records = _run_cleaned(cleaner)
+    assert records[-1]["text"] == "um hello there"
+    assert records[-1]["cleaned"] is False
+
+
+def test_cleanup_sees_the_text_before_replacements_and_replacements_still_apply(monkeypatch):
+    monkeypatch.setattr(dictate.replacements, "load", lambda: {"hello": "HELLO"})
+    cleaner = FakeCleaner(lambda text: _outcome("hello there"))
+    records = _run_cleaned(cleaner)
+    assert cleaner.seen == ["um hello there"]
+    assert records[-1]["text"] == "HELLO there"
+
+
+def test_an_inactive_cleaner_costs_no_event_and_no_call():
+    cleaner = FakeCleaner(None)
+    records = _run_cleaned(cleaner)
+    assert "Cleaning" not in [r["event"] for r in records]
+    assert records[-1]["cleaned"] is False
+    assert cleaner.seen == []
+
+
+def test_a_transcript_with_nothing_to_fix_skips_the_request_and_the_pill_state():
+    cleaner = FakeCleaner(lambda text: _outcome(text), wants=False)
+    records = _run_cleaned(cleaner)
+    assert "Cleaning" not in [r["event"] for r in records]
+    assert records[-1]["text"] == "um hello there"
+    assert cleaner.seen == []
+
+
+def _fed(segmenter, signal):
+    pieces = []
+    for chunk in pcm.chunks(signal):
+        cut = segmenter.add(chunk)
+        if cut is not None:
+            pieces.append(cut)
+    return pieces, segmenter.finish()
+
+
+def test_trailing_quiet_is_not_sent_to_the_decoder():
+    """Reported 2026-10-11: a final decode of speech plus 2.5s of room added a sentence.
+
+    Whisper writes text for noise. The piece keeps TRIM_PAD_S of context and no more.
+    """
+    speech = pcm.sine(220.0, 1.0, amplitude=0.1)
+    room = pcm.noise(2.5, amplitude=0.004)
+    _, final = _fed(dictate._Segmenter(), np.concatenate([speech, room]))
+    seconds = final.size / config.SAMPLE_RATE_HZ
+    assert 1.0 <= seconds <= 1.0 + config.TRIM_PAD_S + 0.2
+
+
+def test_leading_quiet_is_trimmed_too():
+    room = pcm.noise(1.5, amplitude=0.004)
+    speech = pcm.sine(220.0, 1.0, amplitude=0.1)
+    _, final = _fed(dictate._Segmenter(), np.concatenate([room, speech]))
+    seconds = final.size / config.SAMPLE_RATE_HZ
+    assert seconds <= 1.0 + config.TRIM_PAD_S + 0.2
+
+
+def test_a_pause_inside_the_speech_is_kept():
+    word = pcm.sine(220.0, 0.6, amplitude=0.1)
+    gap = pcm.noise(0.8, amplitude=0.004)
+    signal = np.concatenate([word, gap, word])
+    _, final = _fed(dictate._Segmenter(), signal)
+    assert final.size >= signal.size - 2 * int(0.3 * config.SAMPLE_RATE_HZ) - 1600
+
+
+def test_characterization_a_recording_of_only_room_noise_is_not_decoded():
+    """characterization: reported 2026-10-11, noise typed as sentences.
+
+    Held key, nobody talking: 4s of ambient 0.011-0.028 rms. The fixed 0.002 gate
+    called it speech, normalize() lifted it x2.7, and both Whisper models wrote a
+    different sentence for every slice of it. A recording that never rises above its own
+    quietest stretch is room noise and is not decoded. If this is "fixed" back to an
+    absolute level, a quiet room's hiss is typed as words.
+    """
+    swing = np.concatenate(
+        [pcm.noise(0.1, amplitude=a, seed=i + 1) for i, a in enumerate([0.02, 0.05] * 20)]
+    )
+    segmenter = dictate._Segmenter()
+    pieces, final = _fed(segmenter, swing)
+    assert segmenter.stationary
+    assert final.size == 0
+    assert pieces == []
+
+
+def test_audio_is_kept_only_when_asked_and_never_crashes_a_dictation(monkeypatch, tmp_path):
+    signal = pcm.sine(220.0, 1.0, amplitude=0.1)
+    _run(["start", "stop"], signal=signal)
+    assert not list(tmp_path.iterdir())
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", str(tmp_path / "kept"))
+    records, _, _ = _run(["start", "stop"], signal=signal)
+    assert records[-1]["event"] == "Dictated"
+    names = sorted(p.name.split("-", 2)[-1] for p in (tmp_path / "kept").iterdir())
+    assert names == ["decoded.wav", "full.wav", "raw.wav"]
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", "/proc/forbidden/kept")
+    records, _, _ = _run(["start", "stop"], signal=signal)
+    assert records[-1]["event"] == "Dictated"
+
+
+def test_kept_audio_is_private_and_only_the_newest_are_kept(monkeypatch, tmp_path):
+    """A recording of the user's voice: owner-only, and not an ever-growing archive."""
+    import stat
+
+    kept = tmp_path / "kept"
+    monkeypatch.setenv("VINOWHISPER_DICTATE_AUDIO_DIR", str(kept))
+    monkeypatch.setattr(dictate, "_KEPT_PIECES", 2)
+    stamps = iter(f"20261011-0000{n:02d}" for n in range(10))
+    monkeypatch.setattr(dictate.time, "strftime", lambda fmt: next(stamps))
+    for _ in range(5):
+        _run(["start", "stop"], signal=pcm.sine(220.0, 1.0, amplitude=0.1))
+    files = sorted(kept.iterdir())
+    assert len(files) == 6
+    assert stat.S_IMODE(kept.stat().st_mode) == 0o700
+    assert all(stat.S_IMODE(f.stat().st_mode) == 0o600 for f in files)
+    assert files[-1].name.startswith("20261011-000004")
+
+
+def test_characterization_a_quiet_remnant_after_a_cut_is_not_decoded():
+    """characterization: reported 2026-10-11, 'Hello, my name's Jim.' typed with 'you'.
+
+    0.34s of room after the last word (rms 0.016, over the fixed gate) decoded to
+    "you" as a second piece. Whisper writes text for noise. Once a piece has been cut,
+    a remainder with nothing above the noise floor is dropped, not decoded. A first
+    and only piece is untouched: a soft speaker has nothing else to fall back on.
+    """
+    segmenter = dictate._Segmenter()
+    speech = np.concatenate([pcm.sine(220.0, 5.2, amplitude=0.1), pcm.noise(0.4, amplitude=0.004)])
+    pieces, final = _fed(segmenter, speech)
+    assert len(pieces) == 1
+    segmenter2 = dictate._Segmenter()
+    tail = pcm.noise(0.34, amplitude=0.004)
+    pieces2, final2 = _fed(segmenter2, np.concatenate([speech, tail]))
+    assert len(pieces2) == 1
+    assert final2.size == 0
+
+
+def _room_noise(seconds: float, seed: int = 11) -> np.ndarray:
+    """Machine-generated room noise that swings the way a real room does.
+
+    A recorded room (2026-10-11) read 0.011-0.028 rms in 100ms steps, a 2.5x swing, and
+    Whisper wrote a sentence for it. Uniform noise has rms amplitude / sqrt(3), so the
+    per-100ms amplitude is drawn from 0.019-0.048 to land in that band. Nothing here is a
+    recording of anyone.
+    """
+    state = seed
+    steps = int(round(seconds * 10))
+    out = []
+    for step in range(steps):
+        state = (1664525 * state + 1013904223) % 2**32
+        amplitude = 0.019 + (state >> 8) % 1000 / 1000 * 0.029
+        out.append(pcm.noise(0.1, amplitude=amplitude, seed=step + 1 + seed))
+    return np.concatenate(out)
+
+
+def test_characterization_room_noise_that_became_sentences_is_not_decoded():
+    """characterization: reported 2026-10-11, a quiet room typed as sentences.
+
+    4s of ambient noise (0.011-0.028 rms, no speech) that whisper-small.en and
+    whisper-small each turned into a different sentence on every decode ("When you do
+    back your leg...", "you"). The noise here is synthetic with the same swing; nothing
+    in this repo is a recording of a person.
+    """
+    segmenter = dictate._Segmenter()
+    pieces, final = _fed(segmenter, _room_noise(4.2))
+    assert segmenter.stationary
+    assert pieces == []
+    assert final.size == 0
+
+
+@pytest.mark.parametrize("seconds", [4.2, 0.34])
+def test_that_room_noise_after_real_speech_is_still_dropped_and_the_speech_is_kept(seconds):
+    speech = pcm.sine(220.0, 5.2, amplitude=0.1)
+    gap = pcm.noise(0.4, amplitude=0.004)
+    segmenter = dictate._Segmenter()
+    pieces, final = _fed(segmenter, np.concatenate([speech, gap, _room_noise(seconds)]))
+    assert len(pieces) == 1
+    assert pieces[0].size >= pcm.samples_for(5.0)
+    assert final.size == 0, segmenter.note()
+
+
+def test_continuous_loud_speech_is_not_mistaken_for_room_noise():
+    # No pause at all: the quietest stretch is itself speech, so a floor test alone fails.
+    syllables = np.concatenate(
+        [pcm.sine(200.0 + 40 * i, 0.25, amplitude=a) for i, a in enumerate([0.15, 0.2] * 8)]
+    )
+    segmenter = dictate._Segmenter()
+    _, final = _fed(segmenter, syllables)
+    assert not segmenter.stationary
+    assert final.size > 0
+
+
+def test_a_second_sentence_after_a_pause_is_decoded():
+    first = pcm.sine(220.0, 5.2, amplitude=0.1)
+    gap = pcm.noise(0.5, amplitude=0.004)
+    second = pcm.sine(300.0, 1.5, amplitude=0.1)
+    segmenter = dictate._Segmenter()
+    pieces, final = _fed(segmenter, np.concatenate([first, gap, second]))
+    assert len(pieces) == 1
+    assert final.size >= second.size

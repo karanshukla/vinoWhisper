@@ -46,6 +46,7 @@ pub enum Dictate {
         text: String,
     },
     Transcribing,
+    Cleaning,
     Ready {
         device: String,
         #[serde(default)]

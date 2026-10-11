@@ -407,6 +407,120 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
+**LLM cleanup (beta), added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
+Beta means: the behaviour is measured (below) but on one laptop, one microphone
+and one hosted model, the thresholds may move, and the settings file keys may
+change. It is safe to leave on in the sense that every failure types the raw
+transcript; it is not yet tuned for other rooms or voices.
+Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and the final transcript (never the live
+previews) goes to an Anthropic-compatible `/v1/messages` endpoint, which drops
+fillers, applies self-corrections and applies spoken edits ("scratch that",
+"delete that last word"; "literal" before the phrase keeps it as text).
+**This is the one path where dictated text leaves the machine**: with a local
+endpoint it does not, with the hosted default it does.
+
+The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `url`,
+`model`, `budget_s`), which `vinowhisper-dictate` re-reads at each key press, so
+no restart is needed. An environment variable beats the file:
+
+| Variable | File key | Default |
+|---|---|---|
+| `VINOWHISPER_CLEANUP` | `enabled` | off |
+| `VINOWHISPER_CLEANUP_URL` | `url` | `https://api.anthropic.com` |
+| `VINOWHISPER_CLEANUP_MODEL` | `model` | `claude-haiku-5-5` |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `3.0`, a hard deadline |
+| `VINOWHISPER_CLEANUP_MODE` | `mode` | `smart`, or `always` |
+| `ANTHROPIC_API_KEY` | none | else the Secret Service entry `service=vinowhisper account=anthropic-api-key` |
+
+The key is never in that file. The window stores it with `secret-tool store`,
+passing the value on stdin so it is not in `ps`, and shows only whether one is
+stored. A wallet protects it from backups and a copied dotfile, not from other
+code running as you, which can ask the wallet too. The page also says whether
+the address is loopback (text stays here) or not (text and key leave).
+
+- **Deletion only.** The answer is used only if its words are an ordered
+  subsequence of the transcript's (case and punctuation ignored). Anything
+  else, an empty answer, a timeout, an HTTP error or no key types the raw
+  transcript. That also means "three" becoming "3" is refused: v1 trades
+  that for a check with no heuristics, and a model answering a dictated
+  question or obeying it cannot get past it.
+- **Characters are checked too.** Control characters, newlines and any
+  punctuation the speaker did not already produce are refused, so an answer
+  cannot add shell syntax to a terminal paste. Only `. , ! ? : ' " - – … ` may
+  appear that were not in the transcript.
+- **Replacements run after it**, on the cleaned text, so the check sees the
+  words Whisper wrote.
+- **Smart mode skips most requests.** The call costs a fixed ~0.9-1.0s
+  whatever the size: measured 2026-10-11, 32 and 92 output tokens both took
+  1.02s, a reused connection saved nothing (TLS is ~30ms here), and halving the
+  prompt moved the median 4%. Nothing hides that second except not paying it, so
+  `smart` (the default) sends only text with a filler (um, uh, er), a cue
+  (actually, sorry, wait, "I mean", "scratch that", "delete that", "you know",
+  literal, and the French, German and Spanish equivalents: euh, ähm, "non attends",
+  "nein warte", "streich das", "no espera", "borra eso"…) or an adjacent repeated word, and types everything else at once with
+  no `Cleaning` state. A correction spoken with none of those words, like
+  "three, four", goes through only in `always`. Overlapping the call with the
+  final decode was considered and not built: previews are up to 1.5s stale and
+  skipped at pauses, so the text at release rarely equals the last preview's.
+- **Other languages.** The prompt asks for the same edits in the transcript's
+  language, with a French, a German and a Spanish example. Measured 2026-10-11
+  on `claude-haiku-5-5`: 11 of 12 correct across fr, de and es (corrections,
+  spoken edits, fillers, questions left alone). The miss paraphrased "genre",
+  which the check refused, so the raw text was typed. The cue lists are merged
+  across languages because the language is `auto` here and a stray match only
+  costs a request.
+- **Not streamed.** The text is pasted once, after the whole answer has been
+  checked, so first-token time buys nothing; only the last token matters.
+- **No `temperature`**: current models reject any non-default sampling
+  parameter.
+- **Thinking is off.** Measured 2026-10-11 on `claude-haiku-5-5`: with it on, a
+  ten-token answer spent about a hundred tokens on a thinking block and hit
+  `max_tokens`, so a correct answer was refused as truncated.
+- **Measured 2026-10-11** (n=21, seven dictations of 5 to 17 words, hosted
+  endpoint, this laptop): median 0.88-0.92s, max 1.3s per call, about 15-20
+  output tokens. That lands typing roughly 1.5s after release, against 0.65s
+  without it. The system prompt is most of the input (about 850 tokens), but
+  halving it moved the median by only 4%, so the round trip is dominated by
+  the network and first-token time, not the prompt.
+- **The model still sometimes paraphrases** ("the thing is that we need the
+  build" becoming "the build needs"): 1 in 8 on the hardest line, caught by the
+  check, so the raw text is typed.
+- The pill says "Cleaning up with the model…" while the request is out, from
+  the `Cleaning` event.
+- `python -m vinowhisper.cleanup "um so scratch that"` runs one round trip and
+  prints the wall time on stderr, which is the measurement #81 asks for first.
+
+Not run against a real endpoint or on hardware: unit tests only, with a fake
+transport. The latency table and the prompt's test set are still to do.
+
+**Room noise is not speech, added 2026-10-11.** Reported from real use: a
+held key or a hands-free tail over ambient noise typed sentences nobody said.
+Measured on the reporter's laptop: the room sits at 0.011-0.028 rms, the fixed
+gate was 0.002, `normalize()` lifted the clip x2.7 to speech level, and
+whisper-small.en and whisper-small each wrote a different sentence for every
+slice of the same 4s of noise ("When you do back your leg...", "you"). Two
+rules in `_Segmenter`, constants in `config.py`:
+
+- **Stationary recording**: if the loudest 500ms is under 2.8x the quietest
+  100ms and under 0.04 rms, nothing in it is speech and nothing is decoded.
+- **A piece needs speech in it**: at least two 100ms chunks at 60% of the
+  recording's loudest level. A quiet remainder after a cut is not a second
+  utterance, and quiet is trimmed to 0.3s around the words.
+
+Tuned on one room and one microphone, and the failure mode of being wrong is a
+dropped quiet word, so `VINOWHISPER_CLEANUP_DEBUG=1` prints the floor, speech
+level and verdict for each dictation (`gate: floor=... speech=...`). The tests
+use machine-generated noise with the measured swing; no recording of a person is
+kept in the repo.
+
+**Debugging switches that keep what you said, off by default.**
+`VINOWHISPER_CLEANUP_DEBUG=1` prints the dictated text and the model's answer
+to the tray's stderr. `VINOWHISPER_DICTATE_AUDIO_DIR=<dir>` writes the raw and
+decoded audio of each dictation there as WAV, in a `0700` directory with `0600`
+files, newest ten dictations only; `scripts/decode_wav.py` replays them. Both
+put your voice or words on disk or in whatever captures stderr, so leave them
+unset except while chasing a bug, and delete the directory after.
+
 **Does the `pw-record` startup delay clip the first word? Not measured yet**
 ([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
 above is when audio arrives, not whether speech is lost. Keeping the mic open

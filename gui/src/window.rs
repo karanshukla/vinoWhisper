@@ -5,9 +5,11 @@ use std::time::Duration;
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke};
 
 use crate::forward::{self, Shortcuts};
+use crate::secret::{self, Key};
 use crate::theme;
 use vinowhisper_settings::{
-    Language, Position, Settings, Source, Speech, Task, TextSize, multilingual_installed,
+    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Task, TextSize,
+    multilingual_installed,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,10 +17,11 @@ enum Page {
     Shortcuts,
     Captions,
     Speech,
+    Cleanup,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Shortcuts, Page::Captions, Page::Speech];
+    const ALL: [Page; 4] = [Page::Shortcuts, Page::Captions, Page::Speech, Page::Cleanup];
 
     fn parse(name: &str) -> Option<Page> {
         Page::ALL
@@ -26,11 +29,16 @@ impl Page {
             .find(|page| page.title().eq_ignore_ascii_case(name))
     }
 
+    fn beta(self) -> bool {
+        self == Page::Cleanup
+    }
+
     fn title(self) -> &'static str {
         match self {
             Page::Shortcuts => "Shortcuts",
             Page::Captions => "Captions",
             Page::Speech => "Speech",
+            Page::Cleanup => "Cleanup",
         }
     }
 }
@@ -54,6 +62,13 @@ fn size_label(size: TextSize) -> &'static str {
         TextSize::Small => "Small",
         TextSize::Medium => "Medium",
         TextSize::Large => "Large",
+    }
+}
+
+fn mode_label(mode: CleanupMode) -> &'static str {
+    match mode {
+        CleanupMode::Smart => "Only when it hears something to fix",
+        CleanupMode::Always => "Every dictation",
     }
 }
 
@@ -105,12 +120,18 @@ const SIDEBAR_FROM: f32 = 620.0;
 const SIDEBAR_WIDTH: f32 = 180.0;
 const LABEL_WIDTH: f32 = 150.0;
 const FORM_MAX_WIDTH: f32 = 620.0;
+// Between the form and the scroll bar, which sits on the window's right edge.
+const SCROLL_GAP: f32 = 24.0;
 const TWO_COLUMNS_FROM: f32 = 440.0;
 
 struct SettingsWindow {
     page: Page,
     settings: Settings,
     speech: Speech,
+    cleanup: Cleanup,
+    cleanup_dirty: bool,
+    key: Arc<Mutex<Key>>,
+    key_input: String,
     multilingual: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
@@ -127,6 +148,10 @@ impl SettingsWindow {
             page: page.unwrap_or(Page::Shortcuts),
             settings: Settings::load(),
             speech: Speech::load(),
+            cleanup: Cleanup::load(),
+            cleanup_dirty: false,
+            key: Arc::new(Mutex::new(Key::Checking)),
+            key_input: String::new(),
             multilingual: multilingual_installed(),
             focused: true,
             kde_header: theme::kde_header(),
@@ -299,6 +324,183 @@ impl SettingsWindow {
         changed
     }
 
+    fn run_key(&self, ctx: &egui::Context, job: impl FnOnce() -> Key + Send + 'static) {
+        let key = Arc::clone(&self.key);
+        let ctx = ctx.clone();
+        *key.lock().unwrap() = Key::Checking;
+        std::thread::spawn(move || {
+            let answer = job();
+            *key.lock().unwrap() = answer;
+            ctx.request_repaint();
+        });
+    }
+
+    fn cleanup(&mut self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        ui.add_space(10.0);
+        egui::Frame::NONE
+            .fill(p.code_bg)
+            .stroke(Stroke::new(1.0_f32, p.rule))
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Beta").family(theme::bold()));
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "New, and tuned on one microphone. It may skip a quiet word, or leave \
+                             text as you said it when the model's answer does not check out. Tell us \
+                             what it gets wrong.",
+                        )
+                        .size(12.5)
+                        .color(p.muted),
+                    )
+                    .wrap(),
+                );
+            });
+        section(ui, "Dictation cleanup");
+        row(
+            ui,
+            "Clean up:",
+            "Sends what you dictate to a language model before it is typed, to drop ums, apply \
+             corrections and act on \"scratch that\". It only ever deletes words, and any other \
+             answer is thrown away and the raw text is typed. Off by default.",
+            |ui| {
+                self.cleanup_dirty |= ui
+                    .checkbox(&mut self.cleanup.enabled, "Clean up dictation")
+                    .changed();
+            },
+        );
+        let off = !self.cleanup.enabled;
+        ui.add_enabled_ui(!off, |ui| {
+            section(ui, "Endpoint");
+            let wide = (ui.available_width() - LABEL_WIDTH).clamp(200.0, 380.0);
+            row(
+                ui,
+                "Address:",
+                "An Anthropic-compatible server. A local one keeps the text on this machine.",
+                |ui| {
+                    let edit = ui
+                        .add(egui::TextEdit::singleline(&mut self.cleanup.url).desired_width(wide));
+                    self.cleanup_dirty |= edit.changed();
+                },
+            );
+            row(
+                ui,
+                "Send:",
+                "Each request takes about a second. Smart skips it for text with no filler, correction or spoken edit in it, which is most of what you say.",
+                |ui| {
+                    self.cleanup_dirty |= combo(
+                        ui,
+                        "cleanup-mode",
+                        &mut self.cleanup.mode,
+                        &CleanupMode::ALL,
+                        mode_label,
+                    );
+                },
+            );
+            row(ui, "Model:", "Any model name the endpoint accepts.", |ui| {
+                let edit =
+                    ui.add(egui::TextEdit::singleline(&mut self.cleanup.model).desired_width(wide));
+                self.cleanup_dirty |= edit.changed();
+            });
+            row(
+                ui,
+                "Time limit:",
+                "Seconds to wait before typing the raw text instead.",
+                |ui| {
+                    let slider = ui.add(
+                        egui::DragValue::new(&mut self.cleanup.budget_s)
+                            .range(0.5..=30.0)
+                            .speed(0.1)
+                            .fixed_decimals(1)
+                            .suffix(" s"),
+                    );
+                    self.cleanup_dirty |= slider.on_hover_cursor(egui::CursorIcon::Text).changed();
+                },
+            );
+            let (tone, text) = if self.cleanup.is_local() {
+                (
+                    p.muted,
+                    "This address is on this machine. Nothing leaves it.",
+                )
+            } else {
+                (
+                    ui.visuals().warn_fg_color,
+                    "Dictated text is sent to this address, along with your key.",
+                )
+            };
+            row(ui, "", "", |ui| {
+                ui.label(RichText::new(text).color(tone));
+            });
+            if let Some(name) = overriding_variable() {
+                row(
+                    ui,
+                    "",
+                    &format!(
+                        "{name} is set in this window's environment and beats this page, so the address above may not be the one in use."
+                    ),
+                    |_| {},
+                );
+            }
+        });
+
+        section(ui, "API key");
+        let state = self.key.lock().unwrap().clone();
+        let working = state == Key::Checking;
+        let status = match &state {
+            Key::Checking => "Checking…".to_owned(),
+            Key::Stored => "A key is stored in your desktop's wallet.".to_owned(),
+            Key::Missing => "No key is stored. ANTHROPIC_API_KEY in the environment is used if set."
+                .to_owned(),
+            Key::NoTool => "No wallet tool found (secret-tool). Set ANTHROPIC_API_KEY in the environment instead."
+                .to_owned(),
+            Key::Failed(why) => format!("The wallet said: {why}"),
+        };
+        row(ui, "Status:", "", |ui| {
+            let color = if matches!(state, Key::Failed(_)) {
+                ui.visuals().error_fg_color
+            } else {
+                p.muted
+            };
+            ui.label(RichText::new(status).color(color));
+        });
+        let usable = state != Key::NoTool;
+        ui.add_enabled_ui(usable && !working, |ui| {
+            row(
+                ui,
+                "New key:",
+                "Kept in the wallet, never in a settings file. It cannot be shown again once saved.",
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.key_input)
+                            .password(true)
+                            .hint_text("sk-ant-…")
+                            .desired_width(300.0),
+                    );
+                    ui.horizontal(|ui| {
+                        let has_input = !self.key_input.trim().is_empty();
+                        if ui
+                            .add_enabled(has_input, egui::Button::new("Save key"))
+                            .clicked()
+                        {
+                            let mut entered = std::mem::take(&mut self.key_input);
+                            let trimmed = entered.trim().to_owned();
+                            entered.clear();
+                            self.run_key(ui.ctx(), move || secret::store(&trimmed));
+                        }
+                        if ui
+                            .add_enabled(state == Key::Stored, egui::Button::new("Remove key"))
+                            .clicked()
+                        {
+                            self.run_key(ui.ctx(), secret::clear);
+                        }
+                    });
+                },
+            );
+        });
+    }
+
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         if let Some(notice) = &self.notice {
@@ -354,6 +556,17 @@ impl SettingsWindow {
         );
         changed
     }
+}
+
+fn overriding_variable() -> Option<&'static str> {
+    [
+        "VINOWHISPER_CLEANUP",
+        "VINOWHISPER_CLEANUP_URL",
+        "VINOWHISPER_CLEANUP_MODEL",
+        "VINOWHISPER_CLEANUP_BUDGET_S",
+    ]
+    .into_iter()
+    .find(|name| std::env::var_os(name).is_some())
 }
 
 fn keys(ui: &mut egui::Ui, trigger: &str) {
@@ -440,6 +653,15 @@ fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
         FontId::proportional(14.0),
         p.text,
     );
+    if page.beta() {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(10.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            "beta",
+            FontId::proportional(11.5),
+            p.muted,
+        );
+    }
     if response.clicked() {
         *current = page;
     }
@@ -448,7 +670,11 @@ fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
 fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::Header) {
     let active = *current == page;
     let galley = ui.painter().layout_no_wrap(
-        page.title().to_owned(),
+        if page.beta() {
+            format!("{} (beta)", page.title())
+        } else {
+            page.title().to_owned()
+        },
         if active {
             FontId::new(14.0, theme::bold())
         } else {
@@ -479,6 +705,12 @@ fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::He
 }
 
 impl eframe::App for SettingsWindow {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.cleanup_dirty {
+            self.cleanup.save();
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let focused = ctx.input(|input| input.focused);
         if focused && !self.focused {
@@ -490,6 +722,9 @@ impl eframe::App for SettingsWindow {
         self.focused = focused;
         if self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)) {
             self.ask_shortcuts(ctx, Duration::ZERO);
+        }
+        if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
+            self.run_key(ctx, secret::status);
         }
         self.shown = Some(self.page);
         if let Some(reason) = self.refused.lock().unwrap().take() {
@@ -549,22 +784,38 @@ impl eframe::App for SettingsWindow {
             .frame(
                 egui::Frame::NONE
                     .fill(p.bg)
-                    .inner_margin(egui::Margin::symmetric(24, 4)),
+                    // No right margin: the scroll bar belongs on the window's edge, and the
+                    // content keeps its own gap from it below.
+                    .inner_margin(egui::Margin {
+                        left: 24,
+                        right: 0,
+                        top: 4,
+                        bottom: 4,
+                    }),
             )
             .show(ctx, |ui| {
+                // A solid bar, always drawn: the floating one only shows on hover, so a page
+                // that runs past the window gave no sign there was more below.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width().min(FORM_MAX_WIDTH));
+                        ui.set_max_width((ui.available_width() - SCROLL_GAP).min(FORM_MAX_WIDTH));
                         match self.page {
                             Page::Shortcuts => self.shortcuts(ui),
                             Page::Captions => saved_settings = self.captions(ui),
                             Page::Speech => saved_speech = self.speech(ui),
+                            Page::Cleanup => self.cleanup(ui),
                         }
                         ui.add_space(12.0);
                     });
             });
 
+        if self.cleanup_dirty {
+            self.cleanup_dirty = false;
+            self.cleanup.save();
+        }
         if saved_settings {
             self.settings.save();
             forward::reload_tray(|_| {});
@@ -588,7 +839,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title("vinoWhisper settings")
             .with_app_id(app_id)
-            .with_inner_size([760.0, 480.0])
+            .with_inner_size([820.0, 740.0])
             .with_min_inner_size([340.0, 320.0]),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.

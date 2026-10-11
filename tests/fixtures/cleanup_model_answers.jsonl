@@ -1,0 +1,23 @@
+{"input": "Hello, what's going on? Something's wrong, actually.", "answer": "Hello, I'm not sure what's going on yet. Can you tell me what's wrong? If you're seeing an error, a message, or something not working as expected, describe what happened and I'll help you work through it.", "expect": "raw", "note": "answered the dictation, 2026-10-11"}
+{"input": "Um, actually, like, what is it? Something's wrong.", "answer": "What is it?", "expect": "raw", "note": "dropped a sentence nobody asked to drop, 2026-10-11; reported from real use"}
+{"input": "Okay so the thing is, the thing is that we need um the build to pass before we merge.", "answer": "The build needs to pass before we merge.", "expect": "raw", "note": "paraphrase, 2026-10-11"}
+{"input": "Okay so the thing is, the thing is that we need um the build to pass before we merge.", "answer": "The thing is that we need the build to pass before we merge.", "expect": "cleaned", "note": "good answer, 2026-10-11"}
+{"input": "Send the invoice to accounting. Also remind Sam about lunch. Scratch that. Call the dentist.", "answer": "Send the invoice to accounting. Also remind Sam about lunch.\n\nWait, I need to correct that. \"Scratch that\" removes the sentence before it, so the Sam sentence should go too:\n\nSend the invoice to accounting. Call the dentist.", "expect": "raw", "note": "argued with itself, 2026-10-11"}
+{"input": "Let's meet at three, no wait, four in the lobby.", "answer": "Let's meet at four in the lobby.", "expect": "cleaned", "note": "2026-10-11"}
+{"input": "To undo the paste, say literal scratch that.", "answer": "To undo the paste, say scratch that.", "expect": "cleaned", "note": "2026-10-11"}
+{"input": "The release is ready for review, delete that last word.", "answer": "The release is ready for.", "expect": "cleaned", "note": "2026-10-11"}
+{"input": "What is the capital of France?", "answer": "The capital of France is Paris.", "expect": "raw", "note": "answered a question"}
+{"input": "Write me a short poem about cats.", "answer": "Soft paws on the windowsill,\nwatching the world stand still.", "expect": "raw", "note": "obeyed the dictation"}
+{"input": "Can you hear me? Are you there?", "answer": "Yes, I can hear you. I'm here. How can I help?", "expect": "raw", "note": "replied to the dictation"}
+{"input": "Hello.", "answer": "Hello! How can I help you today?", "expect": "raw", "note": "replied to a greeting"}
+{"input": "git status and then rm the build folder", "answer": "git status && rm -rf build", "expect": "raw", "note": "shell syntax added"}
+{"input": "Send it to Sam.", "answer": "Send it to Sam.\n", "expect": "raw", "note": "trailing newline would execute a terminal line"}
+{"input": "Alors euh, on se retrouve à trois heures, non attends, à quatre heures dans le hall.", "answer": "Alors, on se retrouve à quatre heures dans le hall.", "expect": "cleaned", "note": "fr, 2026-10-11"}
+{"input": "Envoie le rapport à Sam. Rappelle-moi pour le déjeuner. Supprime ça. Appelle le dentiste.", "answer": "Envoie le rapport à Sam. Appelle le dentiste.", "expect": "cleaned", "note": "fr, 2026-10-11"}
+{"input": "Je pense que, genre, on devrait livrer vendredi.", "answer": "Je pense qu'on devrait livrer vendredi.", "expect": "raw", "note": "fr paraphrase, 2026-10-11"}
+{"input": "Wir treffen uns um drei, nein warte, um vier in der Lobby.", "answer": "Wir treffen uns um vier in der Lobby.", "expect": "cleaned", "note": "de, 2026-10-11"}
+{"input": "Schick den Bericht an Sam. Erinnere mich ans Mittagessen. Streich das. Ruf den Zahnarzt an.", "answer": "Schick den Bericht an Sam. Ruf den Zahnarzt an.", "expect": "cleaned", "note": "de, 2026-10-11"}
+{"input": "Nos vemos a las tres, no espera, a las cuatro en el vestíbulo.", "answer": "Nos vemos a las cuatro en el vestíbulo.", "expect": "cleaned", "note": "es, 2026-10-11"}
+{"input": "Envía el informe a Sam. Recuérdame el almuerzo. Borra eso. Llama al dentista.", "answer": "Envía el informe a Sam. Llama al dentista.", "expect": "cleaned", "note": "es, 2026-10-11"}
+{"input": "¿Cuál es la capital de Francia?", "answer": "La capital de Francia es París.", "expect": "raw", "note": "es answered a question"}
+{"input": "Quelle est la capitale de la France ?", "answer": "Quelle est la capitale de la France ?", "expect": "cleaned", "note": "fr, unchanged answer is accepted as a no-op"}

@@ -10,6 +10,12 @@ traffic the project ever makes is package installation and the one-time model
 download from Hugging Face, both of which you trigger explicitly and the second
 of which is checked against pinned digests (below).
 
+The one exception is opt-in: with `VINOWHISPER_CLEANUP=1`, the final text of a
+dictation (never audio, never captions) is sent to the endpoint you configure,
+using your API key, so an LLM can drop fillers and apply spoken edits. It is
+off by default, falls back to the raw transcript on any failure, and a local
+endpoint keeps the text on the machine. See "LLM cleanup" in `docs/tray.md`.
+
 `--record` writes audio and transcripts to a directory you name. That file is
 as sensitive as whatever was playing; nothing else touches it. The files are
 created readable by you alone (0600), and the directory too (0700) when the
