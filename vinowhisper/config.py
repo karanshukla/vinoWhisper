@@ -46,7 +46,7 @@ def check_language(language: str, task: str) -> None:
         raise ValueError("translate turns speech into English; give the spoken language or auto")
 
 
-# Shared with vinowhisper-gui, whose tray writes it. Not baked into the systemd unit, so a
+# Shared with vinowhisper-tray, whose tray writes it. Not baked into the systemd unit, so a
 # switch needs a server restart and no edited unit. A flag on the server overrides it.
 LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 

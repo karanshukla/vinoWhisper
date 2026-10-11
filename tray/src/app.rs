@@ -261,7 +261,7 @@ pub fn run(options: Options) -> Result<(), String> {
             Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => return Err(err.to_string()),
             Err(err) => {
                 eprintln!(
-                    "[vinowhisper-gui] `vinowhisper-gui toggle` will not reach this instance: {err}"
+                    "[vinowhisper-tray] `vinowhisper-tray toggle` will not reach this instance: {err}"
                 );
                 None
             }
@@ -271,11 +271,11 @@ pub fn run(options: Options) -> Result<(), String> {
     // Before the portal: it refuses a shortcut to an app with no desktop file.
     match install::ensure_launcher() {
         Ok(Some(path)) => eprintln!(
-            "[vinowhisper-gui] added a launcher at {} (the shortcut portal needs one)",
+            "[vinowhisper-tray] added a launcher at {} (the shortcut portal needs one)",
             path.display()
         ),
         Ok(None) => {}
-        Err(err) => eprintln!("[vinowhisper-gui] no launcher, so no global shortcut: {err}"),
+        Err(err) => eprintln!("[vinowhisper-tray] no launcher, so no global shortcut: {err}"),
     }
     let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=1, ()).ok();
     let clipboard = match &seat {
@@ -285,7 +285,7 @@ pub fn run(options: Options) -> Result<(), String> {
     let clipboard = match clipboard {
         Ok(clipboard) => Some(clipboard),
         Err(err) => {
-            eprintln!("[vinowhisper-gui] dictation cannot set the clipboard: {err}");
+            eprintln!("[vinowhisper-tray] dictation cannot set the clipboard: {err}");
             None
         }
     };
@@ -485,7 +485,7 @@ impl App {
         if let Some(timer) = &self.idle_timer
             && let Err(err) = timer.arm(Duration::from_secs(minutes.saturating_mul(60)))
         {
-            eprintln!("[vinowhisper-gui] could not start the tray's idle timer: {err}");
+            eprintln!("[vinowhisper-tray] could not start the tray's idle timer: {err}");
         }
     }
 
@@ -580,7 +580,7 @@ impl App {
 
     // A restart drops the request in flight and the audio recorded so far, so say no.
     fn refuse_speech_switch(&mut self) {
-        eprintln!("[vinowhisper-gui] language not changed: {SWITCH_REFUSED}");
+        eprintln!("[vinowhisper-tray] language not changed: {SWITCH_REFUSED}");
         self.flash(SWITCH_REFUSED);
         // The menu may already show the clicked choice; push the real one back.
         self.tray_view = None;
@@ -696,7 +696,7 @@ impl App {
                 if let Some(session) = &app.session
                     && session.generation == generation
                 {
-                    eprintln!("[vinowhisper-gui] vinowhisper-caption ignored SIGINT; killing it");
+                    eprintln!("[vinowhisper-tray] vinowhisper-caption ignored SIGINT; killing it");
                     session.kill();
                 }
                 TimeoutAction::Drop
@@ -763,7 +763,7 @@ impl App {
             Ok(region) => layer
                 .wl_surface()
                 .set_input_region(Some(region.wl_region())),
-            Err(err) => eprintln!("[vinowhisper-gui] overlay will catch clicks: {err}"),
+            Err(err) => eprintln!("[vinowhisper-tray] overlay will catch clicks: {err}"),
         }
         let (fractional, viewport) = match &self.scaling {
             Some((manager, viewporter)) => (
@@ -817,7 +817,7 @@ impl App {
         match Dictator::start(program, self.dictator_generation, self.tx.clone()) {
             Ok(dictator) => self.dictator = Some(dictator),
             Err(err) => eprintln!(
-                "[vinowhisper-gui] could not start {}: {err}",
+                "[vinowhisper-tray] could not start {}: {err}",
                 program.display()
             ),
         }
@@ -986,7 +986,7 @@ impl App {
     fn set_autostart(&mut self, enabled: bool) {
         match install::set_autostart(enabled, self.caption_override.as_deref()) {
             Ok(()) => self.autostart = enabled,
-            Err(err) => eprintln!("[vinowhisper-gui] could not change start at login: {err}"),
+            Err(err) => eprintln!("[vinowhisper-tray] could not change start at login: {err}"),
         }
     }
 
@@ -1023,7 +1023,7 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
     let (watcher, timer) = match timer {
         Ok(pair) => pair,
         Err(err) => {
-            eprintln!("[vinowhisper-gui] no idle timer, the tray icon stays in view: {err}");
+            eprintln!("[vinowhisper-tray] no idle timer, the tray icon stays in view: {err}");
             return None;
         }
     };
@@ -1036,15 +1036,15 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
             }
             Ok(PostAction::Continue)
         })
-        .map_err(|err| eprintln!("[vinowhisper-gui] no idle timer: {err}"))
+        .map_err(|err| eprintln!("[vinowhisper-tray] no idle timer: {err}"))
         .ok()?;
     Some(timer)
 }
 
 fn trace(message: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_GUI_TRACE").is_some_and(|v| v == "1")) {
-        eprintln!("[vinowhisper-gui] {message}");
+    if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_TRAY_TRACE").is_some_and(|v| v == "1")) {
+        eprintln!("[vinowhisper-tray] {message}");
     }
 }
 
@@ -1063,7 +1063,7 @@ fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(&mut Canvas
     ) {
         Ok(pair) => pair,
         Err(err) => {
-            eprintln!("[vinowhisper-gui] no buffer to draw into: {err}");
+            eprintln!("[vinowhisper-tray] no buffer to draw into: {err}");
             return;
         }
     };
@@ -1077,7 +1077,7 @@ fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(&mut Canvas
     }
     surface.damage_buffer(0, 0, width as i32, height as i32);
     if let Err(err) = buffer.attach_to(surface) {
-        eprintln!("[vinowhisper-gui] could not attach the frame: {err}");
+        eprintln!("[vinowhisper-tray] could not attach the frame: {err}");
         return;
     }
     overlay.layer.commit();

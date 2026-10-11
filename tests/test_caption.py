@@ -123,7 +123,7 @@ def test_a_cycle_rearms_the_silence_notice(capsys):
 
 
 def test_json_mode_writes_one_ascii_object_per_line(capsys):
-    """--json is read line by line from a pipe by vinowhisper-gui. Whisper's
+    """--json is read line by line from a pipe by vinowhisper-tray. Whisper's
     curly quotes must survive as escapes, so a reader under LANG=C (a login
     autostart) never sees a multi-byte character at all.
     """
@@ -138,7 +138,7 @@ def test_json_mode_writes_one_ascii_object_per_line(capsys):
 
 
 def test_the_fields_the_gui_reads_are_on_the_wire(capsys):
-    """gui/src/protocol.rs parses these by name, in another language, in
+    """tray/src/protocol.rs parses these by name, in another language, in
     another process. So each record is `events.to_dict` verbatim, and the
     fields the overlay depends on are named here: renaming one fails this
     test instead of leaving the overlay drawing nothing. If it does go red

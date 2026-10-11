@@ -51,7 +51,7 @@ pub fn spawn(tray: Tray) -> Option<Handle> {
         Ok(handle) => Some(handle),
         Err(err) => {
             eprintln!(
-                "[vinowhisper-gui] no tray icon ({err}); the overlay and the shortcut still work"
+                "[vinowhisper-tray] no tray icon ({err}); the overlay and the shortcut still work"
             );
             None
         }
@@ -227,7 +227,7 @@ fn shortcut_label(state: &ShortcutState) -> (String, bool) {
             false,
         ),
         ShortcutState::Unavailable(_) => (
-            "No global shortcut here: bind “vinowhisper-gui toggle” instead".into(),
+            "No global shortcut here: bind “vinowhisper-tray toggle” instead".into(),
             false,
         ),
     }
@@ -246,7 +246,7 @@ fn dictate_label(state: &ShortcutState) -> String {
         ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
             format!("Dictate ({dictate}): hold to talk, or tap to start and stop")
         }
-        _ => "Dictate: no key bound (or bind “vinowhisper-gui dictate”)".into(),
+        _ => "Dictate: no key bound (or bind “vinowhisper-tray dictate”)".into(),
     }
 }
 
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn no_portal_names_the_command_to_bind() {
         let (label, enabled) = shortcut_label(&ShortcutState::Unavailable("no portal".into()));
-        assert!(label.contains("vinowhisper-gui toggle"));
+        assert!(label.contains("vinowhisper-tray toggle"));
         assert!(!enabled);
     }
 
@@ -465,7 +465,7 @@ mod tests {
             configurable: true,
         };
         assert!(dictate_label(&bound).contains("Meta+H"));
-        assert!(dictate_label(&ShortcutState::Pending).contains("vinowhisper-gui dictate"));
+        assert!(dictate_label(&ShortcutState::Pending).contains("vinowhisper-tray dictate"));
     }
 
     fn labels(items: &[MenuItem<Tray>]) -> Vec<String> {

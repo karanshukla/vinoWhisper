@@ -9,7 +9,7 @@ laptop with an Intel NPU (Wildcat Lake/Panther Lake, 16 TOPS). Uses OpenVINO
 GenAI's `WhisperPipeline` running on-device (`device="NPU"`). Captures system
 audio (or the mic) continuously, transcribes overlapping windows, and prints
 captions to the terminal, or, optionally, draws them in a floating Wayland
-overlay (`gui/`, Rust, added 2026-09-12).
+overlay (`tray/`, Rust, added 2026-09-12).
 
 Originally scoped as toggle-mode voice typing (record, transcribe, inject text
 via `ydotool`), pivoted 2026-08-03 to live captioning. The toggle-mode code is
@@ -49,7 +49,7 @@ Reported problems, and where each one stands after the 2026-08-06 review:
 | Model download had no integrity check | Fixed 2026-09-04 (issue #9): sha256 pins on the exported IR, checked by the wizard, the convert script and the doctor. Found the transformers 5.4.0 export break below on the way. |
 | Nothing works while muted | **Misdiagnosed.** Measured 2026-08-07: muted, with audio playing, the sink monitor reads 0.08578 against the app's 0.08781. Mute does not silence it. The likely real cause is muting the *app* rather than the system, which nothing can capture around. See the gotcha below. |
 
-The captions shortcut exists as of 2026-09-12: `vinowhisper-gui` asks the portal for Meta+Alt+C, the user confirmed
+The captions shortcut exists as of 2026-09-12: `vinowhisper-tray` asks the portal for Meta+Alt+C, the user confirmed
 it in Plasma's dialog, and toggling worked. Meta+H was Ghostty's
 `new-window` until 2026-09-21, when the user unbound it and dictation took it.
 
@@ -168,20 +168,31 @@ consumers, that switch is a swap, not a rewrite.
 - **`--debug` and `--plain` fall back to `TerminalRenderer`**, and so does a
   non-TTY stdout, so piping to a file still works.
 
-## The GUI overlay (`gui/`, Rust), added 2026-09-12
+## The tray and overlay (`tray/`, Rust), added 2026-09-12
+
+**Renamed 2026-10-10: this binary is `vinowhisper-tray`, in `tray/`.** It was
+`vinowhisper-gui` in `gui/` until 1.0.0 work began; `vinowhisper-gui` is to
+become the egui settings window, a separate glibc binary (egui cannot run in
+the static musl build: winit `dlopen`s libwayland and libEGL, measured
+2026-10-10 as `NoWaylandLib`). Everything below about "the GUI" is the tray.
+`APP_ID` did not change. Launchers and login entries written by older versions
+name `vinowhisper-gui`, and the launcher is never overwritten, so the tray
+rewrites that command name on start (`install::migrate_legacy_command`). The
+settings window is not built yet. `gui.json` keeps its name: it is the
+settings window's file too.
 
 Asked for by the user: a GUI that floats above other applications, a tray
 icon to bring it up, a keyboard shortcut (customisable), simple to install,
 "not 100 deps", optional so the TUI installs without it, and, mid-build,
 "preferably native code, like rust, wayland compatible." Full write-up in
-`docs/gui.md`. The load-bearing facts:
+`docs/tray.md`. The load-bearing facts:
 
 - **It is a fourth event consumer, in another process.** It spawns
   `vinowhisper-caption --json` and draws what comes back; `caption.JsonRenderer`
   writes `events.to_dict` verbatim, one ASCII-escaped line each, plus an
   `Error` record. Nothing about capture or stitching is reimplemented, and the
   Python package gained zero dependencies. `tests/test_caption.py` names every
-  field `gui/src/protocol.rs` reads; rename one and a Python test fails.
+  field `tray/src/protocol.rs` reads; rename one and a Python test fails.
 - **Why Rust, measured rather than guessed.** PySide6-Essentials is two wheels
   but 232MB installed. Fedora's PyGObject is built for Python 3.14, which this
   project's venv cannot be. The Rust release binary is 5.6MB (6.3MB with dictation, 2026-09-21) and links only
@@ -210,8 +221,8 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
 - **The child cannot outlive the GUI**: `PR_SET_PDEATHSIG` in `pre_exec`. Linux
   fires it when the *spawning thread* exits, so sessions are only ever started
   from the main thread.
-- **One instance per session** via `$XDG_RUNTIME_DIR/vinowhisper-gui.sock`, so
-  `vinowhisper-gui toggle` works from any keybinding tool.
+- **One instance per session** via `$XDG_RUNTIME_DIR/vinowhisper-tray.sock`, so
+  `vinowhisper-tray toggle` works from any keybinding tool.
 - **Distribution: a GitHub release asset, installed by the wizard. Not PyPI,
   not (yet) COPR.** Both were user decisions on 2026-09-12. A Rust binary
   inside a Python wheel was rejected outright. COPR is deferred, not refused:
@@ -222,13 +233,13 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   `--export-desktop` and the wizard's /usr/bin handling are the hooks left for
   it.
 - **How the wizard trusts the download** (`vinowhisper/overlay.py`):
-  release.yml builds the musl binary, `scripts/pin_gui_release.py` writes its
-  sha256 into `vinowhisper/gui_release.json`, and only then is the wheel built,
+  release.yml builds the musl binary, `scripts/pin_tray_release.py` writes its
+  sha256 into `vinowhisper/tray_release.json`, and only then is the wheel built,
   so PyPI's wheel pins GitHub's binary. **No pin means no download**
   (characterization test), and a mismatch installs nothing and fails setup.
   This is why the whole repo has one version, held by `bump-my-version` and
   `tests/test_packaging.py`: the download URL is the Python package's version.
-- **The icon is drawn as data** (`gui/src/icon.rs`, 2026-09-12). Tray
+- **The icon is drawn as data** (`tray/src/icon.rs`, 2026-09-12). Tray
   pixmaps, the launcher SVG and `docs/assets/vinowhisper.svg` (the README
   logo) come from one list of shapes coloured from `paint.rs`'s palette, so
   the icon looks like the overlay. The symbolic tray SVG is the same
@@ -242,7 +253,7 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   also rewrites per-user icons that differ (they hold nothing of the user's,
   unlike the launcher).
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
-  portal. They draw into memory and bind scratch sockets. The `gui` CI job runs
+  portal. They draw into memory and bind scratch sockets. The `tray` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.
 
 Verified on hardware 2026-09-12: the overlay drew correctly at 1.5x, `quit`
@@ -255,7 +266,7 @@ screen**, and never run on any other compositor.
 Asked for by the user, from issue #12: hold the F5 dictation key (it sends
 Meta+H) to talk, release to type; tap to start hands-free, tap again to
 finish. Rust over Python for the desktop half was the user's call. Full
-write-up in `docs/gui.md`, "Dictation". What was measured before building,
+write-up in `docs/tray.md`, "Dictation". What was measured before building,
 and the traps found building it:
 
 - **The key really holds.** libinput: Meta+H down on press, up on release
@@ -265,7 +276,7 @@ and the traps found building it:
 - **One utterance, one `Dictated`, no stitching.** `vinowhisper-dictate --json`
   takes start/stop/cancel on stdin, records the mic, and (since #54) decodes
   pieces cut at pauses while the key is held, capped at 5 minutes (see
-  `docs/gui.md`). Pre-#54 it posted once, 29.5s at most. The overlay
+  `docs/tray.md`). Pre-#54 it posted once, 29.5s at most. The overlay
   keeps it running idle because Python imports cost 270ms; `pw-record`
   delivers 90-290ms after spawn; 250ms of tail is kept past the release. The
   key press also calls `/health`, so a cold model load overlaps the speech.
@@ -279,12 +290,12 @@ and the traps found building it:
   keyboard, made once at startup; writable here via Steam's udev rules),
   portal as fallback. User's choice.
 - **Non-KDE desktops type through `zwp_virtual_keyboard_v1`** (added
-  2026-09-22, `gui/src/virtual_keyboard.rs`): uinput first, then this, then
+  2026-09-22, `tray/src/virtual_keyboard.rs`): uinput first, then this, then
   the portal. Sway, niri and COSMIC have no RemoteDesktop portal, so without
   it a stock Fedora spin (no udev rule for uinput) could only fill the
   clipboard. The two-key keymap compiled under libxkbcommon and sets Shift
   on keycode 50; no live compositor has run it. Without a shortcuts portal,
-  `vinowhisper-gui dictate-press` / `dictate-release` on a key's press and
+  `vinowhisper-tray dictate-press` / `dictate-release` on a key's press and
   release give hold-to-talk. GNOME stays out: no layer-shell for the pill
   and no data-control for the clipboard, so it needs a different design
   (portal `NotifyKeyboardKeysym` per character, no overlay), not a route.
@@ -299,7 +310,7 @@ and the traps found building it:
   tap's chunks. The mode is only known at the key's release, after `start`,
   so the overlay sends `hands-free` then (not a `start` argument). The 2.5s
   is a guess, untested on hardware.
-- `VINOWHISPER_GUI_TRACE=1` logs every key and state change (not the text).
+- `VINOWHISPER_TRAY_TRACE=1` logs every key and state change (not the text).
   One unreproduced report of a tap doing nothing; a press during
   Transcribing is ignored by design, which is the likely cause.
 
@@ -335,7 +346,7 @@ vinowhisper/
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install
-gui/              vinowhisper-gui, the Rust overlay/tray/shortcut; cargo, not uv
+tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not uv
   src/app.rs      event loop, layer-shell surface, the caption child's lifecycle
   src/captions.rs what the box shows, as plain data (the testable part)
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
@@ -934,7 +945,7 @@ Ordered by what would most change the design.
    static pipeline's tensor lookup only.
 9. **Does the overlay work anywhere but Plasma?** Sway, Hyprland, niri and
    COSMIC all offer layer-shell; none has been tried. (Releases attach a
-   prebuilt static `vinowhisper-gui` from 0.4.0 on, installed and verified by
+   prebuilt static `vinowhisper-tray` from 0.4.0 on, installed and verified by
    `vinowhisper-setup --gui`, so installing it no longer needs cargo.)
 10. **Is whisper.cpp over Vulkan fast enough, and does its wording drift break
     the stitcher?** It is the path to AMD and NVIDIA GPUs, and half
@@ -1001,7 +1012,7 @@ Ordered by what would most change the design.
   says what went wrong is half-finished.
 - **Comments are minimal, at the user's request (2026-09-12).** No module,
   class or function docstrings in `vinowhisper/`, no `//!` or item docs in
-  `gui/src/`. A comment stays only where the code would invite a wrong "fix"
+  `tray/src/`. A comment stays only where the code would invite a wrong "fix"
   without it, and then it is one line. Rationale, measurements and gotchas go
   in the matching `docs/` page instead. `tests/` is exempt, since the
   `characterization:` docstrings there are the rule below.

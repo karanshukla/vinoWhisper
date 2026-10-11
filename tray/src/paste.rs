@@ -40,7 +40,7 @@ impl Failure {
     fn message(&self) -> String {
         match self {
             Failure::Denied => {
-                "typing was not allowed. Paste it yourself, or restart vinowhisper-gui to be asked again".into()
+                "typing was not allowed. Paste it yourself, or restart vinowhisper-tray to be asked again".into()
             }
             Failure::Unavailable(why) => format!("no remote-desktop portal here ({why})"),
             Failure::Failed(why) => why.clone(),
@@ -59,7 +59,7 @@ impl Paster {
             .name("portal-paste".into())
             .spawn(move || future::block_on(run(incoming, tx, compositor)));
         if let Err(err) = spawned {
-            eprintln!("[vinowhisper-gui] dictated text will not be typed: {err}");
+            eprintln!("[vinowhisper-tray] dictated text will not be typed: {err}");
         }
         Paster { requests }
     }
@@ -89,7 +89,7 @@ async fn run(
                 "the remote-desktop portal, which the desktop announces each time"
             };
             eprintln!(
-                "[vinowhisper-gui] /dev/uinput: {err}; dictation will type through {instead}"
+                "[vinowhisper-tray] /dev/uinput: {err}; dictation will type through {instead}"
             );
             None
         }
@@ -103,7 +103,7 @@ async fn run(
                     continue;
                 }
                 Err(err) => {
-                    eprintln!("[vinowhisper-gui] /dev/uinput stopped working ({err})");
+                    eprintln!("[vinowhisper-tray] /dev/uinput stopped working ({err})");
                     keyboard = None;
                 }
             }
@@ -115,7 +115,7 @@ async fn run(
                     continue;
                 }
                 Err(err) => {
-                    eprintln!("[vinowhisper-gui] the virtual keyboard stopped working ({err})");
+                    eprintln!("[vinowhisper-tray] the virtual keyboard stopped working ({err})");
                     compositor = None;
                 }
             }
@@ -125,7 +125,7 @@ async fn run(
             None => paste_once().await,
         };
         if let Err(failure) = &result {
-            eprintln!("[vinowhisper-gui] paste: {}", failure.message());
+            eprintln!("[vinowhisper-tray] paste: {}", failure.message());
             if failure.sticks() {
                 stuck = Some(failure.clone());
             }
@@ -231,7 +231,7 @@ fn save_token(path: &PathBuf, token: &str) {
         });
     if let Err(err) = written {
         eprintln!(
-            "[vinowhisper-gui] could not save {}, so the desktop will ask again next time: {err}",
+            "[vinowhisper-tray] could not save {}, so the desktop will ask again next time: {err}",
             path.display()
         );
     }

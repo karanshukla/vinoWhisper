@@ -400,7 +400,7 @@ def test_clean_keeps_control_characters_off_the_clipboard(raw, expected):
 
 
 def test_every_field_the_overlay_reads_is_emitted():
-    """gui/src/protocol.rs `Dictate` reads these; renaming one blanks the pill silently."""
+    """tray/src/protocol.rs `Dictate` reads these; renaming one blanks the pill silently."""
     records, _, _ = _run(["start", "stop"])
     by_event = {r["event"]: r for r in records}
     assert {"Listening", "Transcribing", "Ready", "Dictated"} <= by_event.keys()

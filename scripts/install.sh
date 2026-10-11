@@ -152,11 +152,11 @@ main() {
     if [[ $GUI -eq 1 ]]; then
         if command -v cargo >/dev/null 2>&1; then
             say "Building the desktop overlay (a few minutes the first time)"
-            run cargo build --release --locked --manifest-path "$INSTALL_DIR/gui/Cargo.toml"
-            run install -Dm755 "$INSTALL_DIR/gui/target/release/vinowhisper-gui" \
-                "$HOME/.local/bin/vinowhisper-gui"
+            run cargo build --release --locked --manifest-path "$INSTALL_DIR/tray/Cargo.toml"
+            run install -Dm755 "$INSTALL_DIR/tray/target/release/vinowhisper-tray" \
+                "$HOME/.local/bin/vinowhisper-tray"
             # The shortcut portal needs the launcher entry
-            run "$HOME/.local/bin/vinowhisper-gui" --install --autostart
+            run "$HOME/.local/bin/vinowhisper-tray" --install --autostart
         else
             warn "--gui needs a Rust toolchain (cargo), which is not installed:"
             warn "  https://rustup.rs, or your distro's rust/cargo package, then re-run with --gui"

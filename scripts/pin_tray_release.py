@@ -3,9 +3,9 @@
 
 Run by .github/workflows/release.yml, not by hand:
 
-    python3 scripts/pin_gui_release.py vinowhisper-gui-x86_64-linux --version 0.4.0
+    python3 scripts/pin_tray_release.py vinowhisper-tray-x86_64-linux --version 0.4.0
 
-Writes vinowhisper/gui_release.json, which `vinowhisper-setup --gui` checks the
+Writes vinowhisper/tray_release.json, which `vinowhisper-setup --gui` checks the
 downloaded binary against (see vinowhisper/overlay.py). Standard library only,
 so it runs on a bare runner before any environment exists.
 """

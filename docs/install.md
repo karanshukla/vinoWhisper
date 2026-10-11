@@ -239,11 +239,11 @@ hardcoded `openai/whisper-small.en` unless you pass your own `--model`.
 
 ## The desktop overlay (optional)
 
-`vinowhisper-setup --gui` installs `vinowhisper-gui`, a floating caption box
+`vinowhisper-setup --gui` installs `vinowhisper-tray`, a floating caption box
 that also does dictation, with a tray icon and global shortcuts. It downloads the binary from the
 GitHub release and checks it against the sha256 pinned in the Python package,
 so no Rust toolchain is needed. It is never on PyPI; from a checkout it can be
-built with cargo instead (`./scripts/install.sh --gui`). See [gui.md](gui.md).
+built with cargo instead (`./scripts/install.sh --gui`). See [tray.md](tray.md).
 
 ## NPU platform data (optional)
 

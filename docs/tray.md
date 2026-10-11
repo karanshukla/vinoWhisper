@@ -1,6 +1,6 @@
 # The overlay: captions and dictation
 
-`vinowhisper-gui` puts the captions in a small box that floats above every
+`vinowhisper-tray` puts the captions in a small box that floats above every
 other window, fullscreen video included. It adds a tray icon and a global
 keyboard shortcut. It is optional: the terminal captions need none of it, and
 installing it adds nothing to the Python package.
@@ -15,7 +15,7 @@ server and every fix to them are shared with the terminal UI.
 vinowhisper-setup --gui
 ```
 
-That downloads `vinowhisper-gui-x86_64-linux` from the GitHub release matching
+That downloads `vinowhisper-tray-x86_64-linux` from the GitHub release matching
 your installed vinoWhisper and checks it against the sha256 pinned inside the
 Python package. It installs the binary into `~/.local/bin`, adds a launcher
 entry, and asks whether to start the tray at login. A plain
@@ -25,7 +25,7 @@ Nothing needs Rust.
 **It is not on PyPI, on purpose.** A Rust GUI has no place inside a Python
 wheel, and `pip install vinowhisper` stays the terminal tool alone. The link
 between the two is the pin. The release workflow builds the binary, writes its
-sha256 into the wheel (`vinowhisper/gui_release.json`), and only then builds
+sha256 into the wheel (`vinowhisper/tray_release.json`), and only then builds
 the wheel, so the digest on PyPI and the binary on GitHub come out of one
 workflow run.
 
@@ -47,9 +47,9 @@ vinowhisper-setup --gui        # sees the checkout and offers `cargo build`
 Or by hand:
 
 ```bash
-cargo build --release --locked --manifest-path gui/Cargo.toml
-install -Dm755 gui/target/release/vinowhisper-gui ~/.local/bin/vinowhisper-gui
-vinowhisper-gui --install --autostart   # launcher, icon, tray at login
+cargo build --release --locked --manifest-path tray/Cargo.toml
+install -Dm755 tray/target/release/vinowhisper-tray ~/.local/bin/vinowhisper-tray
+vinowhisper-tray --install --autostart   # launcher, icon, tray at login
 ```
 
 The release asset is a fully static musl build, 6.0MB, so the same file runs
@@ -60,8 +60,8 @@ the 135 crates it pulls in are a build-time cost only.
 A distro package is not available yet. Fedora cannot package the Python side:
 its openvino is 2025.1.0, older than the 2026.3.1 floor, and openvino-genai
 and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
-is planned. `vinowhisper-gui --export-desktop DIR` writes the launcher and
-icons for a packager, with the launcher naming the `vinowhisper-gui` command
+is planned. `vinowhisper-tray --export-desktop DIR` writes the launcher and
+icons for a packager, with the launcher naming the `vinowhisper-tray` command
 rather than a path, since a buildroot path would be wrong once installed.
 `vinowhisper-setup --gui` already recognises a copy in /usr/bin.
 
@@ -82,7 +82,7 @@ turns it off.
 
 ## Using it
 
-Launch it from the app menu or run `vinowhisper-gui`. The box appears at the
+Launch it from the app menu or run `vinowhisper-tray`. The box appears at the
 bottom of the screen with a status line (device, lag, silence) above two lines
 of captions. Words still waiting on a second cycle to confirm them are shown
 dimmed, the same rule the terminal uses. They matter more here: with only two
@@ -103,7 +103,7 @@ driven from three places instead:
 |---|---|
 | **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
 | **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu has Listen to (system audio or microphone), Position (bottom or top), Text size, Language and Translate to English (greyed out, with the command to run, until `vinowhisper-setup --language auto` has exported the multilingual model), Recent dictations (the last five, newest first, with Clear), Change shortcut…, Save transcripts and Quit |
-| **Command** | `vinowhisper-gui show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
+| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, sent to the running instance |
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,
@@ -157,7 +157,7 @@ not move a binding that already exists; rebind it in the desktop instead.
 `.desktop` file, the portal refuses the app id ("App info not found"), and
 the shortcut portal then refuses the shortcut ("An app id is required"). So
 the first run writes the launcher itself if `--install` never did. With no
-portal at all, bind `vinowhisper-gui toggle` in your desktop's keyboard
+portal at all, bind `vinowhisper-tray toggle` in your desktop's keyboard
 settings; it reaches the running instance the same way.
 
 **Change shortcut…** needs version 2 of the shortcut portal, where
@@ -195,9 +195,9 @@ It asks the portal for **Meta+H**, which is what the dictation key on this
 laptop's F-row sends, after Windows' Win+H. A small pill shows what it is
 doing: a level meter while listening, then "Transcribing…", then the text it
 typed. It sits above the caption box when that is showing, and works with the
-captions hidden. Without a shortcuts portal, bind `vinowhisper-gui dictate` to a
-key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-gui
-dictate-press` to the key's press and `vinowhisper-gui dictate-release` to its
+captions hidden. Without a shortcuts portal, bind `vinowhisper-tray dictate` to a
+key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-tray
+dictate-press` to the key's press and `vinowhisper-tray dictate-release` to its
 release (sway: `bindsym` and `bindsym --release`; Hyprland has the portal).
 
 Rebinding works like the captions shortcut: **Change shortcut…** or System
@@ -349,7 +349,7 @@ read, whenever that is, not when you click; until then the text stays put. A cli
 while a dictation is in progress is refused, so it cannot replace the text
 about to be pasted. **Clear** empties the list. The list lives only in the
 overlay's memory: never written to disk or to logs, and absent from
-`VINOWHISPER_GUI_TRACE` output (the debug formatting of the dictation state
+`VINOWHISPER_TRAY_TRACE` output (the debug formatting of the dictation state
 now prints a character count, not the text; it printed the text before).
 Quitting the overlay loses the list, on purpose. Not run against a live Plasma
 tray yet: only the history and the menu labels have unit tests; the copy-back and its clearing do not.
@@ -417,7 +417,7 @@ at release is worth building: if `preview_stale` is usually under ~500ms and
 `decode` dominates, it is.
 
 To measure, on the laptop: start the overlay with the variable set
-(`VINOWHISPER_DICTATE_TRACE=1 vinowhisper-gui`; its stderr is the journal if
+(`VINOWHISPER_DICTATE_TRACE=1 vinowhisper-tray`; its stderr is the journal if
 it runs as a service; the overlay forwards the lines prefixed `[dictate]`), then do about 20 dictations the way you normally do,
 pressing the key and starting to speak at once. Collect the lines. If
 `first_loud` is usually chunk 1, speech is already under way when capture
@@ -459,7 +459,7 @@ be dragged; Position is top or bottom only.
 ## How it fits together
 
 ```
-vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──> vinowhisper-server (NPU)
+vinowhisper-tray ──spawns──> vinowhisper-caption --json ──HTTP──> vinowhisper-server (NPU)
       │   ▲                          │
       │   └──── one JSON event per line on stdout
       ├──spawns──> vinowhisper-dictate --json ──HTTP──> (same server)
@@ -468,13 +468,13 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
       ├── shortcuts (xdg-desktop-portal GlobalShortcuts: Activated and Deactivated)
       ├── paste: ext-data-control, then Shift+Insert via /dev/uinput,
       │          zwp_virtual_keyboard_v1, or RemoteDesktop
-      └── $XDG_RUNTIME_DIR/vinowhisper-gui.sock (show/hide/toggle/dictate/quit)
+      └── $XDG_RUNTIME_DIR/vinowhisper-tray.sock (show/hide/toggle/dictate/quit)
 ```
 
 - **The wire format is `events.to_dict`, verbatim.** `--json` writes one
   ASCII-escaped object per event, plus an `Error` record when the CLI gives
   up, since a GUI has no terminal to show stderr on.
-  `tests/test_caption.py` names every field `gui/src/protocol.rs` reads, so
+  `tests/test_caption.py` names every field `tray/src/protocol.rs` reads, so
   renaming one fails a Python test rather than leaving the overlay silently
   blank.
 - **Only the fields it draws are read.** Extra fields are ignored, and an
@@ -500,13 +500,13 @@ vinowhisper-gui ──spawns──> vinowhisper-caption --json ──HTTP──>
   a crashed or killed GUI never leaves captioning running with no one
   watching.
 - **One instance per session.** A second launch sends its command to the
-  first over the socket and exits, which is how `vinowhisper-gui toggle`
+  first over the socket and exits, which is how `vinowhisper-tray toggle`
   works from any keybinding tool, and why a double-clicked launcher never
   starts two. A socket file left by a killed instance is detected by trying to
   connect, and `--hidden` only pings, so an autostart that finds an instance
   running leaves it alone.
 - **The socket is private.** It lives in `$XDG_RUNTIME_DIR`. Without one it
-  falls back to `/tmp/vinowhisper-gui-<uid>/`, a directory it creates 0700
+  falls back to `/tmp/vinowhisper-tray-<uid>/`, a directory it creates 0700
   and refuses to use if another user owns it, it is a symlink, or anyone else
   can enter it: `/tmp` is shared, and a name there that another user made
   first would let them stop the overlay starting. A connection from another
@@ -529,7 +529,7 @@ not enough to justify a 2D graphics library.
 
 The mark is the overlay itself: three voice bars in the listening dot's green
 become a word, above a confirmed line that ends in a pending one, in the box's
-own colour. It is drawn as data in `gui/src/icon.rs`. The launcher SVG, the
+own colour. It is drawn as data in `tray/src/icon.rs`. The launcher SVG, the
 tray's fallback pixmaps and the copies in `docs/assets/` all come from it;
 `VINOWHISPER_BLESS_ICONS=1 cargo test` regenerates the assets, and a test fails
 when they are stale.
@@ -548,8 +548,8 @@ prefixed `[caption]`.
 
 | Symptom | Cause |
 |---|---|
-| "no global shortcut (... An app id is required)" | No launcher. It writes one on first run; if it could not, run `vinowhisper-gui --install` |
-| "vinowhisper-caption was not found" | Not on `PATH` for a desktop-launched app. `vinowhisper-gui --install --caption /path/to/vinowhisper-caption` bakes the path into the launcher |
+| "no global shortcut (... An app id is required)" | No launcher. It writes one on first run; if it could not, run `vinowhisper-tray --install` |
+| "vinowhisper-caption was not found" | Not on `PATH` for a desktop-launched app. `vinowhisper-tray --install --caption /path/to/vinowhisper-caption` bakes the path into the launcher |
 | Box says "not reachable" | The server, not the GUI: `vinowhisper-doctor` |
 | No tray icon | No StatusNotifierItem host (GNOME without the AppIndicator extension). The shortcut and commands still work |
 | "does not offer wlr-layer-shell" | GNOME or X11. See the table above |
@@ -558,5 +558,5 @@ prefixed `[caption]`.
 | Dictation: "vinowhisper-dictate was not found" | Older install. `pip install -U vinowhisper`, then `vinowhisper-setup` links it |
 | Dictation: a notification every time | No `/dev/uinput` access, so it types through the portal. A udev rule giving your user `/dev/uinput` (as Steam's does) stops it |
 | Dictation: "On the clipboard, not typed" | The paste was refused or failed; the text is on the clipboard. After refusing the portal dialog, restart the overlay to be asked again |
-| Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_GUI_TRACE=1 vinowhisper-gui` logs every key and state change |
+| Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every key and state change |
 | Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

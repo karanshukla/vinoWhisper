@@ -38,8 +38,8 @@ impl Shortcut {
                 move || {
                     if let Err(err) = future::block_on(run(&preferred, &tx, requests)) {
                         eprintln!(
-                            "[vinowhisper-gui] no global shortcut ({err}). Bind \
-                             `vinowhisper-gui toggle` in your desktop's keyboard settings instead."
+                            "[vinowhisper-tray] no global shortcut ({err}). Bind \
+                             `vinowhisper-tray toggle` in your desktop's keyboard settings instead."
                         );
                         let _ = tx.send(Command::Shortcut(State::Unavailable(err.to_string())));
                     }
@@ -70,7 +70,7 @@ async fn run(
     requests: async_channel::Receiver<()>,
 ) -> ashpd::Result<()> {
     if let Err(err) = ashpd::register_host_app(APP_ID.try_into()?).await {
-        eprintln!("[vinowhisper-gui] portal registry: {err} (continuing without an app id)");
+        eprintln!("[vinowhisper-tray] portal registry: {err} (continuing without an app id)");
     }
 
     let portal = GlobalShortcuts::new().await?;
@@ -138,7 +138,7 @@ async fn run(
                     .configure_shortcuts(&session, None, Default::default())
                     .await
                 {
-                    eprintln!("[vinowhisper-gui] could not open the shortcut settings: {err}");
+                    eprintln!("[vinowhisper-tray] could not open the shortcut settings: {err}");
                 }
             }
             Wake::Configure => {}

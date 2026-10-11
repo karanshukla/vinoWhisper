@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(2);
-const SOCKET_NAME: &str = "vinowhisper-gui.sock";
+const SOCKET_NAME: &str = "vinowhisper-tray.sock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
@@ -64,7 +64,7 @@ pub fn socket_path() -> io::Result<PathBuf> {
         Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join(SOCKET_NAME)),
         _ => {
             let uid = rustix::process::getuid().as_raw();
-            let dir = std::env::temp_dir().join(format!("vinowhisper-gui-{uid}"));
+            let dir = std::env::temp_dir().join(format!("vinowhisper-tray-{uid}"));
             Ok(private_dir(&dir)?.join(SOCKET_NAME))
         }
     }
@@ -154,7 +154,7 @@ fn listen_at(path: PathBuf, on_request: impl Fn(Request) + Send + 'static) -> io
             if UnixStream::connect(&path).is_ok() {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
-                    "another vinowhisper-gui is already running",
+                    "another vinowhisper-tray is already running",
                 ));
             }
             fs::remove_file(&path)?;

@@ -47,11 +47,11 @@ jobs:
       - name: bash -n the completion script
         run: bash -n scripts/vinowhisper-completion.bash
 
-  gui:
+  tray:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: gui
+        working-directory: tray
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy

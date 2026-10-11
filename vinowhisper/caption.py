@@ -279,7 +279,7 @@ def _parse_args() -> argparse.Namespace:
         "--json",
         action="store_true",
         help="One JSON object per event on stdout instead of text: what "
-        "vinowhisper-gui reads. Human-readable messages stay on stderr.",
+        "vinowhisper-tray reads. Human-readable messages stay on stderr.",
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     return parser.parse_args()

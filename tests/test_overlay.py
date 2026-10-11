@@ -22,7 +22,7 @@ def _binary(tmp_path, content=b"\x7fELF a fake overlay"):
 
 
 def _pin_file(tmp_path, binary, version=__version__, arch="x86_64"):
-    path = tmp_path / "gui_release.json"
+    path = tmp_path / "tray_release.json"
     path.write_text(json.dumps(overlay.pin_record(binary, version, arch)), encoding="utf-8")
     return path
 
@@ -67,7 +67,7 @@ def test_a_release_pin_names_the_asset_and_its_digest(tmp_path):
     assert isinstance(pin, overlay.Pin)
     assert pin.url == (
         "https://github.com/karanshukla/vinoWhisper/releases/download/"
-        f"v{__version__}/vinowhisper-gui-x86_64-linux"
+        f"v{__version__}/vinowhisper-tray-x86_64-linux"
     )
     assert pin.sha256 == hashlib.sha256(binary.read_bytes()).hexdigest()
 
@@ -109,7 +109,7 @@ def test_a_verified_download_is_installed_executable(tmp_path):
     body = b"\x7fELF the real thing"
     seen: list = []
     dest = overlay.fetch(
-        _pin_for(body), tmp_path / "bin" / "vinowhisper-gui", get=_serving(body, seen)
+        _pin_for(body), tmp_path / "bin" / "vinowhisper-tray", get=_serving(body, seen)
     )
     assert dest.read_bytes() == body
     assert os.access(dest, os.X_OK)
@@ -122,7 +122,7 @@ def test_a_mismatched_download_installs_nothing_at_all(tmp_path):
     """Not even the partial file: a half-written binary on PATH is worse
     than none.
     """
-    dest = tmp_path / "bin" / "vinowhisper-gui"
+    dest = tmp_path / "bin" / "vinowhisper-tray"
     with pytest.raises(overlay.OverlayError, match="nothing was installed"):
         overlay.fetch(_pin_for(b"what was pinned"), dest, get=_serving(b"what arrived"))
     assert list(dest.parent.iterdir()) == []
@@ -132,7 +132,7 @@ def test_a_failed_download_leaves_nothing_either(tmp_path):
     def offline(url, **kwargs):
         raise ConnectionError("network unreachable")
 
-    dest = tmp_path / "bin" / "vinowhisper-gui"
+    dest = tmp_path / "bin" / "vinowhisper-tray"
     with pytest.raises(overlay.OverlayError, match="could not download"):
         overlay.fetch(_pin_for(b"x"), dest, get=offline)
     assert list(dest.parent.iterdir()) == []
@@ -142,7 +142,7 @@ def test_replacing_a_running_copy_goes_through_a_rename(tmp_path):
     """A rename, not a write into the old file, which Linux refuses with
     "Text file busy" while that file is running, as the tray usually is.
     """
-    dest = tmp_path / "vinowhisper-gui"
+    dest = tmp_path / "vinowhisper-tray"
     dest.write_bytes(b"old")
     before = dest.stat().st_ino
     source = tmp_path / "freshly-built"
@@ -184,14 +184,14 @@ def test_a_copy_in_home_gets_a_launcher_and_a_packaged_one_does_not(monkeypatch,
     """A distro package ships its own launcher in /usr/share; writing a
     second one into the home directory would only shadow it.
     """
-    home_copy = Path.home() / ".local/bin/vinowhisper-gui"
+    home_copy = Path.home() / ".local/bin/vinowhisper-tray"
     monkeypatch.setattr(overlay, "installed", lambda bin_dir: home_copy)
     wizard.Wizard(dry_run=True).install_overlay()
     printed = capsys.readouterr().out
     assert f"{home_copy} --install" in printed
     assert f"{home_copy} --autostart" in printed
 
-    packaged = Path("/usr/bin/vinowhisper-gui")
+    packaged = Path("/usr/bin/vinowhisper-tray")
     monkeypatch.setattr(overlay, "installed", lambda bin_dir: packaged)
     wizard.Wizard(dry_run=True).install_overlay()
     printed = capsys.readouterr().out

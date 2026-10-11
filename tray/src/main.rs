@@ -28,7 +28,7 @@ use settings::Source;
 pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
 
 const USAGE: &str = "\
-Usage: vinowhisper-gui [OPTIONS] [COMMAND]
+Usage: vinowhisper-tray [OPTIONS] [COMMAND]
 
 A floating overlay and tray icon for vinoWhisper: live captions, and
 dictation into the focused window. Runs vinowhisper-caption --json and
@@ -144,7 +144,7 @@ fn main() -> ExitCode {
     let args = match Args::parse(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(message) => {
-            eprintln!("vinowhisper-gui: {message}\n\n{USAGE}");
+            eprintln!("vinowhisper-tray: {message}\n\n{USAGE}");
             return ExitCode::from(2);
         }
     };
@@ -153,7 +153,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.version {
-        println!("vinowhisper-gui {}", env!("CARGO_PKG_VERSION"));
+        println!("vinowhisper-tray {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
     if args.install || args.autostart || args.uninstall || args.export_desktop.is_some() {
@@ -169,7 +169,7 @@ fn main() -> ExitCode {
         Ok(()) => return ExitCode::SUCCESS,
         Err(ipc::SendError::NotRunning) => {}
         Err(ipc::SendError::Io(err)) => {
-            eprintln!("vinowhisper-gui: could not reach the running instance: {err}");
+            eprintln!("vinowhisper-tray: could not reach the running instance: {err}");
             return ExitCode::FAILURE;
         }
     }
@@ -181,7 +181,7 @@ fn main() -> ExitCode {
             | Request::DictatePress
             | Request::DictateRelease
     ) {
-        eprintln!("vinowhisper-gui is not running");
+        eprintln!("vinowhisper-tray is not running");
         return ExitCode::SUCCESS;
     }
 
@@ -193,7 +193,7 @@ fn main() -> ExitCode {
     match app::run(options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("vinowhisper-gui: {message}");
+            eprintln!("vinowhisper-tray: {message}");
             ExitCode::FAILURE
         }
     }
@@ -223,7 +223,7 @@ fn run_install(args: &Args) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(err) => {
-            eprintln!("vinowhisper-gui: {err}");
+            eprintln!("vinowhisper-tray: {err}");
             ExitCode::FAILURE
         }
     }

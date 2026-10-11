@@ -65,7 +65,7 @@ packages = ["vinowhisper"]
 
 # Dropping either from the wheel fails quietly (docs/development.md)
 [tool.setuptools.package-data]
-vinowhisper = ["model_digests.json", "model_sources.json", "gui_release.json", "ovfetch_release.json"]
+vinowhisper = ["model_digests.json", "model_sources.json", "tray_release.json", "ovfetch_release.json"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 
@@ -168,11 +168,11 @@ replace = 'version = "{new_version}"'
 
 # One version for the whole repo; tests/test_packaging.py checks all three
 [[tool.bumpversion.files]]
-filename = "gui/Cargo.toml"
-search = "name = \"vinowhisper-gui\"\nversion = \"{current_version}\""
-replace = "name = \"vinowhisper-gui\"\nversion = \"{new_version}\""
+filename = "tray/Cargo.toml"
+search = "name = \"vinowhisper-tray\"\nversion = \"{current_version}\""
+replace = "name = \"vinowhisper-tray\"\nversion = \"{new_version}\""
 
 [[tool.bumpversion.files]]
-filename = "gui/Cargo.lock"
-search = "name = \"vinowhisper-gui\"\nversion = \"{current_version}\""
-replace = "name = \"vinowhisper-gui\"\nversion = \"{new_version}\""
+filename = "tray/Cargo.lock"
+search = "name = \"vinowhisper-tray\"\nversion = \"{current_version}\""
+replace = "name = \"vinowhisper-tray\"\nversion = \"{new_version}\""

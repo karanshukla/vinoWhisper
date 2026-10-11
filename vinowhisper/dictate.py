@@ -627,7 +627,7 @@ class _JsonLines:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="One-utterance dictation from the microphone, driven over stdin. "
-        "This is what vinowhisper-gui runs for its dictation key; it types nothing itself."
+        "This is what vinowhisper-tray runs for its dictation key; it types nothing itself."
     )
     parser.add_argument(
         "--json",

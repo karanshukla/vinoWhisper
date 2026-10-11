@@ -358,7 +358,7 @@ class Wizard:
         if path.is_relative_to(Path.home()):
             self.run([str(path), "--install"], "add a launcher entry for it?")
         self.run([str(path), "--autostart"], "start it in the tray at login?")
-        return Outcome(True, f"{path} (open it from the app menu, or run vinowhisper-gui)")
+        return Outcome(True, f"{path} (open it from the app menu, or run vinowhisper-tray)")
 
     def _get_overlay(self) -> Path | Outcome:
         available = overlay.availability()
@@ -636,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gui",
         action="store_true",
-        help="Install only the optional desktop overlay (vinowhisper-gui: floating "
+        help="Install only the optional desktop overlay (vinowhisper-tray: floating "
         "captions and dictation): the "
         "release binary, checked against the sha256 pinned in this package, or a "
         "cargo build from a checkout.",

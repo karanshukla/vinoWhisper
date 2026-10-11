@@ -10,14 +10,14 @@ from typing import Any
 
 from . import __version__, config
 
-BINARY = "vinowhisper-gui"
-PIN_FILE = Path(__file__).resolve().parent / "gui_release.json"
+BINARY = "vinowhisper-tray"
+PIN_FILE = Path(__file__).resolve().parent / "tray_release.json"
 RELEASES_URL = "https://github.com/karanshukla/vinoWhisper/releases/download"
-GUI_MANIFEST = Path(__file__).resolve().parent.parent / "gui" / "Cargo.toml"
+GUI_MANIFEST = Path(__file__).resolve().parent.parent / "tray" / "Cargo.toml"
 
 DOWNLOAD_TIMEOUT_S = 120.0
 
-_BUILD_INSTEAD = "build it from a checkout with cargo instead (docs/gui.md)"
+_BUILD_INSTEAD = "build it from a checkout with cargo instead (docs/tray.md)"
 
 
 class OverlayError(Exception):
@@ -119,7 +119,7 @@ def fetch(pin: Pin, dest: Path, get: Callable[..., Any] | None = None) -> Path:
         dest,
         f"{pin.name} does not match the sha256 pinned in vinowhisper {pin.version}",
         "Please report it at https://github.com/karanshukla/vinoWhisper/issues. "
-        "A cargo build from a checkout avoids the download (docs/gui.md).",
+        "A cargo build from a checkout avoids the download (docs/tray.md).",
         get,
     )
 
@@ -133,7 +133,7 @@ def download_verified(
     get: Callable[..., Any] | None = None,
 ) -> Path:
     if get is None:
-        # Lazy, so scripts/pin_gui_release.py runs on the standard library alone.
+        # Lazy, so scripts/pin_tray_release.py runs on the standard library alone.
         import requests
 
         get = requests.get

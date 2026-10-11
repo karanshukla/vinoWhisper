@@ -1,6 +1,6 @@
 """The pieces that name one another across files, held together.
 
-The version lives in three files (pyproject.toml, gui/Cargo.toml and its lock
+The version lives in three files (pyproject.toml, tray/Cargo.toml and its lock
 entry), and the overlay's release asset name in two (overlay.py and
 release.yml). Nothing at runtime notices them drifting: a release would simply
 publish a download URL that 404s, and the first person to find out would be a
@@ -21,28 +21,28 @@ def _toml(relative: str) -> dict:
 
 def test_python_and_rust_share_one_version():
     version = _toml("pyproject.toml")["project"]["version"]
-    cargo = _toml("gui/Cargo.toml")["package"]["version"]
+    cargo = _toml("tray/Cargo.toml")["package"]["version"]
     locked = next(
         package["version"]
-        for package in _toml("gui/Cargo.lock")["package"]
-        if package["name"] == "vinowhisper-gui"
+        for package in _toml("tray/Cargo.lock")["package"]
+        if package["name"] == "vinowhisper-tray"
     )
     assert version == cargo == locked
 
 
 def test_a_version_bump_moves_all_three():
     files = {entry["filename"] for entry in _toml("pyproject.toml")["tool"]["bumpversion"]["files"]}
-    assert {"pyproject.toml", "gui/Cargo.toml", "gui/Cargo.lock"} <= files
+    assert {"pyproject.toml", "tray/Cargo.toml", "tray/Cargo.lock"} <= files
 
 
 def test_the_release_uploads_the_asset_setup_downloads():
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert overlay.asset_name("x86_64") in workflow
-    assert "scripts/pin_gui_release.py" in workflow
+    assert "scripts/pin_tray_release.py" in workflow
 
 
 def test_the_pin_ships_in_the_wheel():
     """Without it, `vinowhisper-setup --gui` refuses to download by design."""
     package_data = _toml("pyproject.toml")["tool"]["setuptools"]["package-data"]["vinowhisper"]
-    assert "gui_release.json" in package_data
+    assert "tray_release.json" in package_data
     assert "ovfetch_release.json" in package_data

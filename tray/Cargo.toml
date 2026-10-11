@@ -1,5 +1,5 @@
 [package]
-name = "vinowhisper-gui"
+name = "vinowhisper-tray"
 version = "0.9.0"
 edition = "2024"
 # let-chains

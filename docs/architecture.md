@@ -113,7 +113,7 @@ with nothing being said:
 |---|---|---|
 | NPU | suspended | suspended |
 | Speaker sink | running, held by the capture | suspended |
-| `vinowhisper-gui` | 3.7 wakeups/s | 0 |
+| `vinowhisper-tray` | 3.7 wakeups/s | 0 |
 | `vinowhisper-caption` + `pw-record` | 2.2 + 51.5 wakeups/s | not running |
 | `vinowhisper-server` | 0 | 0 |
 
