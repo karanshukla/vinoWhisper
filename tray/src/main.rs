@@ -12,7 +12,6 @@ mod paste;
 mod protocol;
 mod raster;
 mod session;
-mod settings;
 mod shortcut;
 mod tray;
 mod uinput;
@@ -22,7 +21,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use ipc::Request;
-use settings::Source;
+use vinowhisper_settings as settings;
+use vinowhisper_settings::Source;
 
 // Changing this orphans every shortcut already bound.
 pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";

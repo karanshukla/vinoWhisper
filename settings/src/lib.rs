@@ -129,10 +129,7 @@ impl Speech {
     pub fn save(&self) {
         let path = Self::path();
         if let Err(err) = self.save_to(&path) {
-            eprintln!(
-                "[vinowhisper-tray] could not save {}: {err}",
-                path.display()
-            );
+            eprintln!("[vinowhisper] could not save {}: {err}", path.display());
         }
     }
 
@@ -202,7 +199,7 @@ impl Settings {
             return Settings::default();
         };
         serde_json::from_str(&text).unwrap_or_else(|err| {
-            eprintln!("[vinowhisper-tray] ignoring {}: {err}", path.display());
+            eprintln!("[vinowhisper] ignoring {}: {err}", path.display());
             Settings::default()
         })
     }
@@ -210,10 +207,7 @@ impl Settings {
     pub fn save(&self) {
         let path = Self::path();
         if let Err(err) = self.save_to(&path) {
-            eprintln!(
-                "[vinowhisper-tray] could not save {}: {err}",
-                path.display()
-            );
+            eprintln!("[vinowhisper] could not save {}: {err}", path.display());
         }
     }
 
@@ -255,7 +249,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "vinowhisper-tray-settings-{}-{name}",
+            "vinowhisper-settings-test-{}-{name}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

@@ -13,6 +13,8 @@ htmlcov/
 dist/
 build/
 tray/target/
+gui/target/
+settings/target/
 # written by release.yml just before `uv build`; a checkout must not have one
 vinowhisper/tray_release.json
 
