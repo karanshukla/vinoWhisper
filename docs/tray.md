@@ -78,14 +78,13 @@ search.
 is none: `--install` may have baked a `--caption` path into one, and a
 packaged launcher must not be shadowed by a copy in the home directory. The
 icons are the exception, rewritten whenever they differ, since they hold
-nothing of yours. So is a second, hidden entry,
-`io.github.karanshukla.vinowhisper.settings.desktop`, which runs
-`vinowhisper-gui` from beside the tray. The settings window identifies itself
-by that id, and Plasma's task manager finds a window's icon through the
-desktop file named after its id. Without the file the window showed the
-generic Wayland icon (found 2026-10-11). `NoDisplay=true` keeps it out of the
-app menu. The autostart entry runs `--hidden`, so it starts in the
-tray without touching the NPU until asked. The tray's "Start at login"
+nothing of yours. So is a second entry, "vinoWhisper Settings" in the app
+menu (`io.github.karanshukla.vinowhisper.settings.desktop`), which runs
+`vinowhisper-gui` from beside the tray. Its file name is the settings window's
+app id, which is how Plasma's task manager finds the window's icon. Without it
+the window showed the generic Wayland icon (found 2026-10-11). The autostart
+entry runs `--hidden`, so it starts in the tray without touching the NPU until
+asked. The tray's "Start at login"
 checkmark writes or removes that entry (baking in `--caption` if this instance
 was started with one); re-running `--install` without `--autostart` also
 turns it off.

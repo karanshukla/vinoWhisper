@@ -304,16 +304,19 @@ Exec={exec} toggle
     )
 }
 
-// Hidden from menus: it exists so the task manager can match the window to the icon.
+// Named after the window's app id, which is how the task manager finds its icon.
 fn settings_desktop_entry(exe: &Path) -> String {
     format!(
         "[Desktop Entry]
 Type=Application
 Name=vinoWhisper Settings
+GenericName=Captions and Dictation Settings
+Comment=Caption position and size, audio source, language, and shortcuts
 Exec={}
 Icon={APP_ID}
 Terminal=false
-NoDisplay=true
+Categories=Settings;Utility;Accessibility;
+Keywords=captions;subtitles;dictation;whisper;shortcut;language;preferences;
 StartupNotify=false
 ",
         exec_arg(&exe.to_string_lossy())
@@ -448,7 +451,7 @@ mod tests {
             "Exec=/home/me/.local/bin/vinowhisper-gui"
         );
         assert!(entry.contains(&format!("Icon={APP_ID}")));
-        assert!(entry.contains("NoDisplay=true"));
+        assert!(!entry.contains("NoDisplay"));
         assert!(
             dirs.settings_entry()
                 .ends_with(format!("{}.desktop", settings::SETTINGS_APP_ID))
