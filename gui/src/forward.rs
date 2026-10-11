@@ -8,16 +8,22 @@ use std::process::{Command, ExitCode};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
-    Window,
+    /// `page` is the name given to `--page`, for the tray to deep-link into a section.
+    Window {
+        page: Option<String>,
+    },
     Help,
     Tray,
 }
 
 pub fn decide(args: &[String]) -> Action {
-    match args.first().map(String::as_str) {
-        None => Action::Window,
-        Some("-h" | "--help") => Action::Help,
-        Some(_) => Action::Tray,
+    match args {
+        [] => Action::Window { page: None },
+        [flag, page] if flag == "--page" => Action::Window {
+            page: Some(page.clone()),
+        },
+        [flag, ..] if flag == "-h" || flag == "--help" => Action::Help,
+        _ => Action::Tray,
     }
 }
 
@@ -51,7 +57,17 @@ mod tests {
 
     #[test]
     fn no_arguments_opens_the_window() {
-        assert_eq!(decide(&[]), Action::Window);
+        assert_eq!(decide(&[]), Action::Window { page: None });
+    }
+
+    #[test]
+    fn a_page_opens_the_window_on_it() {
+        assert_eq!(
+            decide(&args(&["--page", "speech"])),
+            Action::Window {
+                page: Some("speech".into())
+            }
+        );
     }
 
     #[test]

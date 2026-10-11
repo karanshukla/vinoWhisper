@@ -178,7 +178,7 @@ the static musl build: winit `dlopen`s libwayland and libEGL, measured
 `APP_ID` did not change. Launchers and login entries written by older versions
 name `vinowhisper-gui`, and the launcher is never overwritten, so the tray
 rewrites that command name on start (`install::migrate_legacy_command`). The
-settings window is started (2026-10-11): `gui/` is an eframe window with Shortcuts, Captions and Speech pages, and `settings/` is the crate both binaries read `gui.json` and `language.json` through (path dependency, no cargo workspace, so the tray's CI and release paths did not move). It forwards tray-style arguments to `vinowhisper-tray`. Not yet done: the `reload` IPC request, release plumbing for the second binary, shrinking the tray menu, rambler. `gui.json` keeps its name: it is the
+settings window is started (2026-10-11): `gui/` is an eframe window with Shortcuts, Captions and Speech pages, and `settings/` is the crate both binaries read `gui.json` and `language.json` through (path dependency, no cargo workspace, so the tray's CI and release paths did not move). It forwards tray-style arguments to `vinowhisper-tray` and takes `--page shortcuts|captions|speech`. Its look is the landing page's (`gui/src/theme.rs`: same tokens, Inter bundled as static TTFs made from `vinowhisper-landing`'s variable woff2, licence in `gui/assets/fonts/`). Not yet done: the `reload` IPC request, release plumbing for the second binary, shrinking the tray menu, rambler. `gui.json` keeps its name: it is the
 settings window's file too.
 
 Asked for by the user: a GUI that floats above other applications, a tray
