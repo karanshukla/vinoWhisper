@@ -83,14 +83,15 @@ class _Warmup:
 
 
 class _Segmenter:
-    def __init__(self) -> None:
+    def __init__(self, keep: bool = False) -> None:
         self._chunks: list[tuple[np.ndarray, float]] = []
         self._samples = 0
         self._quiet = 0
         self._total = 0
         self._energy = 0.0
         self._floor = float("inf")
-        self._cuts = 0
+        self._levels: list[float] = []
+        self._keep: list[np.ndarray] | None = [] if keep else None
 
     @property
     def threshold(self) -> float:
@@ -123,6 +124,9 @@ class _Segmenter:
         if not settling and level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
             self._floor = min(self._floor, level)
         self._chunks.append((chunk, level))
+        self._levels.append(level)
+        if self._keep is not None:
+            self._keep.append(chunk)
         self._samples += chunk.size
         self._total += chunk.size
         self._energy += level * level * chunk.size
@@ -137,12 +141,43 @@ class _Segmenter:
         return None
 
     def finish(self) -> np.ndarray:
-        # What is left after a piece was already cut, with nothing in it above the noise
-        # floor, is the quiet after the last word. Whisper writes "you" for it.
-        if self._cuts and not any(level >= self.threshold for _, level in self._chunks):
-            self._chunks, self._samples = [], 0
-            return np.zeros(0, dtype=np.float32)
         return self._cut(len(self._chunks))
+
+    @property
+    def speech_level(self) -> float:
+        loudest = sorted(self._levels)[-5:]
+        return sum(loudest) / len(loudest) if loudest else 0.0
+
+    @property
+    def stationary(self) -> bool:
+        """Nothing in the recording rises meaningfully above its own quietest stretch."""
+        floor = self._floor
+        if (
+            floor == float("inf")
+            or floor < config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN
+        ):
+            return False
+        top = self.speech_level
+        return top < config.STATIONARY_MAX_RMS and top < config.STATIONARY_RATIO * floor
+
+    def has_speech(self, chunks: list[tuple[np.ndarray, float]]) -> bool:
+        if self.stationary:
+            return False
+        gate = max(self.threshold, config.SPEECH_FRACTION * self.speech_level)
+        loud = sum(1 for _, level in chunks if level >= gate)
+        return loud >= config.SPEECH_MIN_CHUNKS
+
+    def note(self) -> str:
+        floor = self._floor if self._floor != float("inf") else 0.0
+        return (
+            f"floor={floor:.4f} speech={self.speech_level:.4f} "
+            f"threshold={self.threshold:.4f} stationary={self.stationary}"
+        )
+
+    def full(self) -> np.ndarray:
+        if not self._keep:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._keep)
 
     def peek(self) -> np.ndarray:
         if not self._chunks:
@@ -168,9 +203,8 @@ class _Segmenter:
             if level >= self.threshold:
                 break
             self._quiet += chunk.size
-        if not head:
+        if not head or not self.has_speech(head):
             return np.zeros(0, dtype=np.float32)
-        self._cuts += 1
         return np.concatenate([chunk for chunk, _ in self._trim(head)])
 
     def _trim(self, head: list[tuple[np.ndarray, float]]) -> list[tuple[np.ndarray, float]]:
@@ -389,7 +423,7 @@ class Dictation:
         self._since_preview = 0
         self._unsettled = []
         self._cleaner.prepare()
-        self._segmenter = _Segmenter()
+        self._segmenter = _Segmenter(keep=bool(os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")))
         self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
         recording = self._recorder(self._tap)
         try:
@@ -547,8 +581,15 @@ class Dictation:
         if segmenter is None or decoder is None:
             return
         raw = segmenter.peek()
+        full = segmenter.full()
+        note = segmenter.note()
         final = segmenter.finish()
-        _keep_audio(raw, final)
+        _keep_audio(raw, final, full)
+        if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
+            print(
+                f"[vinowhisper] gate: {note} final={final.size / config.SAMPLE_RATE_HZ:.2f}s",
+                file=sys.stderr,
+            )
         stale_samples = (
             None if decoder.preview_end is None else self._captured - decoder.preview_end
         )
@@ -697,7 +738,7 @@ def _report_release(
 _KEPT_PIECES = 10
 
 
-def _keep_audio(raw: np.ndarray, decoded: np.ndarray) -> None:
+def _keep_audio(raw: np.ndarray, decoded: np.ndarray, full: np.ndarray) -> None:
     """Opt in with VINOWHISPER_DICTATE_AUDIO_DIR: the last piece as heard and as decoded.
 
     It is a recording of the user's voice, so it is private to them (0700 / 0600) and only
@@ -714,7 +755,7 @@ def _keep_audio(raw: np.ndarray, decoded: np.ndarray) -> None:
             print(f"[vinowhisper] not keeping audio in {directory}: not yours", file=sys.stderr)
             return
         directory.chmod(0o700)
-        for name, samples in (("raw", raw), ("decoded", decoded)):
+        for name, samples in (("raw", raw), ("decoded", decoded), ("full", full)):
             pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
             descriptor = os.open(
                 directory / f"{stamp}-{name}.wav",
@@ -727,7 +768,7 @@ def _keep_audio(raw: np.ndarray, decoded: np.ndarray) -> None:
                 out.setframerate(config.SAMPLE_RATE_HZ)
                 out.writeframes(pcm16.tobytes())
         kept = sorted(directory.glob("*.wav"))
-        for old in kept[: max(0, len(kept) - 2 * _KEPT_PIECES)]:
+        for old in kept[: max(0, len(kept) - 3 * _KEPT_PIECES)]:
             old.unlink(missing_ok=True)
     except OSError as exc:
         print(f"[vinowhisper] could not keep audio: {exc}", file=sys.stderr)

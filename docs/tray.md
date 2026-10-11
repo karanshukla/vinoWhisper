@@ -489,6 +489,25 @@ the address is loopback (text stays here) or not (text and key leave).
 Not run against a real endpoint or on hardware: unit tests only, with a fake
 transport. The latency table and the prompt's test set are still to do.
 
+**Room noise is not speech, added 2026-10-11.** Reported from real use: a
+held key or a hands-free tail over ambient noise typed sentences nobody said.
+Measured on the reporter's laptop: the room sits at 0.011-0.028 rms, the fixed
+gate was 0.002, `normalize()` lifted the clip x2.7 to speech level, and
+whisper-small.en and whisper-small each wrote a different sentence for every
+slice of the same 4s of noise ("When you do back your leg...", "you"). Two
+rules in `_Segmenter`, constants in `config.py`:
+
+- **Stationary recording**: if the loudest 500ms is under 2.8x the quietest
+  100ms and under 0.04 rms, nothing in it is speech and nothing is decoded.
+- **A piece needs speech in it**: at least two 100ms chunks at 60% of the
+  recording's loudest level. A quiet remainder after a cut is not a second
+  utterance, and quiet is trimmed to 0.3s around the words.
+
+Tuned on one room and one microphone, and the failure mode of being wrong is a
+dropped quiet word, so `VINOWHISPER_CLEANUP_DEBUG=1` prints the floor, speech
+level and verdict for each dictation (`gate: floor=... speech=...`). The two
+noise clips are fixtures in `tests/fixtures/`.
+
 **Debugging switches that keep what you said, off by default.**
 `VINOWHISPER_CLEANUP_DEBUG=1` prints the dictated text and the model's answer
 to the tray's stderr. `VINOWHISPER_DICTATE_AUDIO_DIR=<dir>` writes the raw and

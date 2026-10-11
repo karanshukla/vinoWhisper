@@ -149,6 +149,16 @@ PREVIEW_QUIET_S = 0.3
 # the long quiet either side of the words, which hands-free adds up to 2.5s of, is cut.
 TRIM_PAD_S = 0.3
 
+# A recording whose loudest stretch is no more than STATIONARY_RATIO times its quietest, and
+# under STATIONARY_MAX_RMS, is room noise: Whisper writes sentences for it (measured
+# 2026-10-11: ambient 0.011-0.028 rms, three decodes, three different sentences, on both
+# models). Otherwise a piece needs SPEECH_MIN_CHUNKS of 100ms at SPEECH_FRACTION of the
+# recording's loudest level; quiet after a cut is not a second utterance.
+STATIONARY_RATIO = 2.8
+STATIONARY_MAX_RMS = 0.04
+SPEECH_FRACTION = 0.6
+SPEECH_MIN_CHUNKS = 2
+
 WINDOW_S = 12.0
 
 MIN_WINDOW_S = 1.5
