@@ -13,6 +13,8 @@ CLEAR_HINT = "vinowhisper-doctor clears the mark"
 _ERROR_LIMIT = 200
 # OpenVINO nests these above the message it is actually raising.
 _LOCATION = re.compile(r"^Exception from .*:\d+:$")
+# Level Zero's code when the NPU resets under any of its users: every compiled model on it is gone.
+_DEVICE_LOST = "ZE_RESULT_ERROR_DEVICE_LOST"
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,10 @@ def clear(path: Path | None = None) -> list[Failure]:
     if failures:
         _write({}, path)
     return list(failures.values())
+
+
+def is_device_lost(exc: BaseException) -> bool:
+    return _DEVICE_LOST in str(exc)
 
 
 def _summary(error: str) -> str:
