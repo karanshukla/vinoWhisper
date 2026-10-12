@@ -169,7 +169,8 @@ class WhisperTranscriber:
         if self._pipeline is None:
             self.load()
         pipeline = self._pipeline
-        assert pipeline is not None
+        if pipeline is None:
+            raise RuntimeError(f"no pipeline on {self.device} after load()")
         pipeline.generate(  # type: ignore[attr-defined]
             samples,
             streamer=streamer,
