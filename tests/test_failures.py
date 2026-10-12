@@ -86,3 +86,19 @@ def test_clear_returns_what_it_removed(state_file):
 def test_a_failure_reads_as_one_line():
     failure = failures.Failure("NPU", "2026-09-16T17:00:00+00:00", "compile failed")
     assert str(failure) == "NPU failed on 2026-09-16T17:00:00+00:00: compile failed"
+
+
+def test_an_npu_reset_reads_as_device_lost():
+    error = RuntimeError(
+        "Exception from src/inference/src/cpp/infer_request.cpp:224:\n"
+        "Exception from src/plugins/intel_npu/src/utils/src/zero/zero_wrappers.cpp:382:\n"
+        "L0 zeFenceHostSynchronize result: ZE_RESULT_ERROR_DEVICE_LOST, code 0x70000001 - "
+        "device hung, reset, was removed, or driver update occurred\n"
+    )
+    assert failures.is_device_lost(error)
+
+
+def test_other_pipeline_errors_are_not_device_lost():
+    assert not failures.is_device_lost(
+        RuntimeError("Port for tensor name cache_position was not found")
+    )

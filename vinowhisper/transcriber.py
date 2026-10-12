@@ -1,6 +1,7 @@
 import queue
+import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -115,27 +116,36 @@ class WhisperTranscriber:
         return options
 
     def transcribe_stream(self, samples: np.ndarray) -> Iterator[str]:
-        pipeline = self._pipeline
-        if pipeline is None:
+        if self.selection is None:
             raise RuntimeError("call load() before transcribe_stream()")
 
         pieces: queue.Queue = queue.Queue()
+        streamed = False
 
         def streamer(text_piece: str) -> bool:
+            nonlocal streamed
+            streamed = True
             pieces.put(text_piece)
             return False  # keep generating
 
         def run() -> None:
             try:
                 with self._lock:
-                    pipeline.generate(  # type: ignore[attr-defined]
-                        samples,
-                        streamer=streamer,
-                        max_new_tokens=config.max_new_tokens(
-                            samples.size / config.SAMPLE_RATE_HZ, self.multilingual
-                        ),
-                        **self.generate_options(),
-                    )
+                    try:
+                        self._generate(samples, streamer)
+                    except RuntimeError as exc:
+                        if not failures.is_device_lost(exc):
+                            raise
+                        self._pipeline = None
+                        print(
+                            f"[vinowhisper-server] {self.device} was reset, reloading the model",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        # Retrying after text went out would print it twice.
+                        if streamed:
+                            raise
+                        self._generate(samples, streamer)
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)
             finally:
@@ -154,3 +164,17 @@ class WhisperTranscriber:
                 yield piece
         finally:
             thread.join(timeout=config.REQUEST_TIMEOUT_S)
+
+    def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
+        if self._pipeline is None:
+            self.load()
+        pipeline = self._pipeline
+        assert pipeline is not None
+        pipeline.generate(  # type: ignore[attr-defined]
+            samples,
+            streamer=streamer,
+            max_new_tokens=config.max_new_tokens(
+                samples.size / config.SAMPLE_RATE_HZ, self.multilingual
+            ),
+            **self.generate_options(),
+        )
