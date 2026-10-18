@@ -5,7 +5,10 @@
 Nothing leaves the machine. Audio is captured from a local PipeWire/PulseAudio
 node, transcribed by a model running on local hardware, and printed to your
 terminal. There is no network call in the capture or transcription path, no
-telemetry, and no cloud service involved at any point. The only outbound
+telemetry, and no cloud service involved at any point. OpenVINO ships Intel's
+usage telemetry (Google Analytics), on unless you opt out; vinoWhisper never
+loads it, and runs the model export with it off (`CI=true`). Your
+`~/intel/openvino_telemetry` consent file is left alone. The only outbound
 traffic the project ever makes is package installation and the one-time model
 download from Hugging Face, both of which you trigger explicitly and the second
 of which is checked against pinned digests (below).
