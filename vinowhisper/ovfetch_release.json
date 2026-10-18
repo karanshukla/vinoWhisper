@@ -1,9 +1,9 @@
 {
-  "version": "0.2.0",
+  "version": "0.5.0",
   "assets": {
     "x86_64": {
       "name": "ovfetch-x86_64-linux",
-      "sha256": "0e277b9604db25c92593629895a243fe04aaa443ddf4a1e41304cf6e9e08a01c"
+      "sha256": "f2c16999b6c4efc765c630835d1dc679bbc67f8a7320131bcdfe329695f33025"
     }
   }
 }
