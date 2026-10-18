@@ -67,17 +67,18 @@ if ! "$PYTHON" -c "import vinowhisper" >/dev/null 2>&1; then
 fi
 
 # The pinned revision, downloaded and sha256-checked before optimum reads a byte of it.
+# CI=true turns off OpenVINO's usage telemetry (Google Analytics) for the export.
 set +e
 SOURCE="$("$PYTHON" -m vinowhisper.source --model "$MODEL_ID")"
 status=$?
 set -e
 case "$status" in
-    0) EXPORT_ENV=(HF_HUB_OFFLINE=1) ;;
+    0) EXPORT_ENV=(HF_HUB_OFFLINE=1 CI=true) ;;
     2)
         echo "==> WARNING: $MODEL_ID has no pinned revision or digests, so this exports" >&2
         echo "    whatever its default branch holds now, unchecked." >&2
         SOURCE="$MODEL_ID"
-        EXPORT_ENV=()
+        EXPORT_ENV=(CI=true)
         ;;
     *) exit 1 ;;
 esac

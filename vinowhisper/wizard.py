@@ -21,7 +21,10 @@ COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup")
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"
 # The export reads a checked local snapshot; nothing may fetch around it.
-_EXPORT_ENV = {"HF_HUB_OFFLINE": "1"}
+# optimum-cli is its own process, so the in-process telemetry block in
+# vinowhisper/__init__.py doesn't reach it; CI=true is the switch OpenVINO's
+# converter honours (it passes disable_in_ci).
+_EXPORT_ENV = {"HF_HUB_OFFLINE": "1", "CI": "true"}
 
 
 @dataclass
