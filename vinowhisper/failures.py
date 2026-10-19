@@ -50,7 +50,7 @@ def record(device: str, error: str, path: Path | None = None) -> Failure:
     failure = Failure(
         device=device,
         failed_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        error=_summary(error),
+        error=summary(error),
     )
     failures = load(path)
     failures[device] = failure
@@ -75,7 +75,7 @@ def is_device_lost(exc: BaseException) -> bool:
     return _DEVICE_LOST in str(exc)
 
 
-def _summary(error: str) -> str:
+def summary(error: str) -> str:
     lines = [line.strip() for line in error.splitlines() if line.strip()]
     message = [line for line in lines if not _LOCATION.match(line)]
     return (message or lines or ["no error message"])[0][:_ERROR_LIMIT]
