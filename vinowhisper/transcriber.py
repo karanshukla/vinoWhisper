@@ -61,7 +61,10 @@ class WhisperTranscriber:
         )
         return self.selection
 
-    def load(self) -> None:
+    def load(self, *, record: bool = True) -> None:
+        """Build the pipeline on the selected device. record=False leaves a
+        failure out of failed-devices.json (a reload after a reset, which says
+        nothing about whether the device works)."""
         import openvino_genai as ov_genai
 
         selection = self.selection or self.select_device()
@@ -78,7 +81,8 @@ class WhisperTranscriber:
             )
         except Exception as exc:
             # Past _check_export, so this is the device, not the model (issue #7).
-            self.failure = failures.record(selection.device.name, str(exc))
+            if record:
+                self.failure = failures.record(selection.device.name, str(exc))
             raise
         failures.forget(selection.device.name)
 
@@ -131,6 +135,7 @@ class WhisperTranscriber:
         def run() -> None:
             try:
                 with self._lock:
+                    lost = ""
                     try:
                         self._generate(samples, streamer)
                     except RuntimeError as exc:
@@ -145,6 +150,12 @@ class WhisperTranscriber:
                         # Retrying after text went out would print it twice.
                         if streamed:
                             raise
+                        lost = str(exc)
+                    # Outside the except block: its traceback holds _generate's
+                    # frame, and with it the dead pipeline, which would stay in
+                    # memory (and on the device) through the reload.
+                    if lost:
+                        self._reload_after_reset(lost)
                         self._generate(samples, streamer)
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)
@@ -164,6 +175,30 @@ class WhisperTranscriber:
                 yield piece
         finally:
             thread.join(timeout=config.REQUEST_TIMEOUT_S)
+
+    def _reload_after_reset(self, error: str) -> None:
+        """Load again after the device reset under us (another program's fault
+        resets it for everyone). A reset is not the device failing, so nothing is
+        recorded. If it doesn't come back and the device was picked
+        automatically, fall back to the next one for the rest of this run;
+        the next start picks again. A device asked for by name is not swapped."""
+        try:
+            self.load(record=False)
+            return
+        except Exception:
+            requested = self._requested_device or config.DEFAULT_DEVICE
+            if self.selection is None or requested.lower() != config.AUTO_DEVICE:
+                raise
+        name = self.selection.device.name
+        print(
+            f"[vinowhisper-server] {name} did not come back after the reset; "
+            "falling back for this run",
+            file=sys.stderr,
+            flush=True,
+        )
+        lost = failures.Failure(device=name, failed_at="this run", error=failures.summary(error))
+        self.selection = devices.select(requested, failed={**failures.load(), name: lost})
+        self.load()
 
     def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
         if self._pipeline is None:

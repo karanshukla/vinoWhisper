@@ -105,7 +105,8 @@ def model_dir(device_kind: str, multilingual: bool = False) -> Path:
     return MODEL_DIR if npu else STATEFUL_MODEL_DIR
 
 
-DEFAULT_DEVICE = "auto"
+AUTO_DEVICE = "auto"
+DEFAULT_DEVICE = AUTO_DEVICE
 
 # Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
