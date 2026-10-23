@@ -321,6 +321,12 @@ impl Dictation {
                     return Some(Action::Paste(text));
                 }
             }
+            Dictate::Notice { message } => {
+                self.notice(message);
+                // A new epoch, so the pill lingers long enough to read it even if the
+                // paste already finished and armed the short timer.
+                self.epoch += 1;
+            }
             Dictate::Cancelled => self.set(Phase::Idle),
             Dictate::Error { message } => self.set(Phase::Failed(message)),
         }
@@ -349,11 +355,22 @@ impl Dictation {
 
     pub fn dismiss(&mut self, epoch: u64) {
         if epoch == self.epoch {
+            self.notice = None;
             self.set(Phase::Idle);
         }
     }
 
     pub fn linger(&self) -> Option<Duration> {
+        let done = matches!(
+            self.phase,
+            Phase::Typed {
+                pasted: Some(Ok(())),
+                ..
+            } | Phase::Nothing
+        );
+        if done && self.notice.is_some() {
+            return Some(Duration::from_secs(6));
+        }
         match &self.phase {
             Phase::Typed { pasted: None, .. } => None,
             Phase::Typed {
@@ -528,6 +545,36 @@ mod tests {
         assert!(matches!(d.phase(), Phase::Listening { .. }));
         d.clear_notice(id);
         assert_eq!(d.pill().unwrap().text, "");
+    }
+
+    #[test]
+    fn a_notice_after_the_text_holds_the_pill_until_it_is_dismissed() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        d.key(false, at(900, t));
+        d.event(Dictate::Dictated { text: "Hi".into() });
+        d.pasted(Ok(()));
+        assert_eq!(d.linger(), Some(Duration::from_millis(1500)));
+        let typed = d.epoch();
+        d.event(Dictate::Notice {
+            message: "LLM cleanup off: no API key is set. Fix it in Settings.".into(),
+        });
+        assert_ne!(
+            d.epoch(),
+            typed,
+            "a fresh timer, not the 1.5s one already armed"
+        );
+        assert_eq!(d.linger(), Some(Duration::from_secs(6)));
+        let pill = d.pill().unwrap();
+        assert!(pill.text.starts_with("LLM cleanup off"));
+        assert!(pill.status, "a status, not the words");
+        d.dismiss(typed);
+        assert!(d.pill().is_some(), "the stale timer leaves it up");
+        d.dismiss(d.epoch());
+        assert_eq!(d.pill(), None);
+        assert_eq!(d.linger(), None);
     }
 
     #[test]

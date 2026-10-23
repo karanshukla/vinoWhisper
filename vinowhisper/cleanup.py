@@ -465,6 +465,80 @@ def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outc
     return done(result, True, None)
 
 
+# Reasons that are about the answer, not the service: the endpoint worked, so they never
+# count against it. Anything else (http errors, unreachable, timeouts, an exception's type
+# name) is the endpoint, the key or the network failing.
+_ANSWER_REASONS = frozenset(
+    {
+        None,
+        "empty input",
+        "nothing to fix",
+        "disabled",
+        "truncated",
+        "empty output",
+        "output changed words",
+        "deleted without cause",
+    }
+)
+# Failures that the same settings will hit on every request: cleanup stays off until they change.
+_SETUP_FAILURES = {
+    "no api key": "no API key is set",
+    "bad address": "the address isn't http or https",
+    "http 400": "the endpoint refused the request (http 400)",
+    "http 401": "the API key was rejected (http 401)",
+    "http 403": "the API key was refused (http 403)",
+    "http 404": "the endpoint or model wasn't found (http 404)",
+}
+# Each failed request can hold the typing back by the whole budget (#87), so a service that
+# keeps failing is left alone for a while instead of costing every dictation 3s.
+STRIKES = 3
+COOLDOWN_S = 600.0
+
+
+class Breaker:
+    """Turns cleanup off after errors, so dictation stops paying for a broken endpoint.
+
+    Setup failures turn it off until the settings change. Transient ones (timeouts, 5xx,
+    unreachable) turn it off for COOLDOWN_S after STRIKES in a row, then let one request
+    through: a failure there turns it straight back off, anything else turns it back on.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._strikes = 0
+        self._tripped_for: Settings | None = None
+        self._until: float | None = None
+
+    def allows(self, settings: Settings) -> bool:
+        if self._tripped_for is None:
+            return True
+        if settings != self._tripped_for:
+            self._reset()
+            return True
+        return self._until is not None and self._clock() >= self._until
+
+    def record(self, settings: Settings, outcome: Outcome) -> str | None:
+        """The message to show when this outcome turns cleanup off, else None."""
+        reason = outcome.reason
+        if reason in _ANSWER_REASONS:
+            self._reset()
+            return None
+        if reason in _SETUP_FAILURES:
+            self._trip(settings, None)
+            return f"LLM cleanup off: {_SETUP_FAILURES[reason]}. Fix it in Settings."
+        self._strikes += 1
+        if self._tripped_for is None and self._strikes < STRIKES:
+            return None
+        self._trip(settings, self._clock() + COOLDOWN_S)
+        return f"LLM cleanup paused for {COOLDOWN_S / 60:.0f} min ({reason})"
+
+    def _trip(self, settings: Settings, until: float | None) -> None:
+        self._tripped_for, self._until = settings, until
+
+    def _reset(self) -> None:
+        self._strikes, self._tripped_for, self._until = 0, None, None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     text = " ".join(args) if args else sys.stdin.read()

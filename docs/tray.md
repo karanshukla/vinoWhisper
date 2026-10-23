@@ -487,6 +487,17 @@ the address is loopback (text stays here) or not (text and key leave).
   check, so the raw text is typed.
 - The pill says "Cleaning up with the model…" while the request is out, from
   the `Cleaning` event.
+- **It turns itself off on errors** (#87), because each failed request holds the
+  typing back by up to the whole budget. A setup error (no key, http 400, 401,
+  403 or 404, an address that isn't http or https) turns it off until the
+  settings change: fixing the key on the Cleanup page is enough, no restart.
+  Three service errors in a row (timeouts, 5xx, 429, unreachable) pause it for
+  10 minutes. After that, one request is let through, and if it fails too the
+  pause starts again. An answer the checks refuse is not an error. Either way
+  the raw text is typed, and the pill then shows why for 6 seconds ("LLM cleanup
+  off: the API key was rejected (http 401). Fix it in Settings."), from a
+  `Notice` record sent after `Dictated`. The state is per `vinowhisper-dictate`
+  process, so restarting the tray clears it.
 - `python -m vinowhisper.cleanup "um so scratch that"` runs one round trip and
   prints the wall time on stderr, which is the measurement #81 asks for first.
 
