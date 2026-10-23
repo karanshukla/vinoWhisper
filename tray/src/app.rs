@@ -991,6 +991,7 @@ impl App {
                     app.dictation.dismiss(epoch);
                     app.show_pill();
                     app.track_idle();
+                    app.sync_tray();
                     TimeoutAction::Drop
                 },
             );
@@ -1040,7 +1041,13 @@ impl App {
         tray::View {
             visible: self.visible,
             source: self.source(),
-            status: self.status_text(),
+            status: tray::caption_status(
+                self.visible,
+                self.captions.phase(),
+                self.captions.device(),
+                self.captions.degraded(),
+            ),
+            dictation: self.dictation.status(),
             passive: self.tray_passive,
             shortcut: self.shortcut_state.clone(),
             autostart: self.autostart,
@@ -1052,22 +1059,6 @@ impl App {
         match install::set_autostart(enabled, self.caption_override.as_deref()) {
             Ok(()) => self.autostart = enabled,
             Err(err) => eprintln!("[vinowhisper-tray] could not change start at login: {err}"),
-        }
-    }
-
-    fn status_text(&self) -> String {
-        if !self.visible {
-            return "Captions hidden".into();
-        }
-        match self.captions.phase() {
-            Phase::Starting => "Starting…".into(),
-            Phase::Live => match (self.captions.device(), self.captions.degraded()) {
-                (Some(device), true) => format!("Live on {device}, not the NPU: expect more lag"),
-                (Some(device), false) => format!("Live on {device}"),
-                (None, _) => "Live".into(),
-            },
-            Phase::Stopped => "Stopped".into(),
-            Phase::Failed(message) => format!("Stopped: {message}"),
         }
     }
 
