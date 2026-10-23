@@ -66,6 +66,12 @@ const BOX: Shape = Shape {
     r: 12.0,
 };
 
+// The box is drawn on the landing page's 64-unit grid, which leaves a 4-unit
+// margin either side for its card layout. An installed icon doesn't want that
+// margin: Plasma's task manager drew it visibly smaller than Dolphin's (#96).
+// Crop to 2 units clear of the box, so only the antialiased edge has room.
+const VIEW_BOX: (f32, f32, f32) = (2.0, 2.0, 60.0);
+
 const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const EDGE_WIDTH: f32 = 2.0;
 
@@ -109,8 +115,9 @@ fn hex(Rgba(r, g, b, _): Rgba) -> String {
 }
 
 pub fn app_svg() -> String {
+    let (x, y, side) = VIEW_BOX;
     let mut svg =
-        String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">\n");
+        format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{x} {y} {side} {side}\">\n");
     let mut line = |element: String| {
         svg.push_str("  ");
         svg.push_str(&element);
@@ -231,6 +238,15 @@ mod tests {
     fn the_marks_sit_inside_the_box_and_apart() {
         assert_inside_and_apart(BOX, EDGE_WIDTH, &MARKS);
         assert_inside_and_apart(TRAY_BOX, TRAY_LINE, &TRAY_MARKS);
+    }
+
+    #[test]
+    fn the_app_icon_fills_its_view_box_across() {
+        let (x, y, side) = VIEW_BOX;
+        let (left, right) = (BOX.x - x, x + side - (BOX.x + BOX.w));
+        assert!((0.0..=2.0).contains(&left) && (0.0..=2.0).contains(&right));
+        assert_eq!(left, right, "centred across");
+        assert!(BOX.y >= y && BOX.y + BOX.h <= y + side, "nothing cropped");
     }
 
     #[test]
