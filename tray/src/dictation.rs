@@ -133,6 +133,7 @@ pub struct Dictation {
     notice: Option<(u64, String)>,
     notices: u64,
     cleaning: bool,
+    announcement: Option<String>,
 }
 
 impl Dictation {
@@ -147,6 +148,7 @@ impl Dictation {
             notice: None,
             notices: 0,
             cleaning: false,
+            announcement: None,
         }
     }
 
@@ -206,8 +208,22 @@ impl Dictation {
         }
     }
 
+    /// What a screen reader should hear about the last change, once: failures and the
+    /// clipboard fallback, never the words or the routine states.
+    pub fn take_announcement(&mut self) -> Option<String> {
+        self.announcement.take()
+    }
+
     fn set(&mut self, phase: Phase) {
         if phase != self.phase {
+            match &phase {
+                Phase::Failed(message) => self.announcement = Some(message.clone()),
+                Phase::Typed {
+                    pasted: Some(Err(why)),
+                    ..
+                } => self.announcement = Some(clipboard_fallback(why)),
+                _ => {}
+            }
             self.phase = phase;
             self.cleaning = false;
             self.epoch += 1;
@@ -322,6 +338,7 @@ impl Dictation {
                 }
             }
             Dictate::Notice { message } => {
+                self.announcement = Some(message.clone());
                 self.notice(message);
                 // A new epoch, so the pill lingers long enough to read it even if the
                 // paste already finished and armed the short timer.
@@ -402,11 +419,7 @@ impl Dictation {
             Phase::Typed {
                 pasted: Some(Err(why)),
                 ..
-            } => (
-                Tone::Warn,
-                format!("On the clipboard, not typed: {why}"),
-                None,
-            ),
+            } => (Tone::Warn, clipboard_fallback(why), None),
             Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
             Phase::Failed(message) => (Tone::Bad, message.clone(), None),
         };
@@ -443,6 +456,10 @@ impl Dictation {
             _ => "Transcribing…".to_owned(),
         }
     }
+}
+
+fn clipboard_fallback(why: &str) -> String {
+    format!("On the clipboard, not typed: {why}")
 }
 
 fn preview(text: &str) -> String {
@@ -575,6 +592,50 @@ mod tests {
         d.dismiss(d.epoch());
         assert_eq!(d.pill(), None);
         assert_eq!(d.linger(), None);
+    }
+
+    #[test]
+    fn failures_and_warnings_are_announced_once_and_never_the_words() {
+        let t = Instant::now();
+        let mut d = Dictation::new();
+        d.key(true, t);
+        d.event(Dictate::Listening);
+        d.event(Dictate::Partial {
+            text: "the private words".into(),
+        });
+        assert_eq!(d.take_announcement(), None, "recording is not news");
+        d.key(false, at(900, t));
+        d.event(Dictate::Dictated {
+            text: "the private words".into(),
+        });
+        assert_eq!(d.take_announcement(), None, "typed text stays on the pill");
+        d.pasted(Err("no keyboard".into()));
+        assert_eq!(
+            d.take_announcement().as_deref(),
+            Some("On the clipboard, not typed: no keyboard")
+        );
+        assert_eq!(d.take_announcement(), None, "once");
+        d.event(Dictate::Notice {
+            message: "LLM cleanup paused for 10 min (timed out)".into(),
+        });
+        assert_eq!(
+            d.take_announcement().as_deref(),
+            Some("LLM cleanup paused for 10 min (timed out)")
+        );
+        d.event(Dictate::Error {
+            message: "Microphone capture failed".into(),
+        });
+        assert_eq!(
+            d.take_announcement().as_deref(),
+            Some("Microphone capture failed")
+        );
+    }
+
+    #[test]
+    fn a_refusal_flashed_on_the_pill_is_not_announced() {
+        let mut d = Dictation::new();
+        d.notice("Finish dictating first");
+        assert_eq!(d.take_announcement(), None);
     }
 
     #[test]

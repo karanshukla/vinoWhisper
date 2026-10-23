@@ -33,6 +33,7 @@ use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{delegate_registry, registry_handlers};
 
+use crate::announce;
 use crate::captions::{Captions, Phase};
 use crate::clipboard::Clipboard;
 use crate::dictation::{Action, Dictation, Recent};
@@ -969,6 +970,9 @@ impl App {
     }
 
     fn show_pill(&mut self) {
+        if let Some(message) = self.dictation.take_announcement() {
+            announce::announce(message);
+        }
         if self.dictation.pill().is_none() {
             self.pill = None;
             return;

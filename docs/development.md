@@ -155,6 +155,13 @@ empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
   else the general font's size over 10pt, clamped to 1x-3x. It's re-read when
   the window regains focus and applied only if it changed, so Ctrl + and - stick.
 
+The dictation pill is a click-through layer surface with no accessibility
+tree, so while a screen reader runs (`org.a11y.Status.ScreenReaderEnabled`)
+the tray also sends its failures, the clipboard fallback and cleanup notices as
+a desktop notification (#98). The live words and routine states (recording,
+transcribing, typed) are never sent, and nothing is sent when no screen reader
+is running.
+
 The tray's icon never changes, so state lives in words: the tooltip carries
 the captions' state and, while dictating, the dictation's, never the dictated
 text. `tray.rs` tests that every menu item has a label, on/off items are
