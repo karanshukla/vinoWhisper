@@ -1203,6 +1203,7 @@ dependencies = [
  "serde_json",
  "smithay-client-toolkit",
  "vinowhisper-settings",
+ "zbus",
 ]
 
 [[package]]

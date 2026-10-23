@@ -1,3 +1,4 @@
+mod announce;
 mod app;
 mod captions;
 mod clipboard;
