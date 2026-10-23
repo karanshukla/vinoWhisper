@@ -132,6 +132,36 @@ rather than a defect in it:
 B602 (`shell=True`) stays on. There is no shell anywhere in this codebase, and
 if one appears it should fail the scan.
 
+## Accessibility
+
+The settings window builds eframe with its `accesskit` feature, so it exposes a
+tree over AT-SPI; with default features off it was dropped, and Orca saw an
+empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
+`egui_kittest` reading the same AccessKit tree headless:
+
+- every page is a `Tab` with its name and a selected state, reachable with Tab
+  and opened with Enter or Space;
+- every field, list and number is named after its form label (`labelled_by`),
+  the API key is a `PasswordInput` whose value never carries the key, and
+  nothing that takes focus is nameless (egui's own scroll bar included);
+- section titles are headings, and the key status and the reload refusal are
+  polite live regions;
+- the theme clears WCAG 2.2 contrast in both schemes: 4.5:1 for text, 3:1 for
+  field edges, focus and the current-page bar (`theme.rs`, computed, not eyed);
+- at double zoom (Ctrl++) the sidebar folds into tabs and every control stays.
+
+The tray's icon never changes, so state lives in words: the tooltip carries
+the captions' state and, while dictating, the dictation's, never the dictated
+text. `tray.rs` tests that every menu item has a label, on/off items are
+checkmarks or radio items, and every state reads differently.
+
+Checked 2026-10-23 on headless sway with AT-SPI enabled (`python3-pyatspi`):
+the tree, names and roles come through. Not checked: Orca speaking it, GNOME
+or Plasma's tray hosts, and the overlay, which is a click-through layer-shell
+surface with no accessibility tree at all (its state, not its text, is in the tooltip).
+accesskit_atspi_common 0.14 reports disabled buttons as sensitive; that is
+upstream.
+
 ## Packaging
 
 `[tool.setuptools] packages = ["vinowhisper"]` is explicit because flat-layout

@@ -15,6 +15,7 @@ pub struct Palette {
     pub rule: Color32,
     pub code_bg: Color32,
     pub link: Color32,
+    pub error: Color32,
 }
 
 const fn rgb(hex: u32) -> Color32 {
@@ -28,6 +29,7 @@ pub const DARK: Palette = Palette {
     rule: rgb(0x2a2c30),
     code_bg: rgb(0x1e2023),
     link: rgb(0x7bdc97),
+    error: rgb(0xf28b82),
 };
 
 pub const LIGHT: Palette = Palette {
@@ -37,7 +39,13 @@ pub const LIGHT: Palette = Palette {
     rule: rgb(0xe2e3e6),
     code_bg: rgb(0xeef0f2),
     link: rgb(0x1a7040),
+    error: rgb(0xb3261e),
 };
+
+// Light enough that muted text on it still clears 4.5:1 (the "beta" tag).
+pub fn selected_fill(p: &Palette) -> Color32 {
+    p.link.gamma_multiply(0.15)
+}
 
 pub fn palette(ctx: &egui::Context) -> &'static Palette {
     match ctx.theme() {
@@ -211,6 +219,12 @@ fn fonts() -> FontDefinitions {
     fonts
 }
 
+// Most of the way to muted: a field's or an unchecked box's edge needs 3:1 against the page
+// (WCAG 1.4.11), and halfway was 2.5:1 in light.
+fn control_edge(p: &Palette) -> Color32 {
+    p.rule.lerp_to_gamma(p.muted, 0.7)
+}
+
 fn visuals(p: &Palette, base: Visuals) -> Visuals {
     let corner = CornerRadius::same(6);
     let mut v = base;
@@ -220,6 +234,9 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     v.faint_bg_color = p.code_bg;
     v.hyperlink_color = p.link;
     v.warn_fg_color = p.link;
+    // egui's pure red is 3.9:1 on the light page, under WCAG's 4.5:1 for text.
+    v.error_fg_color = p.error;
+    v.weak_text_color = Some(p.muted);
     v.window_stroke = Stroke::new(1.0_f32, p.rule);
     v.selection.bg_fill = p.link.gamma_multiply(0.35);
     v.selection.stroke = Stroke::new(1.0_f32, p.link);
@@ -238,8 +255,7 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     v.widgets.noninteractive.corner_radius = corner;
     v.widgets.inactive.bg_fill = p.code_bg;
     v.widgets.inactive.weak_bg_fill = p.code_bg;
-    // halfway to muted: the unchecked box of a checkbox has to show against the page
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.rule.lerp_to_gamma(p.muted, 0.5));
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, control_edge(p));
     v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, p.text);
     v.widgets.hovered.bg_fill = p.code_bg;
     v.widgets.hovered.weak_bg_fill = p.code_bg;
@@ -256,6 +272,11 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
 }
 
 pub fn install(ctx: &egui::Context) {
+    apply(ctx);
+    follow_desktop(ctx);
+}
+
+fn apply(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
     ctx.set_visuals_of(Theme::Dark, visuals(&DARK, Visuals::dark()));
     ctx.set_visuals_of(Theme::Light, visuals(&LIGHT, Visuals::light()));
@@ -279,12 +300,144 @@ pub fn install(ctx: &egui::Context) {
         style.spacing.button_padding = egui::vec2(10.0, 4.0);
         style.spacing.interact_size.y = 28.0;
     });
-    follow_desktop(ctx);
+}
+
+#[cfg(test)]
+pub fn apply_for_tests(ctx: &egui::Context) {
+    apply(ctx);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn linear(channel: u8) -> f64 {
+        let c = f64::from(channel) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn luminance(c: Color32) -> f64 {
+        0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+    }
+
+    // WCAG 2.2's contrast ratio, of opaque colours.
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    // egui's colours are premultiplied, and blended in gamma space.
+    fn over(top: Color32, below: Color32) -> Color32 {
+        let keep = 1.0 - f32::from(top.a()) / 255.0;
+        let mix = |t: u8, b: u8| (f32::from(t) + f32::from(b) * keep).round().min(255.0) as u8;
+        Color32::from_rgb(
+            mix(top.r(), below.r()),
+            mix(top.g(), below.g()),
+            mix(top.b(), below.b()),
+        )
+    }
+
+    const TEXT: f64 = 4.5;
+    const UI: f64 = 3.0;
+
+    fn themes() -> [(&'static str, &'static Palette, Visuals); 2] {
+        [
+            ("dark", &DARK, visuals(&DARK, Visuals::dark())),
+            ("light", &LIGHT, visuals(&LIGHT, Visuals::light())),
+        ]
+    }
+
+    #[track_caller]
+    fn at_least(min: f64, fg: Color32, bg: Color32, what: &str) {
+        let ratio = contrast(fg, bg);
+        assert!(ratio >= min, "{what}: {ratio:.2}:1, needs {min}:1");
+    }
+
+    #[test]
+    fn text_clears_4_5_to_1_on_every_surface_it_sits_on() {
+        for (name, p, v) in themes() {
+            for surface in [p.bg, p.code_bg] {
+                for (fg, what) in [
+                    (p.text, "text"),
+                    (p.muted, "muted"),
+                    (p.link, "link and warning"),
+                    (v.error_fg_color, "error"),
+                    (v.weak_text_color(), "hint"),
+                ] {
+                    at_least(TEXT, fg, surface, &format!("{name} {what}"));
+                }
+            }
+            for (state, w) in [
+                ("inactive", &v.widgets.inactive),
+                ("hovered", &v.widgets.hovered),
+                ("active", &v.widgets.active),
+                ("open", &v.widgets.open),
+            ] {
+                for fill in [w.bg_fill, w.weak_bg_fill] {
+                    at_least(
+                        TEXT,
+                        w.fg_stroke.color,
+                        fill,
+                        &format!("{name} {state} widget"),
+                    );
+                }
+            }
+            let selected = over(selected_fill(p), p.bg);
+            at_least(TEXT, p.text, selected, &format!("{name} current page"));
+            at_least(TEXT, p.muted, selected, &format!("{name} beta tag"));
+            let highlight = over(v.selection.bg_fill, p.code_bg);
+            at_least(TEXT, p.text, highlight, &format!("{name} selected text"));
+        }
+    }
+
+    #[test]
+    fn control_edges_and_focus_clear_3_to_1() {
+        for (name, p, v) in themes() {
+            for surface in [p.bg, p.code_bg] {
+                at_least(
+                    UI,
+                    v.widgets.inactive.bg_stroke.color,
+                    surface,
+                    &format!("{name} field and checkbox edge"),
+                );
+                for (state, w) in [
+                    ("hovered", &v.widgets.hovered),
+                    ("focused", &v.widgets.active),
+                ] {
+                    at_least(
+                        UI,
+                        w.bg_stroke.color,
+                        surface,
+                        &format!("{name} {state} edge"),
+                    );
+                }
+                at_least(
+                    UI,
+                    v.selection.stroke.color,
+                    surface,
+                    &format!("{name} focus ring"),
+                );
+                at_least(
+                    UI,
+                    v.widgets.inactive.fg_stroke.color,
+                    surface,
+                    &format!("{name} check mark"),
+                );
+            }
+            at_least(UI, p.link, p.bg, &format!("{name} current page bar"));
+        }
+    }
+
+    #[test]
+    fn the_check_does_not_hold_by_accident() {
+        // Black on white is 21:1, and egui's own red fails on the light page.
+        assert!((contrast(Color32::BLACK, Color32::WHITE) - 21.0).abs() < 1e-9);
+        assert!(contrast(Color32::from_rgb(255, 0, 0), LIGHT.bg) < TEXT);
+    }
 
     #[test]
     fn the_portal_reply_picks_the_theme() {

@@ -6,6 +6,7 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
 use crate::APP_ID;
 use crate::app::Command;
+use crate::captions::Phase;
 use crate::dictation::Recent;
 use crate::icon;
 use crate::settings::Source;
@@ -18,6 +19,7 @@ pub struct View {
     pub visible: bool,
     pub source: Source,
     pub status: String,
+    pub dictation: Option<String>,
     pub shortcut: ShortcutState,
     pub passive: bool,
     pub autostart: bool,
@@ -55,6 +57,37 @@ pub fn spawn(tray: Tray) -> Option<Handle> {
 
 pub fn show(handle: &Handle, view: View) {
     handle.update(move |tray| tray.view = view);
+}
+
+pub fn caption_status(
+    visible: bool,
+    phase: &Phase,
+    device: Option<&str>,
+    degraded: bool,
+) -> String {
+    if !visible {
+        return "Captions hidden".into();
+    }
+    match phase {
+        Phase::Starting => "Captions starting…".into(),
+        Phase::Live => match (device, degraded) {
+            (Some(device), true) => {
+                format!("Captions live on {device}, not the NPU: expect more lag")
+            }
+            (Some(device), false) => format!("Captions live on {device}"),
+            (None, _) => "Captions live".into(),
+        },
+        Phase::Stopped => "Captions stopped".into(),
+        Phase::Failed(message) => format!("Captions stopped: {message}"),
+    }
+}
+
+// The icon never changes, so this is where every state has to show, in words.
+fn tool_tip_text(view: &View) -> String {
+    match &view.dictation {
+        Some(dictation) => format!("{dictation}\n{}", view.status),
+        None => view.status.clone(),
+    }
 }
 
 fn source_name(source: Source) -> &'static str {
@@ -199,7 +232,7 @@ impl ksni::Tray for Tray {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "vinoWhisper".into(),
-            description: self.view.status.clone(),
+            description: tool_tip_text(&self.view),
             ..Default::default()
         }
     }
@@ -290,6 +323,153 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    use ksni::Tray as _;
+    use smithay_client_toolkit::reexports::calloop::channel;
+
+    fn view() -> View {
+        View {
+            visible: true,
+            source: Source::Output,
+            status: caption_status(true, &Phase::Live, Some("NPU"), false),
+            dictation: None,
+            shortcut: ShortcutState::Pending,
+            passive: false,
+            autostart: false,
+            recent: Recent::default(),
+        }
+    }
+
+    fn tray(view: View) -> Tray {
+        let (tx, _rx) = channel::channel();
+        Tray::new(tx, view)
+    }
+
+    // Every item a screen reader can land on, submenus and radio options included.
+    fn all_labels(items: &[MenuItem<Tray>], out: &mut Vec<String>) {
+        for item in items {
+            match item {
+                MenuItem::Standard(item) => out.push(item.label.clone()),
+                MenuItem::Checkmark(item) => out.push(item.label.clone()),
+                MenuItem::SubMenu(item) => {
+                    out.push(item.label.clone());
+                    all_labels(&item.submenu, out);
+                }
+                MenuItem::RadioGroup(group) => {
+                    out.extend(group.options.iter().map(|option| option.label.clone()))
+                }
+                MenuItem::Separator => {}
+            }
+        }
+    }
+
+    #[test]
+    fn every_menu_item_has_a_text_label() {
+        let mut recent = Recent::default();
+        recent.push("hello");
+        for view in [
+            view(),
+            View {
+                recent,
+                visible: false,
+                ..view()
+            },
+        ] {
+            let mut found = Vec::new();
+            all_labels(&tray(view).menu(), &mut found);
+            assert!(found.len() >= 9, "{found:?}");
+            for label in &found {
+                assert!(!label.trim().is_empty(), "{found:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn on_off_items_are_checkmarks_that_report_their_state() {
+        for (visible, autostart) in [(true, false), (false, true)] {
+            let menu = tray(View {
+                visible,
+                autostart,
+                ..view()
+            })
+            .menu();
+            let checks: Vec<(String, bool)> = menu
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Checkmark(item) => Some((item.label.clone(), item.checked)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                checks,
+                [
+                    ("Show captions".to_owned(), visible),
+                    ("Start at login".to_owned(), autostart)
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn the_source_is_a_radio_group_with_the_current_one_selected() {
+        for source in Source::ALL {
+            let menu = tray(View { source, ..view() }).menu();
+            let listen = menu
+                .iter()
+                .find_map(|item| match item {
+                    MenuItem::SubMenu(menu) if menu.label == "Listen to" => Some(menu),
+                    _ => None,
+                })
+                .expect("a Listen to submenu");
+            let MenuItem::RadioGroup(group) = &listen.submenu[0] else {
+                panic!("a radio group");
+            };
+            assert_eq!(group.options[group.selected].label, source_name(source));
+        }
+    }
+
+    #[test]
+    fn the_item_is_named_and_every_state_reads_differently() {
+        let views = [
+            caption_status(false, &Phase::Live, Some("NPU"), false),
+            caption_status(true, &Phase::Starting, None, false),
+            caption_status(true, &Phase::Live, Some("NPU"), false),
+            caption_status(true, &Phase::Live, Some("CPU"), true),
+            caption_status(true, &Phase::Stopped, None, false),
+            caption_status(true, &Phase::Failed("no audio".into()), None, false),
+        ]
+        .into_iter()
+        .flat_map(|status| {
+            [
+                None,
+                Some("Dictation recording (release the key to finish)".to_owned()),
+                Some("Dictation failed: the server stopped".to_owned()),
+            ]
+            .map(|dictation| View {
+                status: status.clone(),
+                dictation,
+                ..view()
+            })
+        });
+        let mut seen = std::collections::HashSet::new();
+        for view in views {
+            let tray = tray(view);
+            assert_eq!(tray.title(), "vinoWhisper");
+            let tip = tray.tool_tip();
+            assert_eq!(tip.title, "vinoWhisper");
+            assert!(seen.insert(tip.description.clone()), "{}", tip.description);
+        }
+        assert_eq!(seen.len(), 18);
+        assert!(seen.iter().any(|tip| tip.contains("not the NPU")));
+        assert!(
+            seen.iter()
+                .any(|tip| tip.contains("Captions stopped: no audio"))
+        );
+        assert!(
+            seen.iter()
+                .any(|tip| tip.starts_with("Dictation recording"))
+        );
     }
 
     #[test]

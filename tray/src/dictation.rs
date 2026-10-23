@@ -154,6 +154,31 @@ impl Dictation {
         &self.phase
     }
 
+    // For the tray's tooltip. Never the dictated words: those stay on the pill, off D-Bus.
+    pub fn status(&self) -> Option<String> {
+        let text = match &self.phase {
+            Phase::Idle => return None,
+            Phase::Listening { live: false, .. } => "starting the microphone".to_owned(),
+            Phase::Listening {
+                hands_free: true, ..
+            } => "recording, hands-free (tap the key to finish)".to_owned(),
+            Phase::Listening { .. } => "recording (release the key to finish)".to_owned(),
+            Phase::Transcribing => "transcribing".to_owned(),
+            Phase::Typed { pasted: None, .. } => "typing".to_owned(),
+            Phase::Typed {
+                pasted: Some(Ok(())),
+                ..
+            } => "typed".to_owned(),
+            Phase::Typed {
+                pasted: Some(Err(why)),
+                ..
+            } => format!("on the clipboard, not typed: {why}"),
+            Phase::Nothing => "heard nothing".to_owned(),
+            Phase::Failed(message) => format!("failed: {message}"),
+        };
+        Some(format!("Dictation {text}"))
+    }
+
     pub fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -418,6 +443,58 @@ mod tests {
 
     fn at(ms: u64, base: Instant) -> Instant {
         base + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn each_phase_has_its_own_tray_text_and_none_carries_the_words() {
+        let words = "the private words";
+        let phases = [
+            Phase::Listening {
+                hands_free: false,
+                live: false,
+                text: String::new(),
+            },
+            Phase::Listening {
+                hands_free: false,
+                live: true,
+                text: words.into(),
+            },
+            Phase::Listening {
+                hands_free: true,
+                live: true,
+                text: words.into(),
+            },
+            Phase::Transcribing,
+            Phase::Typed {
+                text: words.into(),
+                pasted: None,
+            },
+            Phase::Typed {
+                text: words.into(),
+                pasted: Some(Ok(())),
+            },
+            Phase::Typed {
+                text: words.into(),
+                pasted: Some(Err("no keyboard".into())),
+            },
+            Phase::Nothing,
+            Phase::Failed("the server stopped".into()),
+        ];
+        let mut d = Dictation::new();
+        assert_eq!(d.status(), None, "idle says nothing");
+        let mut seen = std::collections::HashSet::new();
+        for phase in phases {
+            d.set(phase);
+            let status = d.status().expect("a busy phase is described");
+            assert!(status.starts_with("Dictation "), "{status}");
+            assert!(!status.contains("private"), "{status}");
+            assert!(seen.insert(status.clone()), "repeated: {status}");
+        }
+        assert!(seen.iter().any(|s| s.contains("recording")));
+        assert!(
+            seen.iter()
+                .any(|s| s.contains("failed: the server stopped"))
+        );
     }
 
     #[test]
