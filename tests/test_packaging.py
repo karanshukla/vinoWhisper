@@ -7,6 +7,7 @@ publish a download URL that 404s, and the first person to find out would be a
 user running `vinowhisper-setup --gui`.
 """
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -66,3 +67,15 @@ def test_the_pins_ship_in_the_wheel():
     for component in overlay.COMPONENTS:
         assert component.pin_file.name in package_data
     assert "ovfetch_release.json" in package_data
+
+
+def test_the_installer_hashes_uv_and_runs_no_fetched_script():
+    """#95: uv comes from a pinned tarball checked against a sha256 in the script."""
+    script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    # The header comment shows how to pipe this script itself into bash; that's fine.
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"curl[^\n]*\|\s*(ba)?sh", code), "pipes a download into a shell"
+    pins = re.findall(r'^UV_SHA256_\w+="([^"]*)"$', script, flags=re.MULTILINE)
+    assert len(pins) == 2
+    assert all(re.fullmatch(r"[0-9a-f]{64}", pin) for pin in pins), pins
+    assert "sha256sum --check" in script

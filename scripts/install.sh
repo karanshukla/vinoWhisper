@@ -10,8 +10,14 @@
 # What it does and why: docs/install.md
 set -euo pipefail
 
-# Bumped by hand, in a reviewed commit: the installer it fetches is run as you.
+# Bumped by hand, in a reviewed commit: the binary it fetches is run as you.
+# The tarball is checked against these, not against the .sha256 file beside it
+# on the same host, so a compromised release or mirror installs nothing (#95).
+# Bump: gh api repos/astral-sh/uv/releases/tags/$UV_VERSION \
+#         -q '.assets[]|select(.name|test("linux-musl.tar.gz$"))|"\(.digest) \(.name)"'
 UV_VERSION="0.12.20"
+UV_SHA256_X86_64="14114d66a094f1907af0fcbc863f34226bbb7f5e430e13dce6676ba40dcc6891"
+UV_SHA256_AARCH64="94bb13feeebc6b59a4124016c957cdc9ee406d1476ce2b2ce2991e95b8e820b7"
 
 say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m warn\033[0m %s\n' "$*" >&2; }
@@ -37,6 +43,39 @@ vinoWhisper installer.
   --no-setup    stop after `uv sync`, do not run the setup wizard
   --gui         also build the overlay: captions, dictation, tray (needs cargo)
 EOF
+}
+
+# uv's release tarball, hashed, instead of piping astral.sh's install.sh to sh.
+# musl, so one static binary runs on any glibc.
+install_uv() {
+    local arch sha
+    case "$(uname -m)" in
+        x86_64)        arch=x86_64;  sha="$UV_SHA256_X86_64" ;;
+        aarch64|arm64) arch=aarch64; sha="$UV_SHA256_AARCH64" ;;
+        *) die "no pinned uv for $(uname -m); install uv yourself (https://docs.astral.sh/uv/) and re-run" ;;
+    esac
+    local name="uv-$arch-unknown-linux-musl"
+    local url="https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$name.tar.gz"
+    local bin="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf '   would download: %s (sha256 %s)\n' "$url" "$sha"
+        printf '   would install: %s/uv, %s/uvx\n' "$bin" "$bin"
+        return 0
+    fi
+    command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to check the uv download"
+    local tmp
+    tmp="$(mktemp -d)"
+    # EXIT, not RETURN: die exits without returning. Expanded now: tmp is local.
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" EXIT
+    curl -fLsS --proto '=https' --tlsv1.2 -o "$tmp/uv.tar.gz" "$url" \
+        || die "could not download $url"
+    printf '%s  %s\n' "$sha" "$tmp/uv.tar.gz" | sha256sum --check --status \
+        || die "uv $UV_VERSION download does not match its pinned sha256; installed nothing"
+    tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+    install -Dm755 "$tmp/$name/uv" "$bin/uv"
+    install -Dm755 "$tmp/$name/uvx" "$bin/uvx"
+    export PATH="$bin:$PATH"
 }
 
 # git, not the GitHub API: no rate limit, no JSON, and it honours VINOWHISPER_REPO.
@@ -103,10 +142,9 @@ main() {
     if command -v uv >/dev/null 2>&1; then
         say "uv $(uv --version 2>/dev/null | awk '{print $2}') already installed"
     else
-        say "Installing uv $UV_VERSION (https://astral.sh/uv)"
+        say "Installing uv $UV_VERSION (github.com/astral-sh/uv release, sha256-pinned)"
         command -v curl >/dev/null 2>&1 || die "curl is required to install uv"
-        run sh -c "curl -LsSf https://astral.sh/uv/$UV_VERSION/install.sh | sh"
-        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+        install_uv
         command -v uv >/dev/null 2>&1 || [[ $DRY_RUN -eq 1 ]] || die "uv installed but not on PATH"
     fi
 
