@@ -735,9 +735,7 @@ fn tab_name(page: Page) -> String {
 // one shown. Enter and Space click a focused response, and the ring shows which has focus.
 fn page_tab(ui: &egui::Ui, response: &egui::Response, page: Page, selected: bool) {
     let name = tab_name(page);
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name)
-    });
+    response.widget_info(|| egui::WidgetInfo::selected(Role::Tab, true, selected, &name));
     ui.ctx().accesskit_node_builder(response.id, |node| {
         node.set_role(Role::Tab);
         node.clear_toggled();
@@ -845,7 +843,8 @@ impl eframe::App for SettingsWindow {
         }
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         let focused = ctx.input(|input| input.focused);
         if focused && !self.focused {
             // The desktop's light/dark switch may have flipped while we were in the background.
@@ -867,7 +866,7 @@ impl eframe::App for SettingsWindow {
             self.speech = Speech::load();
             self.notice = Some(reason);
         }
-        let (saved_settings, saved_speech) = self.show(ctx);
+        let (saved_settings, saved_speech) = self.show(ui);
 
         if self.cleanup_dirty {
             self.cleanup_dirty = false;
@@ -892,8 +891,9 @@ impl eframe::App for SettingsWindow {
 
 impl SettingsWindow {
     // Draws the window and says which files changed; saving them, and every other side
-    // effect but the buttons', is left to `update`, so tests can drive this alone.
-    fn show(&mut self, ctx: &egui::Context) -> (bool, bool) {
+    // effect but the buttons', is left to `ui`, so tests can drive this alone.
+    fn show(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
+        let ctx = &ui.ctx().clone();
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
@@ -901,13 +901,13 @@ impl SettingsWindow {
         let mut saved_settings = false;
         let mut saved_speech = false;
 
-        egui::TopBottomPanel::top("header")
+        egui::Panel::top("header")
             .frame(
                 egui::Frame::NONE
                     .fill(header.bg)
                     .inner_margin(egui::Margin::symmetric(16, 10)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 // Wrapped: at the desktop's largest text the four tabs don't fit on one line.
                 ui.horizontal_wrapped(|ui| {
                     if wide {
@@ -929,15 +929,15 @@ impl SettingsWindow {
             });
 
         if wide {
-            egui::SidePanel::left("pages")
+            egui::Panel::left("pages")
                 .resizable(false)
-                .exact_width(SIDEBAR_WIDTH)
+                .exact_size(SIDEBAR_WIDTH)
                 .frame(
                     egui::Frame::NONE
                         .fill(p.bg)
                         .inner_margin(egui::Margin::same(8)),
                 )
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     for page in Page::ALL {
                         sidebar_item(ui, page, &mut self.page);
@@ -958,7 +958,7 @@ impl SettingsWindow {
                         bottom: 4,
                     }),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 // A solid bar, always drawn: the floating one only shows on hover, so a page
                 // that runs past the window gave no sign there was more below.
                 ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
@@ -967,7 +967,7 @@ impl SettingsWindow {
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     // Drag-to-scroll is for touch, and its invisible page-sized area took a Tab stop.
                     .scroll_source(egui::scroll_area::ScrollSource {
-                        drag: false,
+                        drag: egui::scroll_area::DragScroll::Never,
                         ..Default::default()
                     })
                     .show(ui, |ui| {
@@ -1003,7 +1003,11 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
             .with_min_inner_size([340.0, 320.0]),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.
-        vsync: false,
+        // eframe 0.37 skips the blocking swap on Wayland itself (egui#5136); this keeps X11 too.
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let result = eframe::run_native(
@@ -1055,8 +1059,9 @@ mod tests {
             dictate: "Meta+H".into(),
             configurable: true,
         };
-        Harness::builder().with_size((width, 740.0)).build_state(
-            |ctx, under: &mut Under| {
+        Harness::builder().with_size((width, 740.0)).build_ui_state(
+            |ui, under: &mut Under| {
+                let ctx = &ui.ctx().clone();
                 // Fonts only bind at the next pass, and the bold family is not stock.
                 if !under.styled {
                     theme::apply_for_tests(ctx);
@@ -1064,7 +1069,7 @@ mod tests {
                     ctx.request_repaint();
                     return;
                 }
-                let (settings, speech) = under.window.show(ctx);
+                let (settings, speech) = under.window.show(ui);
                 under.saved.0 |= settings;
                 under.saved.1 |= speech;
             },
@@ -1245,8 +1250,28 @@ mod tests {
             .value()
             .unwrap_or_default();
         assert!(!shown.contains("secret"), "{shown}");
-        harness.get_by_role_and_label(Role::Button, "Save key");
+        let save = harness.get_by_role_and_label(Role::Button, "Save key");
+        assert!(!save.accesskit_node().is_disabled(), "a key to save");
         harness.get_by_role_and_label(Role::Button, "Remove key");
+    }
+
+    // AccessKit had the disabled flag right all along; accesskit_atspi_common before 0.21
+    // dropped it for buttons and told Orca every one was usable (#100, AccessKit#788). The
+    // tree above can't see that, so hold the lock at the fixed release.
+    #[test]
+    fn the_atspi_bridge_is_one_that_exposes_disabled_buttons() {
+        let lock = include_str!("../Cargo.lock");
+        let version = lock
+            .split("[[package]]")
+            .find(|package| package.contains("name = \"accesskit_atspi_common\""))
+            .and_then(|package| package.split("version = \"").nth(1))
+            .and_then(|rest| rest.split('"').next())
+            .expect("accesskit_atspi_common is locked");
+        let minor: u32 = version.split('.').nth(1).unwrap().parse().unwrap();
+        assert!(
+            version.starts_with("0.") && minor >= 21,
+            "accesskit_atspi_common {version} announces disabled buttons as usable"
+        );
     }
 
     #[test]
