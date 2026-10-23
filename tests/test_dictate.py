@@ -4,8 +4,10 @@ The recorder and the client are fakes, so this runs with no microphone and no
 server; what is under test is the command handling and what gets emitted.
 """
 
+import dataclasses
 import threading
 import time
+import urllib.error
 
 import numpy as np
 import pytest
@@ -796,6 +798,10 @@ class FakeCleaner:
         self.seen.append(text)
         return self._answer(text)
 
+    def take_notice(self):
+        notice, self.notice = getattr(self, "notice", None), None
+        return notice
+
 
 def _run_cleaned(cleaner, transcript="um hello there"):
     records: list[dict] = []
@@ -853,6 +859,100 @@ def test_a_transcript_with_nothing_to_fix_skips_the_request_and_the_pill_state()
     assert "Cleaning" not in [r["event"] for r in records]
     assert records[-1]["text"] == "um hello there"
     assert cleaner.seen == []
+
+
+def test_a_cleanup_that_turns_itself_off_says_so_after_the_text():
+    cleaner = FakeCleaner(lambda text: _outcome(text, cleaned=False, reason="http 401"))
+    notice = "LLM cleanup off: the API key was rejected (http 401). Fix it in Settings."
+    cleaner.notice = notice
+    records = _run_cleaned(cleaner)
+    assert [r["event"] for r in records[-2:]] == ["Dictated", "Notice"]
+    assert records[-2]["text"] == "um hello there"
+    assert records[-1]["message"] == notice
+    assert (
+        _run_cleaned(FakeCleaner(lambda text: _outcome("hello there")))[-1]["event"] == "Dictated"
+    )
+
+
+SET = dictate.cleanup.Settings(api_key="sk-test", budget_s=0.5, mode="always")
+
+
+def _file_cleaner(transport, clock=lambda: 0.0, load=lambda: SET):
+    loaded = [load]
+    cleaner = dictate._FileCleaner(
+        load=lambda: loaded[0](), transport=transport, breaker=dictate.cleanup.Breaker(clock)
+    )
+    return cleaner, loaded
+
+
+def _press(cleaner):
+    cleaner.prepare()
+    if not cleaner.active:
+        return None
+    return cleaner("um hello there")
+
+
+def test_a_rejected_key_stops_the_requests_until_the_settings_change():
+    """#87: a bad key cost every dictation a round trip, and said nothing."""
+    calls = []
+
+    def rejected(settings, text):
+        calls.append(settings.api_key)
+        raise urllib.error.HTTPError(settings.endpoint, 401, "no", {}, None)  # type: ignore[arg-type]
+
+    cleaner, loaded = _file_cleaner(rejected)
+    assert _press(cleaner).reason == "http 401"
+    assert "API key was rejected" in cleaner.take_notice()
+    assert _press(cleaner) is None and _press(cleaner) is None
+    assert cleaner.take_notice() is None
+    assert calls == ["sk-test"]
+    loaded[0] = lambda: dataclasses.replace(SET, api_key="sk-fixed")
+    assert _press(cleaner) is not None
+    assert calls == ["sk-test", "sk-fixed"]
+
+
+def test_repeated_timeouts_pause_cleanup_then_one_request_probes():
+    now = [0.0]
+    calls = []
+
+    def down(settings, text):
+        calls.append(now[0])
+        raise urllib.error.URLError("refused")
+
+    cleaner, _ = _file_cleaner(down, clock=lambda: now[0])
+    for _ in range(dictate.cleanup.STRIKES - 1):
+        _press(cleaner)
+        assert cleaner.take_notice() is None
+    _press(cleaner)
+    assert cleaner.take_notice() == "LLM cleanup paused for 10 min (unreachable)"
+    assert _press(cleaner) is None
+    now[0] = dictate.cleanup.COOLDOWN_S
+    _press(cleaner)
+    assert cleaner.take_notice() is not None, "one failed probe turns it straight back off"
+    assert _press(cleaner) is None
+    assert len(calls) == dictate.cleanup.STRIKES + 1
+
+
+def test_a_refused_answer_is_not_a_service_error():
+    cleaner, _ = _file_cleaner(lambda settings, text: "something else entirely")
+    for _ in range(dictate.cleanup.STRIKES + 1):
+        assert _press(cleaner).reason == "output changed words"
+        assert cleaner.take_notice() is None
+
+
+def test_a_success_clears_the_strikes():
+    replies = iter([urllib.error.URLError("x"), urllib.error.URLError("x"), "hello there"] * 2)
+
+    def flaky(settings, text):
+        reply = next(replies)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    cleaner, _ = _file_cleaner(flaky)
+    for _ in range(6):
+        assert _press(cleaner) is not None
+        assert cleaner.take_notice() is None
 
 
 def _fed(segmenter, signal):

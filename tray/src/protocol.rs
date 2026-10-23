@@ -59,6 +59,10 @@ pub enum Dictate {
     Error {
         message: String,
     },
+    /// Sent after `Dictated`: something to tell the user that did not stop the typing.
+    Notice {
+        message: String,
+    },
 }
 
 // Unknown records are skipped, not fatal: a newer Python side may add some.
@@ -158,6 +162,7 @@ mod tests {
             r#"{"event": "Dictated", "text": "It’s done.", "audio_s": 2.4, "total_s": 0.46, "rms": 0.02}"#,
             r#"{"event": "Cancelled"}"#,
             r#"{"event": "Error", "message": "Microphone capture failed"}"#,
+            r#"{"event": "Notice", "message": "LLM cleanup paused for 10 min (timed out)"}"#,
         ];
         let parsed: Vec<Dictate> = lines.iter().filter_map(|line| parse(line)).collect();
         assert_eq!(parsed.len(), lines.len());

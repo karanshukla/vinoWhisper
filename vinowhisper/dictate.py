@@ -62,6 +62,7 @@ class _Cleaner(Protocol):
     def active(self) -> bool: ...
     def wants(self, text: str) -> bool: ...
     def __call__(self, text: str) -> cleanup.Outcome: ...
+    def take_notice(self) -> str | None: ...
 
 
 class _Client(Protocol):
@@ -640,6 +641,12 @@ class Dictation:
                 "rms": level,
             }
         )
+        # Cleanup just turned itself off: the pill says so once the text is typed. Its own
+        # record, after Dictated, so an older tray skips it and still types.
+        notice = self._cleaner.take_notice()
+        if notice is not None:
+            print(f"[vinowhisper] {notice}", file=sys.stderr)
+            self._emit({"event": "Notice", "message": notice})
 
     def _tidy(self, decoder: _Decoder) -> tuple[str, bool]:
         spoken = decoder.spoken()
@@ -679,9 +686,22 @@ class Dictation:
 
 
 class _FileCleaner:
-    """Settings are read at each key press, off the path the text takes at release."""
+    """Settings are read at each key press, off the path the text takes at release.
 
-    def __init__(self) -> None:
+    The breaker outlives each read, so changed settings are what turn a tripped one back on.
+    """
+
+    def __init__(
+        self,
+        load: Callable[[], cleanup.Settings | None] | None = None,
+        transport: cleanup.Transport | None = None,
+        breaker: cleanup.Breaker | None = None,
+    ) -> None:
+        # Looked up at each call when not given, so cleanup.post can be swapped out.
+        self._load = load
+        self._transport = transport
+        self._breaker = breaker or cleanup.Breaker()
+        self._notice: str | None = None
         self._settings: cleanup.Settings | None = None
         self._ready = threading.Event()
         self._ready.set()
@@ -691,7 +711,7 @@ class _FileCleaner:
 
         def load() -> None:
             try:
-                self._settings = cleanup.load_settings()
+                self._settings = (self._load or cleanup.load_settings)()
             finally:
                 self._ready.set()
 
@@ -700,7 +720,8 @@ class _FileCleaner:
     @property
     def active(self) -> bool:
         self._ready.wait()
-        return self._settings is not None
+        settings = self._settings
+        return settings is not None and self._breaker.allows(settings)
 
     def wants(self, text: str) -> bool:
         self._ready.wait()
@@ -709,9 +730,16 @@ class _FileCleaner:
 
     def __call__(self, text: str) -> cleanup.Outcome:
         self._ready.wait()
-        if self._settings is None:
+        settings = self._settings
+        if settings is None:
             return cleanup.Outcome(text, False, "disabled", 0.0)
-        return cleanup.clean_up(text, self._settings, cleanup.post)
+        outcome = cleanup.clean_up(text, settings, self._transport or cleanup.post)
+        self._notice = self._breaker.record(settings, outcome)
+        return outcome
+
+    def take_notice(self) -> str | None:
+        notice, self._notice = self._notice, None
+        return notice
 
 
 def _report_release(
