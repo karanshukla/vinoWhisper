@@ -102,7 +102,10 @@ fn combo<T: Copy + PartialEq>(
 ) -> bool {
     let before = *value;
     let shown = egui::ComboBox::from_id_salt(id)
-        .width(COMBO_WIDTH)
+        // Never past the edge: at the largest text the form column is narrower than this,
+        // and an unwrapped choice pushed the whole column out with it.
+        .width(COMBO_WIDTH.min(ui.available_width()))
+        .wrap()
         .selected_text(label(*value))
         .show_ui(ui, |ui| {
             for &option in all {
@@ -147,6 +150,9 @@ struct SettingsWindow {
     multilingual: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
+    // The last factor read from the desktop: zoom follows it only when it changes, so a
+    // Ctrl + or - since then is kept.
+    text_scale: Option<f32>,
     shortcuts: Arc<Mutex<Shortcuts>>,
     // Which page last asked the tray, so arriving on Shortcuts asks again.
     shown: Option<Page>,
@@ -162,6 +168,13 @@ impl SettingsWindow {
         window
     }
 
+    fn follow_text_scale(&mut self, ctx: &egui::Context, scale: Option<f32>) {
+        if scale != self.text_scale {
+            self.text_scale = scale;
+            ctx.set_zoom_factor(scale.unwrap_or(1.0));
+        }
+    }
+
     fn with(page: Option<Page>, settings: Settings, speech: Speech, cleanup: Cleanup) -> Self {
         SettingsWindow {
             page: page.unwrap_or(Page::Shortcuts),
@@ -174,6 +187,7 @@ impl SettingsWindow {
             multilingual: false,
             focused: true,
             kde_header: None,
+            text_scale: None,
             shortcuts: Arc::new(Mutex::new(Shortcuts::Asking)),
             shown: None,
             refused: Arc::new(Mutex::new(None)),
@@ -418,7 +432,9 @@ impl SettingsWindow {
         let off = !self.cleanup.enabled;
         ui.add_enabled_ui(!off, |ui| {
             section(ui, "Endpoint");
-            let wide = (ui.available_width() - LABEL_WIDTH).clamp(200.0, 380.0);
+            let wide = (ui.available_width() - LABEL_WIDTH)
+                .clamp(200.0, 380.0)
+                .min(ui.available_width());
             row(
                 ui,
                 "Address:",
@@ -523,7 +539,7 @@ impl SettingsWindow {
                         egui::TextEdit::singleline(&mut self.key_input)
                             .password(true)
                             .hint_text("sk-ant-…")
-                            .desired_width(300.0),
+                            .desired_width(ui.available_width().min(300.0)),
                     );
                     labelled(edit, label);
                     ui.horizontal(|ui| {
@@ -835,6 +851,7 @@ impl eframe::App for SettingsWindow {
             // The desktop's light/dark switch may have flipped while we were in the background.
             theme::follow_desktop(ctx);
             self.kde_header = theme::kde_header();
+            self.follow_text_scale(ctx, theme::desktop_text_scale());
         }
         let regained = focused && !self.focused;
         self.focused = focused;
@@ -891,7 +908,8 @@ impl SettingsWindow {
                     .inner_margin(egui::Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                // Wrapped: at the desktop's largest text the four tabs don't fit on one line.
+                ui.horizontal_wrapped(|ui| {
                     if wide {
                         ui.add_space(SIDEBAR_WIDTH - 16.0 + 24.0);
                         let title = ui.label(
@@ -993,7 +1011,11 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         options,
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
-            Ok(Box::new(SettingsWindow::new(page)))
+            let mut window = SettingsWindow::new(page);
+            // Before the first frame, not at first focus: a window opened in the background
+            // would otherwise draw its first frames small.
+            window.follow_text_scale(&cc.egui_ctx, theme::desktop_text_scale());
+            Ok(Box::new(window))
         }),
     );
     match result {
@@ -1284,6 +1306,57 @@ mod tests {
         assert_eq!(
             harness.root().accesskit_node().label().as_deref(),
             Some(TITLE)
+        );
+    }
+
+    #[test]
+    fn large_text_keeps_every_control_inside_the_window() {
+        // 1.5 is the step where 820 wide first folds the sidebar; 3.0 is the clamp.
+        for zoom in [1.5, *theme::TEXT_SCALE.end()] {
+            for page in Page::ALL {
+                let mut harness = harness(page, WIDE);
+                harness.state_mut().window.cleanup.enabled = true;
+                harness.ctx.set_zoom_factor(zoom);
+                harness.run();
+                let outside: Vec<String> = harness
+                    .query_all_by(|node| {
+                        node.data().supports_action(egui::accesskit::Action::Focus)
+                    })
+                    .filter(|node| node.rect().max.x > WIDE + 0.5 || node.rect().min.x < -0.5)
+                    .map(|node| format!("{:?} {:?}", node.accesskit_node().label(), node.rect()))
+                    .collect();
+                assert!(
+                    outside.is_empty(),
+                    "{} at {zoom}x: {outside:?}",
+                    page.title()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_desktop_text_scale_sets_zoom_but_keeps_a_later_ctrl_plus() {
+        let mut harness = harness(Page::Captions, WIDE);
+        harness.run();
+        let ctx = harness.ctx.clone();
+        // Zoom lands at the start of the next pass.
+        let follow = |harness: &mut Harness<'static, Under>, scale| {
+            harness.state_mut().window.follow_text_scale(&ctx, scale);
+            harness.run();
+            ctx.zoom_factor()
+        };
+        assert_eq!(follow(&mut harness, Some(1.25)), 1.25);
+        harness.ctx.set_zoom_factor(1.5);
+        harness.run();
+        assert_eq!(
+            follow(&mut harness, Some(1.25)),
+            1.5,
+            "unchanged desktop setting, user zoom kept"
+        );
+        assert_eq!(
+            follow(&mut harness, None),
+            1.0,
+            "the desktop stopped asking"
         );
     }
 

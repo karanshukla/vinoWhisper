@@ -148,7 +148,12 @@ empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
   polite live regions;
 - the theme clears WCAG 2.2 contrast in both schemes: 4.5:1 for text, 3:1 for
   field edges, focus and the current-page bar (`theme.rs`, computed, not eyed);
-- at double zoom (Ctrl++) the sidebar folds into tabs and every control stays.
+- at double zoom (Ctrl++) the sidebar folds into tabs and every control stays;
+  at 1.5x and 3x no control runs past the window's edge;
+- the desktop's text size sets the zoom (#99): GNOME's `text-scaling-factor`
+  (Settings portal, else `gsettings`), on Plasma a forced font DPI over 96 or
+  else the general font's size over 10pt, clamped to 1x-3x. It's re-read when
+  the window regains focus and applied only if it changed, so Ctrl + and - stick.
 
 The tray's icon never changes, so state lives in words: the tooltip carries
 the captions' state and, while dictating, the dictation's, never the dictated

@@ -108,20 +108,115 @@ pub struct KdeHeader {
 // Breeze paints the title bar in the colour scheme's Header colours, so a header bar painted
 // in them runs into it, as Dolphin's toolbar does. KDE only: elsewhere the file means nothing.
 pub fn kde_header() -> Option<KdeHeader> {
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-    if !desktop
-        .split(':')
-        .any(|name| name.eq_ignore_ascii_case("KDE"))
-    {
+    if !on_kde() {
         return None;
     }
-    let config = std::env::var_os("XDG_CONFIG_HOME")
+    parse_kde_header(&std::fs::read_to_string(config_dir()?.join("kdeglobals")).ok()?)
+}
+
+fn on_kde() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .split(':')
+        .any(|name| name.eq_ignore_ascii_case("KDE"))
+}
+
+fn config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
         .filter(|dir| !dir.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".config"))
-        })?;
-    parse_kde_header(&std::fs::read_to_string(config.join("kdeglobals")).ok()?)
+        })
+}
+
+// egui sizes text from its own style times the display scale, so GNOME's Large Text and
+// Plasma's font settings never reached it (#99). Applied as zoom, the same thing Ctrl + does,
+// so the layout is the one already tested at 2x.
+pub const TEXT_SCALE: std::ops::RangeInclusive<f32> = 1.0..=3.0;
+
+/// The desktop's text scaling, clamped to `TEXT_SCALE`; None when it doesn't say.
+pub fn desktop_text_scale() -> Option<f32> {
+    let factor = if on_kde() {
+        let config = config_dir()?;
+        let read = |name: &str| std::fs::read_to_string(config.join(name)).unwrap_or_default();
+        kde_text_scale(&read("kcmfontsrc"), &read("kdeglobals"))
+    } else {
+        gnome_text_scale()
+    }?;
+    Some(factor.clamp(*TEXT_SCALE.start(), *TEXT_SCALE.end()))
+}
+
+// The portal first, which GNOME's and GTK's backends answer; gsettings when no portal runs.
+fn gnome_text_scale() -> Option<f32> {
+    let portal: &[&str] = &[
+        "busctl",
+        "--user",
+        "call",
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Settings",
+        "ReadOne",
+        "ss",
+        "org.gnome.desktop.interface",
+        "text-scaling-factor",
+    ];
+    let gsettings: &[&str] = &[
+        "gsettings",
+        "get",
+        "org.gnome.desktop.interface",
+        "text-scaling-factor",
+    ];
+    [portal, gsettings].into_iter().find_map(|argv| {
+        let output = std::process::Command::new(argv[0])
+            .args(&argv[1..])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        parse_scale(&String::from_utf8_lossy(&output.stdout))
+    })
+}
+
+// busctl says "v d 1.25", gsettings "1.25".
+fn parse_scale(reply: &str) -> Option<f32> {
+    let factor = reply.split_whitespace().last()?.parse::<f32>().ok()?;
+    (factor.is_finite() && factor > 0.0).then_some(factor)
+}
+
+// Plasma has two knobs: a forced font DPI (kcmfontsrc, 96 is 1x), and the general font's
+// point size (kdeglobals, 10 is Breeze's default). A forced DPI wins, as it does in Qt.
+fn kde_text_scale(kcmfontsrc: &str, kdeglobals: &str) -> Option<f32> {
+    let general = |file: &str, key: &str| -> Option<String> {
+        let mut inside = false;
+        for line in file.lines().map(str::trim) {
+            if line.starts_with('[') {
+                inside = line == "[General]";
+            } else if inside
+                && let Some((k, v)) = line.split_once('=')
+                && k.trim() == key
+            {
+                return Some(v.trim().to_owned());
+            }
+        }
+        None
+    };
+    let dpi = general(kcmfontsrc, "forceFontDPI")
+        .and_then(|dpi| dpi.parse::<f32>().ok())
+        .filter(|dpi| *dpi > 0.0);
+    if let Some(dpi) = dpi {
+        return Some(dpi / 96.0);
+    }
+    let points = general(kdeglobals, "font")?
+        .split(',')
+        .nth(1)?
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|points| *points > 0.0)?;
+    Some(points / 10.0)
 }
 
 fn parse_kde_header(kdeglobals: &str) -> Option<KdeHeader> {
@@ -480,6 +575,39 @@ ForegroundNormal=35,38,41
             .unwrap();
         let kde = parse_kde_header(only_active).unwrap();
         assert_eq!(kde.inactive, kde.active);
+    }
+
+    #[test]
+    fn the_text_scale_reply_is_read_from_busctl_or_gsettings() {
+        assert_eq!(parse_scale("v d 1.25\n"), Some(1.25));
+        assert_eq!(parse_scale("1.5\n"), Some(1.5));
+        assert_eq!(parse_scale(""), None);
+        assert_eq!(parse_scale("v d 0"), None);
+        assert_eq!(parse_scale("v d nan"), None);
+    }
+
+    #[test]
+    fn plasma_text_scale_comes_from_forced_dpi_then_the_font_size() {
+        let font = "[General]\nfont=Noto Sans,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\n";
+        assert_eq!(kde_text_scale("", font), Some(1.2));
+        assert_eq!(
+            kde_text_scale("[General]\nforceFontDPI=144\n", font),
+            Some(1.5)
+        );
+        // 0 is how the Fonts page writes "not forced".
+        assert_eq!(
+            kde_text_scale("[General]\nforceFontDPI=0\n", font),
+            Some(1.2)
+        );
+        assert_eq!(
+            kde_text_scale(
+                "",
+                "[WM]\nfont=Noto Sans,20\n[General]\nfont=Noto Sans,10\n"
+            ),
+            Some(1.0)
+        );
+        assert_eq!(kde_text_scale("", ""), None);
+        assert_eq!(kde_text_scale("", "[General]\nfont=garbage\n"), None);
     }
 
     #[test]
