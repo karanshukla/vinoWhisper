@@ -2,8 +2,8 @@
 name = "vinowhisper-gui"
 version = "1.0.0"
 edition = "2024"
-# let-chains
-rust-version = "1.88"
+# let-chains; egui 0.37 needs 1.95
+rust-version = "1.95"
 description = "Settings window for vinoWhisper"
 license = "MIT"
 repository = "https://github.com/karanshukla/vinoWhisper"
@@ -12,12 +12,12 @@ publish = false
 # Unlike the tray this is a glibc binary: winit dlopens libwayland and libEGL,
 # which a static musl build cannot do (docs/development.md).
 [dependencies]
-eframe = { version = "0.33.3", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland"] }
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland"] }
 serde_json = "1.0.151"
 vinowhisper-settings = { path = "../settings" }
 
 [dev-dependencies]
-egui_kittest = { version = "0.33.3", default-features = false }
+egui_kittest = { version = "0.37.0", default-features = false }
 
 [profile.release]
 lto = true
