@@ -7,7 +7,8 @@ installer actually does, and the dependency pin behind it.
 curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
 ```
 
-That installs [uv](https://docs.astral.sh/uv/) (a pinned version, only if you
+That installs [uv](https://docs.astral.sh/uv/) (a pinned release tarball checked
+against a sha256 in the script, not astral.sh's install script, and only if you
 have none), clones the latest `vX.Y.Z` release tag rather than `main`
 (`--ref main` for unreleased code, `--ref v0.6.1` for a specific one), builds
 the environment with `uv sync --locked`, so exactly what `uv.lock` pins and
