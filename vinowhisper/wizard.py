@@ -126,6 +126,8 @@ class Wizard:
                 self.say(line)
             return Outcome(None, "install a capture tool by hand, then re-run")
         if self.run(command.split(), "install it?"):
+            if distro.install_needs_reboot(self.distro):
+                return Outcome(None, "capture tool added to the next boot; reboot, then re-run")
             return Outcome(True, "capture tool installed")
         return Outcome(None, "no capture tool yet — captions cannot run without one")
 
@@ -175,6 +177,8 @@ class Wizard:
                 and command
                 and self.run(command.split(), "install the GPU compute runtime?")
             ):
+                if distro.install_needs_reboot(self.distro):
+                    return Outcome(None, "GPU runtime added to the next boot; reboot, then re-run")
                 return Outcome(None, "GPU runtime installed; re-run this to pick it up")
         return Outcome(None, f"falling back to {selection.device.name}")
 

@@ -70,6 +70,52 @@ class-attribute idiom outright. Version-independent root cause, confirmed
 2026-08-03 across every optimum/transformers pairing tried. `requires-python`
 enforces it, so pip will refuse rather than install something broken.
 
+## Image-based distros (Fedora Atomic, openSUSE Aeon)
+
+Silverblue, Kinoite, Bazzite, Aurora, Bluefin and openSUSE Aeon keep `/usr`
+read-only, so `dnf install` and `zypper install` cannot work there. Most of
+vinoWhisper never touches `/usr`: uv, the checkout, the virtualenv (with a
+uv-managed Python when the host's is 3.14), the model export, the commands
+in `~/.local/bin`, the systemd user units in `~/.config/systemd/user`, and the
+overlay's launcher and autostart entries are all in your home directory, and
+install the same way as anywhere else. Run them on the host, not in a toolbox:
+the server is a systemd user unit, and the units point at the paths that
+exist where setup ran.
+
+Host packages are the exception, and `vinowhisper-setup` and
+`vinowhisper-doctor` detect the image (`/run/ostree-booted`, or a read-only
+`/usr` with `transactional-update`) and print the image's own tool:
+
+| System | Install line | Then |
+|---|---|---|
+| Fedora Atomic | `sudo rpm-ostree install --idempotent <packages>` | reboot |
+| openSUSE Aeon / MicroOS | `sudo transactional-update --non-interactive pkg install <packages>` | reboot |
+| any other image-based system | none: the doctor names the packages to add to your image | |
+
+The wizard says to reboot and re-run rather than reporting the step done,
+since a layered package only exists after the reboot. `pipewire-utils`
+(`pw-record`) is already in every Fedora Atomic desktop image, so the usual
+packages to layer are `intel-npu-driver` or `intel-compute-runtime`.
+
+Two things differ from a mutable install:
+
+- **The NPU compiler goes in `/usr/local/lib64`**, which is writable
+  (`/var/usrlocal`), with a file in `/etc/ld.so.conf.d` so the loader finds
+  it. The doctor prints those steps instead of the `/usr/lib64` ones. If the
+  host has no `dpkg-deb`, unpack the `.deb` in a toolbox; it shares your home
+  directory.
+- **Joining the `render` group** (for `/dev/accel`) needs the group copied
+  into `/etc/group` first. The image keeps system groups in `/usr/lib/group`,
+  and `usermod` only edits `/etc/group`, so it reports the group as missing:
+
+  ```bash
+  grep -E '^render:' /usr/lib/group | sudo tee -a /etc/group
+  sudo usermod -aG render $USER
+  ```
+
+None of this has run on an image-based system yet: the commands are from
+each distro's documentation, and the detection is covered by tests only.
+
 ## The OpenVINO version floor
 
 `openvino>=2026.3.1`, and the floor is exact rather than cautious: 2026.3.1 is

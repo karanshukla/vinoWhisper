@@ -282,7 +282,7 @@ def _module_loaded(name: str) -> bool | None:
     return any(line.startswith(f"{name} ") for line in modules.splitlines())
 
 
-def npu_preflight() -> list[Note]:
+def npu_preflight(distro_info: "distro.Distro | None" = None) -> list[Note]:
     notes: list[Note] = []
     nodes = accel_nodes()
     if not nodes:
@@ -308,12 +308,19 @@ def npu_preflight() -> list[Note]:
     if os.access(node, os.R_OK | os.W_OK):
         notes.append(Note(True, "device permissions", f"{node} is readable and writable"))
     else:
+        fix = "`sudo usermod -aG render $USER`, then log out and back in"
+        if (distro_info or distro.detect()).image == distro.IMAGE_OSTREE:
+            # nss-altfiles: usermod only edits /etc/group, and the image keeps system groups in /usr/lib/group.
+            fix = (
+                "`grep -E '^render:' /usr/lib/group | sudo tee -a /etc/group`, then "
+                + fix
+                + "; on Fedora Atomic the group starts out in /usr/lib/group, where usermod cannot see it"
+            )
         notes.append(
             Note(
                 False,
                 "device permissions",
-                f"cannot open {node} — add yourself to the owning group "
-                "(`sudo usermod -aG render $USER`, then log out and back in)",
+                f"cannot open {node} — add yourself to the owning group ({fix})",
             )
         )
     return notes
@@ -478,7 +485,7 @@ def compiler_routes(driver: Path) -> list[tuple[str, ...]]:
 
 def npu_missing_help(distro_info: distro.Distro | None = None) -> list[str]:
     lines: list[str] = []
-    for note in npu_preflight():
+    for note in npu_preflight(distro_info):
         if note.ok is not True:
             lines.append(f"{note.label}: {note.detail}")
 

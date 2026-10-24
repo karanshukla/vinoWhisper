@@ -1,7 +1,13 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 OS_RELEASE = Path("/etc/os-release")
+ROOT = Path("/")
+
+# Image-based systems, where /usr is read-only and packages go into the next boot.
+IMAGE_OSTREE = "ostree"
+IMAGE_TRANSACTIONAL = "transactional"
 
 AUDIO_PIPEWIRE = "pipewire-tools"
 AUDIO_PULSE = "pulse-tools"
@@ -25,6 +31,23 @@ NPU_COMPILER_STEPS = (
     "package manager: note it somewhere, because nothing will upgrade it.",
 )
 
+# /usr/lib64 is read-only on an image-based system; /usr/local and /etc are not.
+NPU_COMPILER_STEPS_IMAGE = (
+    "No distro packages the NPU compiler. Intel ships it only inside "
+    "intel-driver-compiler-npu, in the release archive below.",
+    "/usr/lib64 is read-only on this system, so it goes in /usr/local/lib64 "
+    "instead. Download the linux-npu-driver tarball for the same version as "
+    "your driver, then:",
+    "  tar xf linux-npu-driver-*.tar.gz",
+    "  dpkg-deb -x intel-driver-compiler-npu_*.deb extracted",
+    "  sudo install -Dm 0755 -t /usr/local/lib64 $(find extracted -name '*compiler*.so')",
+    "  echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/intel-npu-compiler.conf",
+    "  sudo ldconfig",
+    "No dpkg on the host? Run the dpkg-deb line in a toolbox or distrobox, "
+    "which shares your home directory. Nothing will upgrade the result: note "
+    "it somewhere.",
+)
+
 
 @dataclass(frozen=True)
 class Distro:
@@ -33,13 +56,19 @@ class Distro:
     version: str
     like: tuple[str, ...] = ()
     family: str = "unknown"
+    image: str = ""
 
     @property
     def known(self) -> bool:
         return self.family != "unknown"
 
+    @property
+    def image_based(self) -> bool:
+        return bool(self.image)
+
     def __str__(self) -> str:
-        return f"{self.name} ({self.id}, {self.family} family)" if self.known else self.name
+        image = f", image-based ({self.image})" if self.image else ""
+        return f"{self.name} ({self.id}, {self.family} family{image})" if self.known else self.name
 
 
 @dataclass(frozen=True)
@@ -190,7 +219,8 @@ _ID_TO_FAMILY = {
     "rocky": "fedora",
     "nobara": "fedora",
     "bazzite": "fedora",
-    "silverblue": "fedora",
+    "aurora": "fedora",
+    "bluefin": "fedora",
     "debian": "debian",
     "ubuntu": "debian",
     "pop": "debian",
@@ -205,6 +235,9 @@ _ID_TO_FAMILY = {
     "opensuse": "suse",
     "opensuse-tumbleweed": "suse",
     "opensuse-leap": "suse",
+    "opensuse-microos": "suse",
+    "opensuse-slowroll": "suse",
+    "suse": "suse",
     "sles": "suse",
     "alpine": "alpine",
     "gentoo": "gentoo",
@@ -224,7 +257,24 @@ def _parse_os_release(text: str) -> dict[str, str]:
     return values
 
 
-def detect(path: Path = OS_RELEASE) -> Distro:
+def _read_only(path: Path) -> bool:
+    try:
+        return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
+    except OSError:
+        return False
+
+
+def _image(root: Path) -> str:
+    if (root / "run/ostree-booted").exists():
+        return IMAGE_OSTREE
+    # Aeon and MicroOS: a read-only root snapshot that transactional-update writes the next one of.
+    tool = any((root / d / "transactional-update").exists() for d in ("usr/sbin", "usr/bin"))
+    if tool and _read_only(root / "usr"):
+        return IMAGE_TRANSACTIONAL
+    return ""
+
+
+def detect(path: Path = OS_RELEASE, root: Path = ROOT) -> Distro:
     try:
         values = _parse_os_release(path.read_text(encoding="utf-8"))
     except OSError:
@@ -244,7 +294,20 @@ def detect(path: Path = OS_RELEASE) -> Distro:
         version=values.get("VERSION_ID", ""),
         like=like,
         family=family or "unknown",
+        image=_image(root),
     )
+
+
+# The tool that writes the next deployment, per (image kind, family); anything else gets notes.
+_IMAGE_INSTALL = {
+    (IMAGE_OSTREE, "fedora"): "sudo rpm-ostree install --idempotent",
+    (IMAGE_TRANSACTIONAL, "suse"): "sudo transactional-update --non-interactive pkg install",
+}
+
+_REBOOT_NOTE = (
+    "/usr is read-only here, so this installs into the next boot: reboot "
+    "(`systemctl reboot`) before it is usable, then re-run vinowhisper-setup."
+)
 
 
 def remediation(capability: str, distro: Distro | None = None) -> Remediation:
@@ -263,14 +326,33 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
         )
 
     packages = family.packages.get(capability, ())
-    commands = (f"{family.install} {' '.join(packages)}",) if packages and family.install else ()
-    default = NPU_COMPILER_STEPS if capability == NPU_COMPILER else ()
+    install = family.install
+    if distro.image_based:
+        install = _IMAGE_INSTALL.get((distro.image, distro.family), "")
+    commands = (f"{install} {' '.join(packages)}",) if packages and install else ()
+    default: tuple[str, ...] = ()
+    if capability == NPU_COMPILER:
+        default = NPU_COMPILER_STEPS_IMAGE if distro.image_based else NPU_COMPILER_STEPS
+    notes = family.notes.get(capability, default)
+    if distro.image_based and packages:
+        if commands:
+            notes = (*notes, _REBOOT_NOTE)
+        else:
+            notes = (
+                *notes,
+                f"/usr is read-only on {distro.name}, so `{family.install}` cannot work. "
+                f"Add {' '.join(packages)} to your image, or layer them with its own tool.",
+            )
     return Remediation(
         capability=capability,
         commands=commands,
-        notes=family.notes.get(capability, default),
+        notes=notes,
         url=url,
     )
+
+
+def install_needs_reboot(distro: Distro) -> bool:
+    return (distro.image, distro.family) in _IMAGE_INSTALL
 
 
 def install_command(capability: str, distro: Distro | None = None) -> str | None:

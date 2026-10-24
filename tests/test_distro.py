@@ -73,3 +73,84 @@ def test_debian_has_no_npu_package_and_says_so():
     remedy = distro.remediation(distro.NPU_DRIVER, info)
     assert remedy.commands == ()
     assert any("intel-level-zero-npu" in note for note in remedy.notes)
+
+
+# --- Image-based systems ---------------------------------------------------
+#
+# Fedora Atomic (Silverblue, Kinoite, Bazzite) and openSUSE Aeon keep /usr
+# read-only, so `dnf install` or `zypper install` fails outright there.
+
+
+def _image_root(tmp_path, *markers):
+    for marker in markers:
+        path = tmp_path / marker
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    return tmp_path
+
+
+def test_fedora_atomic_is_detected_from_the_ostree_marker(fake_os_release, tmp_path):
+    path = fake_os_release(
+        ID="fedora", VARIANT_ID="kinoite", PRETTY_NAME="Fedora Linux 45 (Kinoite)"
+    )
+    info = distro.detect(path, root=_image_root(tmp_path / "root", "run/ostree-booted"))
+    assert (info.family, info.image) == ("fedora", distro.IMAGE_OSTREE)
+    assert "image-based" in str(info)
+
+
+def test_a_plain_install_is_not_image_based(fake_os_release, tmp_path):
+    path = fake_os_release(ID="fedora", PRETTY_NAME="Fedora Linux 45")
+    info = distro.detect(path, root=tmp_path)
+    assert not info.image_based
+    assert (
+        distro.install_command(distro.AUDIO_PIPEWIRE, info) == "sudo dnf install -y pipewire-utils"
+    )
+
+
+def test_fedora_atomic_layers_instead_of_dnf():
+    info = distro.Distro(id="fedora", name="Kinoite", version="45", family="fedora", image="ostree")
+    remedy = distro.remediation(distro.GPU_RUNTIME, info)
+    assert remedy.commands == ("sudo rpm-ostree install --idempotent intel-compute-runtime",)
+    assert any("reboot" in note for note in remedy.notes)
+    assert distro.install_needs_reboot(info)
+
+
+def test_aeon_is_detected_only_when_usr_is_read_only(monkeypatch, fake_os_release, tmp_path):
+    path = fake_os_release(
+        ID="opensuse-microos", ID_LIKE="suse opensuse", PRETTY_NAME="openSUSE Aeon"
+    )
+    root = _image_root(tmp_path / "root", "usr/sbin/transactional-update")
+    monkeypatch.setattr(distro, "_read_only", lambda path: False)
+    assert not distro.detect(path, root=root).image_based
+    monkeypatch.setattr(distro, "_read_only", lambda path: True)
+    info = distro.detect(path, root=root)
+    assert (info.family, info.image) == ("suse", distro.IMAGE_TRANSACTIONAL)
+    command = distro.install_command(distro.AUDIO_PIPEWIRE, info)
+    assert command == "sudo transactional-update --non-interactive pkg install pipewire-tools"
+
+
+def test_an_image_without_a_known_layering_tool_gets_notes_not_a_command():
+    info = distro.Distro(
+        id="endless", name="Endless OS", version="", family="debian", image="ostree"
+    )
+    remedy = distro.remediation(distro.AUDIO_PIPEWIRE, info)
+    assert remedy.commands == ()
+    assert any("read-only" in note and "pipewire-bin" in note for note in remedy.notes)
+    assert not distro.install_needs_reboot(info)
+
+
+def test_the_npu_compiler_steps_avoid_read_only_usr():
+    info = distro.Distro(
+        id="fedora", name="Silverblue", version="45", family="fedora", image="ostree"
+    )
+    image_steps = "\n".join(distro.remediation(distro.NPU_COMPILER, info).notes)
+    assert "/usr/local/lib64" in image_steps and "ld.so.conf.d" in image_steps
+    assert " /usr/lib64/" not in image_steps
+    plain = distro.Distro(id="fedora", name="Fedora", version="45", family="fedora")
+    assert "/usr/lib64/" in "\n".join(distro.remediation(distro.NPU_COMPILER, plain).notes)
+
+
+def test_universal_blue_images_are_fedora(fake_os_release):
+    for distro_id in ("bazzite", "aurora", "bluefin"):
+        path = fake_os_release(ID=distro_id, PRETTY_NAME=distro_id)
+        assert distro.detect(path).family == "fedora", distro_id
