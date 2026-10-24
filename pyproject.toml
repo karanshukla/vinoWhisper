@@ -38,7 +38,7 @@ dependencies = [
 # The one-time model export. transformers 5.4+ breaks it on the NPU (docs/install.md)
 export = [
     "optimum[openvino]",
-    "transformers<5.11",
+    "transformers<5.4",
 ]
 
 [project.urls]
