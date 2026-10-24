@@ -174,9 +174,29 @@ Each library carries its own provenance as an embedded string, which is where
 those versions come from. The search tries `LD_LIBRARY_PATH` first, since a
 toolkit sourced through `setupvars.sh` is how these libraries end up outside
 the system directories. A reverted symlink prints the `ln -sf` that selects
-the newer backend again. A missing compiler prints the extraction steps, which
-work unchanged on an rpm distro because these are plain userspace `.so` files
-with no kernel-module or packaging-system dependency:
+the newer backend again. A missing compiler prints the fix:
+
+```bash
+vinowhisper-setup --ovfetch   # ovfetch 0.6.0 or newer
+ovfetch npu install           # into ~/.local/lib/ovfetch-npu
+```
+
+[ovfetch](https://github.com/karanshukla/ovfetch) takes the compiler for the
+installed driver (or, for 1.35 and newer, the driver and compiler together,
+since that driver only opens a compiler from its own directory) out of Intel's
+linux-npu-driver release, checks the tarball against its ledger, and keeps the
+`.so` files in `~/.local/lib/ovfetch-npu`. No root, no `dpkg`, nothing for a
+package reinstall to revert, and on an image-based system nothing to layer.
+Those libraries are not on the linker path, so vinoWhisper loads them itself
+(`ovfetch.preload`): each line of the prefix's `ovfetch-preload.txt`, in that
+order, with `RTLD_GLOBAL`, after `import openvino` and before the pipeline or
+the doctor's device scan opens the NPU. When the driver then asks for a library
+by soname, the dynamic linker hands back the copy already loaded. The doctor
+searches that prefix ahead of the system directories, as the loader effectively
+does, and `ovfetch detect` reports it as `npu_prefix`.
+
+The extraction steps still work by hand, since these are plain userspace `.so`
+files with no kernel-module or packaging-system dependency:
 
 ```bash
 tar xf linux-npu-driver-*.tar.gz
@@ -210,5 +230,7 @@ rather than the newest that works. Measured 2026-09-28 on Wildcat Lake,
 drivers 1.32.0 and 1.35.0 each ran a test model on every OpenVINO from 2025.0
 to 2026.4, and whisper-small.en's static pipeline on 2026.4, so a warning
 that the installed OpenVINO is past the range means untested, not broken.
-vinoWhisper does not use ovfetch's installer, which fetches ONNX Runtime;
-see `docs/architecture.md` for why this project runs OpenVINO GenAI directly.
+vinoWhisper does not use ovfetch's OpenVINO installer, which fetches ONNX
+Runtime or Intel's `openvino` wheel; see `docs/architecture.md` for why this
+project runs OpenVINO GenAI from pip. It does use `ovfetch npu install` for the
+NPU compiler, above: that is the one piece pip cannot provide.

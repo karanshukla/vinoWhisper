@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, devices, failures
+from . import config, devices, failures, ovfetch
 
 _SENTINEL = object()
 
@@ -73,6 +73,14 @@ class WhisperTranscriber:
         self.model_dir = model_dir
         self._check_export(kind, model_dir)
 
+        # The compiler or driver from `ovfetch npu install`, before OpenVINO
+        # opens the NPU. Only the NPU needs it; on another device a bad prefix
+        # should not stop the server.
+        try:
+            ovfetch.preload()
+        except ovfetch.OvfetchError:
+            if kind == "NPU":
+                raise
         # STATIC_PIPELINE selects the NPU code path; set anywhere else it breaks.
         kwargs = {"STATIC_PIPELINE": True} if kind == "NPU" else {}
         try:

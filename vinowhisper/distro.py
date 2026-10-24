@@ -17,11 +17,20 @@ GPU_RUNTIME = "gpu-runtime"
 
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
+# `ovfetch npu install` (ovfetch 0.6.0) is the fix on every distro: it takes
+# the compiler from Intel's release into ~/.local/lib/ovfetch-npu, checked
+# against ovfetch's ledger, and vinowhisper loads it from there (no root, no
+# dpkg, nothing for the package manager to revert).
+NPU_COMPILER_COMMANDS = ("vinowhisper-setup --ovfetch", "ovfetch npu install")
+
 NPU_COMPILER_STEPS = (
     "No distro packages the NPU compiler. Intel ships it only inside "
-    "intel-driver-compiler-npu, in the release archive below.",
-    "Download the linux-npu-driver tarball for the same version as your driver "
-    "(the compiler's file name changed between 1.32 and 1.35), then:",
+    "intel-driver-compiler-npu, in the release archive below. The two commands "
+    "above fetch it into ~/.local/lib/ovfetch-npu, hash-checked, and "
+    "vinowhisper loads it from there; re-run the doctor afterwards.",
+    "By hand instead: download the linux-npu-driver tarball for the same "
+    "version as your driver (the compiler's file name changed between 1.32 "
+    "and 1.35), then:",
     "  tar xf linux-npu-driver-*.tar.gz",
     "  dpkg-deb -x intel-driver-compiler-npu_*.deb extracted",
     "  sudo install -m 0755 $(find extracted -name '*compiler*.so') /usr/lib64/",
@@ -34,10 +43,13 @@ NPU_COMPILER_STEPS = (
 # /usr/lib64 is read-only on an image-based system; /usr/local and /etc are not.
 NPU_COMPILER_STEPS_IMAGE = (
     "No distro packages the NPU compiler. Intel ships it only inside "
-    "intel-driver-compiler-npu, in the release archive below.",
-    "/usr/lib64 is read-only on this system, so it goes in /usr/local/lib64 "
-    "instead. Download the linux-npu-driver tarball for the same version as "
-    "your driver, then:",
+    "intel-driver-compiler-npu, in the release archive below. The two commands "
+    "above fetch it into ~/.local/lib/ovfetch-npu, hash-checked, and "
+    "vinowhisper loads it from there: nothing to layer, no reboot; re-run the "
+    "doctor afterwards.",
+    "By hand instead: /usr/lib64 is read-only on this system, so it goes in "
+    "/usr/local/lib64. Download the linux-npu-driver tarball for the same "
+    "version as your driver, then:",
     "  tar xf linux-npu-driver-*.tar.gz",
     "  dpkg-deb -x intel-driver-compiler-npu_*.deb extracted",
     "  sudo install -Dm 0755 -t /usr/local/lib64 $(find extracted -name '*compiler*.so')",
@@ -316,6 +328,14 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
     url = NPU_RELEASES_URL if capability in (NPU_DRIVER, NPU_COMPILER) else ""
 
     if family is None:
+        if capability == NPU_COMPILER:
+            # Not a package anywhere, so the distro does not matter.
+            return Remediation(
+                capability=capability,
+                commands=NPU_COMPILER_COMMANDS,
+                notes=NPU_COMPILER_STEPS_IMAGE if distro.image_based else NPU_COMPILER_STEPS,
+                url=url,
+            )
         return Remediation(
             capability=capability,
             notes=(
@@ -329,9 +349,10 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
     install = family.install
     if distro.image_based:
         install = _IMAGE_INSTALL.get((distro.image, distro.family), "")
-    commands = (f"{install} {' '.join(packages)}",) if packages and install else ()
+    commands: tuple[str, ...] = (f"{install} {' '.join(packages)}",) if packages and install else ()
     default: tuple[str, ...] = ()
     if capability == NPU_COMPILER:
+        commands = NPU_COMPILER_COMMANDS
         default = NPU_COMPILER_STEPS_IMAGE if distro.image_based else NPU_COMPILER_STEPS
     notes = family.notes.get(capability, default)
     if distro.image_based and packages:

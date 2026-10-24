@@ -1,3 +1,4 @@
+import ctypes
 import json
 import platform
 import re
@@ -8,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import overlay
+from . import devices, overlay
 from .devices import Note
 
 _TIMEOUT_S = 10
@@ -35,6 +36,44 @@ class Release:
 
 class OvfetchError(Exception):
     pass
+
+
+# What preload() loaded, once it has: a failed attempt is retried next time.
+_preloaded: list[str] | None = None
+
+
+def preload(prefix: Path | None = None) -> list[str]:
+    """Load the libraries `ovfetch npu install` put in its prefix, so the NPU
+    driver finds its compiler (or vinowhisper runs the prefix's driver). Each
+    line of `ovfetch-preload.txt`, in its order, with RTLD_GLOBAL: when the
+    driver later asks for one by soname, the dynamic linker returns the copy
+    already loaded. Must run after `import openvino` (the compiler links
+    OpenVINO's TBB) and before anything opens the NPU; the second call is a
+    no-op. Nothing happens without a prefix. Returns what was loaded."""
+    global _preloaded
+    if _preloaded is not None:
+        return list(_preloaded)
+    prefix = prefix if prefix is not None else devices.ovfetch_npu_prefix()
+    if prefix is None:
+        _preloaded = []
+        return []
+    listing = prefix / devices.OVFETCH_PRELOAD_LIST
+    try:
+        names = [line.strip() for line in listing.read_text(encoding="utf-8").splitlines()]
+    except FileNotFoundError:
+        _preloaded = []
+        return []
+    except OSError as exc:
+        raise OvfetchError(f"{listing} is unreadable: {exc}") from exc
+    loaded: list[str] = []
+    for name in filter(None, names):
+        try:
+            ctypes.CDLL(name, mode=ctypes.RTLD_GLOBAL)
+        except OSError as exc:
+            raise OvfetchError(f"loading {name} (listed in {listing}): {exc}") from exc
+        loaded.append(name)
+    _preloaded = loaded
+    return list(loaded)
 
 
 def detect() -> dict[str, Any] | None:
@@ -142,6 +181,15 @@ def notes(status: dict[str, Any], openvino_version: str | None) -> list[Note]:
         for platform in status.get("platforms", [])
     ]
     result += [Note(False, "npu: ovfetch", str(warning)) for warning in status.get("warnings", [])]
+    if status.get("npu_prefix"):
+        result.append(
+            Note(
+                True,
+                "npu: ovfetch prefix",
+                f"{status['npu_prefix']} (ovfetch npu install); vinowhisper loads its "
+                "libraries before OpenVINO opens the NPU",
+            )
+        )
 
     installed = _minor(openvino_version)
     ceiling = _minor(status.get("openvino_ceiling"))
