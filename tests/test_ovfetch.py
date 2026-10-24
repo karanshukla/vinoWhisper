@@ -182,6 +182,82 @@ def test_the_doctor_skips_ovfetch_without_an_intel_npu(monkeypatch):
     assert doctor._ovfetch() == []
 
 
+def test_a_prefix_from_npu_install_is_reported():
+    """ovfetch 0.6.0 names the prefix whose compiler or driver it counted."""
+    note = labelled(
+        ovfetch.notes(status(npu_prefix="/home/k/.local/lib/ovfetch-npu"), "2026.4.0"),
+        "npu: ovfetch prefix",
+    )
+    assert note.ok is True
+    assert "/home/k/.local/lib/ovfetch-npu" in note.detail
+    assert all(note.label != "npu: ovfetch prefix" for note in ovfetch.notes(status(), "2026.4.0"))
+
+
+# --- the NPU prefix's libraries --------------------------------------------
+#
+# `ovfetch npu install` puts the compiler a distro's driver package lacks (or a
+# whole driver) in ~/.local/lib/ovfetch-npu, off the linker path. vinowhisper
+# loads them itself, in the order ovfetch-preload.txt gives, before OpenVINO
+# opens the NPU. Measured 2026-10-24 (ovfetch's README): a driver loaded
+# before the Level Zero loader crashes on its first call into it, so the order
+# is the file's, not ours.
+
+
+@pytest.fixture
+def loader(monkeypatch):
+    loaded: list[tuple[str, int]] = []
+    monkeypatch.setattr(ovfetch, "_preloaded", None)
+    monkeypatch.setattr(
+        ovfetch.ctypes, "CDLL", lambda name, mode=0: loaded.append((name, mode)) or object()
+    )
+    return loaded
+
+
+def _prefix(tmp_path, *lines):
+    prefix = tmp_path / "ovfetch-npu"
+    prefix.mkdir()
+    (prefix / devices.OVFETCH_PRELOAD_LIST).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return prefix
+
+
+def test_preload_loads_the_list_in_its_order_and_globally(tmp_path, loader):
+    prefix = _prefix(
+        tmp_path, "libze_loader.so.1", f"{tmp_path}/ovfetch-npu/libze_intel_npu.so.1", "", "  "
+    )
+    assert ovfetch.preload(prefix) == [
+        "libze_loader.so.1",
+        f"{tmp_path}/ovfetch-npu/libze_intel_npu.so.1",
+    ]
+    assert [name for name, _ in loader] == ovfetch.preload(prefix)
+    assert all(mode == ovfetch.ctypes.RTLD_GLOBAL for _, mode in loader)
+
+
+def test_preload_runs_once(tmp_path, loader):
+    prefix = _prefix(tmp_path, "libnpu_driver_compiler.so")
+    ovfetch.preload(prefix)
+    ovfetch.preload(prefix)
+    assert len(loader) == 1
+
+
+def test_preload_does_nothing_without_a_prefix(tmp_path, loader, monkeypatch):
+    monkeypatch.setattr(devices, "OVFETCH_NPU_PREFIX", tmp_path / "absent")
+    assert ovfetch.preload() == []
+    assert loader == []
+
+
+def test_a_library_that_will_not_load_is_named_and_retried(tmp_path, loader, monkeypatch):
+    prefix = _prefix(tmp_path, "libmissing.so")
+
+    def failing(name, mode=0):
+        raise OSError(f"{name}: cannot open shared object file")
+
+    monkeypatch.setattr(ovfetch.ctypes, "CDLL", failing)
+    with pytest.raises(ovfetch.OvfetchError, match="libmissing.so"):
+        ovfetch.preload(prefix)
+    # Not cached as done: the next attempt loads again.
+    assert ovfetch._preloaded is None
+
+
 # --- installing it -------------------------------------------------------
 
 

@@ -753,6 +753,17 @@ working", never "fails past"). The doctor runs `ovfetch detect` when it is on
 PATH and reports platform + range, never as FAIL. vinoWhisper does not use
 ONNX Runtime; `docs/architecture.md` says why.
 
+ovfetch 0.6.0 (2026-10-24) added `ovfetch npu install`: the compiler (or a
+whole driver) from Intel's release into `~/.local/lib/ovfetch-npu`, no root.
+That replaced the `dpkg-deb -x` steps as the doctor's first remedy
+(`distro.NPU_COMPILER_COMMANDS`). The prefix is off the linker path, so
+`ovfetch.preload()` dlopens each line of its `ovfetch-preload.txt` with
+`RTLD_GLOBAL` before any `openvino.Core()` (transcriber.load, devices.available);
+`devices.library_dirs()` searches the prefix first; `ovfetch_release.json` pins
+0.6.0. Only the list's order is safe: the driver before the Level Zero loader
+crashed (ovfetch's README, measured 2026-10-24). Nothing here is testable
+without the laptop; the tests fake `ctypes.CDLL`.
+
 ## Multilingual (fr, de, es), added 2026-10-06
 
 `--language en|fr|de|es|auto` and `--task transcribe|translate` on the server

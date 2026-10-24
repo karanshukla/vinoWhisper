@@ -150,6 +150,22 @@ def test_the_npu_compiler_steps_avoid_read_only_usr():
     assert "/usr/lib64/" in "\n".join(distro.remediation(distro.NPU_COMPILER, plain).notes)
 
 
+def test_the_compiler_fix_is_ovfetch_on_every_distro():
+    """`ovfetch npu install` needs no package manager, so an unrecognised
+    distro and an image-based one get the same two commands."""
+    for info in (
+        distro.Distro(
+            id="fedora", name="Silverblue", version="45", family="fedora", image="ostree"
+        ),
+        distro.Distro(id="fedora", name="Fedora", version="45", family="fedora"),
+        distro.Distro(id="chimera", name="Chimera Linux", version=""),
+    ):
+        remedy = distro.remediation(distro.NPU_COMPILER, info)
+        assert remedy.commands == ("vinowhisper-setup --ovfetch", "ovfetch npu install"), info
+        assert "~/.local/lib/ovfetch-npu" in "\n".join(remedy.notes)
+        assert remedy.url == distro.NPU_RELEASES_URL
+
+
 def test_universal_blue_images_are_fedora(fake_os_release):
     for distro_id in ("bazzite", "aurora", "bluefin"):
         path = fake_os_release(ID=distro_id, PRETTY_NAME=distro_id)

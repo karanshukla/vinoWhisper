@@ -99,11 +99,14 @@ packages to layer are `intel-npu-driver` or `intel-compute-runtime`.
 
 Two things differ from a mutable install:
 
-- **The NPU compiler goes in `/usr/local/lib64`**, which is writable
+- **The NPU compiler needs no layering**: `ovfetch npu install` puts it in
+  `~/.local/lib/ovfetch-npu` and vinoWhisper loads it from there (see
+  [hardware.md](hardware.md#when-the-userspace-half-is-missing)). Doing it by
+  hand instead, it goes in `/usr/local/lib64`, which is writable
   (`/var/usrlocal`), with a file in `/etc/ld.so.conf.d` so the loader finds
-  it. The doctor prints those steps instead of the `/usr/lib64` ones. If the
-  host has no `dpkg-deb`, unpack the `.deb` in a toolbox; it shares your home
-  directory.
+  it; the doctor prints those steps instead of the `/usr/lib64` ones, and if
+  the host has no `dpkg-deb`, unpack the `.deb` in a toolbox, which shares
+  your home directory.
 - **Joining the `render` group** (for `/dev/accel`) needs the group copied
   into `/etc/group` first. The image keeps system groups in `/usr/lib/group`,
   and `usermod` only edits `/etc/group`, so it reports the group as missing:
@@ -300,8 +303,10 @@ first driver verified on your NPU, and the OpenVINO range recorded as working
 with the driver you have. Setup offers it only when there is an Intel NPU,
 downloads the static release binary and checks it against the sha256 pinned in
 this package, and leaves an ovfetch that is already current alone. Nothing
-needs it; without it the doctor just has two fewer lines. See
-[hardware.md](hardware.md#platform-data-from-ovfetch).
+needs it unless your distro's driver package has no NPU compiler (Fedora's
+`intel-npu-driver` 1.32.0): then `ovfetch npu install` (0.6.0 or newer) is
+the fix, and vinoWhisper loads what it installs. Otherwise the doctor just has
+two fewer lines. See [hardware.md](hardware.md#platform-data-from-ovfetch).
 
 ## Pinning the terminal on top
 

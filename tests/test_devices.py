@@ -169,8 +169,23 @@ def test_a_missing_compiler_is_a_failure_carrying_the_extraction_steps(libdir):
     assert compiler.ok is False
     # The whole point of this check: it is not caught by anything upstream.
     assert "still enumerates" in compiler.detail
-    assert "dpkg-deb" in compiler.detail
+    # ovfetch 0.6.0 fetches it with no root; the hand steps stay as the fallback.
+    assert compiler.detail.index("ovfetch npu install") < compiler.detail.index("dpkg-deb")
     assert "linux-npu-driver/releases" in compiler.detail
+
+
+def test_the_ovfetch_prefix_is_searched_first_once_it_holds_a_preload_list(monkeypatch, tmp_path):
+    """Its libraries are what vinowhisper loads, ahead of the system's."""
+    prefix = tmp_path / "ovfetch-npu"
+    prefix.mkdir()
+    monkeypatch.setattr(devices, "OVFETCH_NPU_PREFIX", prefix)
+    monkeypatch.setattr(devices.os, "environ", {"LD_LIBRARY_PATH": str(tmp_path)})
+    assert devices.ovfetch_npu_prefix() is None
+    assert devices.library_dirs()[0] == tmp_path
+
+    (prefix / devices.OVFETCH_PRELOAD_LIST).write_text("x\n", encoding="utf-8")
+    assert devices.ovfetch_npu_prefix() == prefix
+    assert devices.library_dirs()[:2] == [prefix, tmp_path]
 
 
 def test_driver_1_32_is_satisfied_by_its_own_compiler(libdir):

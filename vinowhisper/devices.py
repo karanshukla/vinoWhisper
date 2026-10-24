@@ -60,6 +60,9 @@ def available() -> list[Device]:
     except ImportError as exc:  # pragma: no cover - exercised by the doctor, not tests
         raise DeviceError(f"openvino is not importable ({exc}); run `uv sync`") from exc
 
+    from . import ovfetch
+
+    ovfetch.preload()
     try:
         core = openvino.Core()
         names = list(core.available_devices)
@@ -346,6 +349,23 @@ LIBRARY_DIRS = (
     "/usr/local/lib",
 )
 
+# Where `ovfetch npu install` (0.6.0) puts the NPU compiler a distro's driver
+# package lacks, or a whole driver. Its libraries are not on the linker path;
+# ovfetch.preload() loads them before OpenVINO opens the NPU, so for the
+# checks below they come before the system directories, as they do at run
+# time. A prefix counts only once it holds the preload list.
+OVFETCH_NPU_PREFIX = Path.home() / ".local/lib/ovfetch-npu"
+OVFETCH_PRELOAD_LIST = "ovfetch-preload.txt"
+
+
+def ovfetch_npu_prefix() -> Path | None:
+    prefix = OVFETCH_NPU_PREFIX
+    try:
+        return prefix if (prefix / OVFETCH_PRELOAD_LIST).is_file() else None
+    except OSError:
+        return None
+
+
 _DRIVER_MARK = re.compile(rb"npu-linux-driver-ci-([\d][\d.]*\d)")
 _OPENVINO_MARK = re.compile(rb"20\d\d\.\d+\.\d+(?:-\w+){0,2}")
 
@@ -353,7 +373,9 @@ _OPENVINO_MARK = re.compile(rb"20\d\d\.\d+\.\d+(?:-\w+){0,2}")
 def library_dirs() -> list[Path]:
     seen: dict[Path, None] = {}
     raw = os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-    for text in [entry for entry in raw if entry] + list(LIBRARY_DIRS):
+    prefix = ovfetch_npu_prefix()
+    first = [str(prefix)] if prefix is not None else []
+    for text in first + [entry for entry in raw if entry] + list(LIBRARY_DIRS):
         try:
             path = Path(text)
             if path.is_dir():
