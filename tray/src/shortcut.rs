@@ -13,6 +13,12 @@ const DICTATE: &str = "dictate";
 
 pub const DICTATE_PREFERRED: &str = "LOGO+h";
 
+pub const NO_PORTAL_HINT: &str = "Bind these in your compositor's config instead: \
+    `vinowhisper-tray toggle` for captions, and `vinowhisper-tray dictate-press` / \
+    `dictate-release` on a key's press and release for dictation (or `dictate` alone \
+    to tap). Examples for sway, Hyprland, niri and COSMIC: \
+    https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal";
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
     Pending,
@@ -59,8 +65,7 @@ impl Shortcut {
                 move || {
                     if let Err(err) = future::block_on(run(&preferred, &tx, requests)) {
                         eprintln!(
-                            "[vinowhisper-tray] no global shortcut ({err}). Bind \
-                             `vinowhisper-tray toggle` in your desktop's keyboard settings instead."
+                            "[vinowhisper-tray] no global shortcut ({err}). {NO_PORTAL_HINT}"
                         );
                         let _ = tx.send(Command::Shortcut(State::Unavailable(err.to_string())));
                     }

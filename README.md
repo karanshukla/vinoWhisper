@@ -248,13 +248,15 @@ machine:
   explains the one knob that moves it.
 - **Wording drifts between cycles**, because each window is re-decoded with
   more right-context than the last. The stitcher hides most of it and not all.
-- **The overlay needs wlr-layer-shell.** Tested on KDE Plasma 6.7 only. GNOME
+- **The overlay needs wlr-layer-shell.** Tested on KDE Plasma 6.7 on hardware,
+  and on headless Sway 1.9 in a VM with a stub in place of the model. GNOME
   does not offer the protocol, so there the overlay refuses to start and the
-  terminal UI is the way in. Sway, Hyprland, niri and COSMIC should work and
-  are untested.
+  terminal UI is the way in. Hyprland, niri and COSMIC should work and are
+  untested. Compositors without a shortcuts portal bind the tray's commands
+  instead ([examples](https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal)).
 - **Dictation pastes into whatever has focus.** Wayland does not say what that
   is, so it cannot check. Outside KDE the paste goes through the compositor's
-  virtual keyboard, which has not been tried on a live compositor yet.
+  virtual keyboard, tried so far on Sway 1.9 only.
   [docs/tray.md](https://docs.vinowhisper.com/tray/#dictation)
   has the details.
 - **Only Fedora's package names have been used for real.** The other seven
