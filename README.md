@@ -142,10 +142,10 @@ covered:
 
 | Family | Includes | NPU driver | Confidence |
 |---|---|---|---|
-| Fedora | RHEL, CentOS, Alma, Rocky, Nobara, Bazzite, Silverblue | `intel-npu-driver` in the repos | **Built and run here** |
+| Fedora | RHEL, CentOS, Alma, Rocky, Nobara; Fedora Atomic (Silverblue, Kinoite, Bazzite, Aurora, Bluefin) | `intel-npu-driver` in the repos | **Built and run here** (Atomic: untested) |
 | Debian | Ubuntu, Pop!\_OS, Mint, elementary, Raspbian | Intel's upstream `.deb`s | From the package index |
 | Arch | CachyOS, EndeavourOS, Manjaro, Garuda | AUR (`intel-npu-driver`) | From the package index |
-| openSUSE | Tumbleweed, Leap, SLES | Upstream release | From the package index |
+| openSUSE | Tumbleweed, Leap, SLES, Aeon, MicroOS | Upstream release | From the package index |
 | Gentoo | | Some overlays, else upstream | From the package index |
 | Void | | Upstream release | From the package index |
 | Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
@@ -155,6 +155,10 @@ Anything else gets generic advice, and says so. Derivatives not listed are
 matched through `ID_LIKE`. On every distro the NPU compiler library
 (`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
 because nobody packages it; the doctor detects that and prints the steps.
+On image-based systems (Fedora Atomic, openSUSE Aeon) the commands use
+`rpm-ostree` or `transactional-update` instead, and everything else installs
+into your home directory:
+[docs/install.md](https://docs.vinowhisper.com/install/#image-based-distros-fedora-atomic-opensuse-aeon).
 [docs/audio.md](https://docs.vinowhisper.com/audio/#distro-support)
 has the capture side.
 

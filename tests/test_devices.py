@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from vinowhisper import devices, failures
+from vinowhisper import devices, distro, failures
 
 
 def test_kind_strips_the_instance_suffix():
@@ -92,6 +92,20 @@ def test_preflight_reports_a_permission_problem(monkeypatch, tmp_path):
     assert permission.label == "device permissions"
     if permission.ok is False:
         assert "render" in permission.detail
+
+
+def test_fedora_atomic_gets_the_group_copy_before_usermod(monkeypatch, tmp_path):
+    node = tmp_path / "accel0"
+    node.write_text("")
+    monkeypatch.setattr(devices, "accel_nodes", lambda: [node])
+    monkeypatch.setattr(devices.os, "access", lambda path, mode: False)
+    atomic = distro.Distro(
+        id="fedora", name="Kinoite", version="45", family="fedora", image="ostree"
+    )
+    detail = devices.npu_preflight(atomic)[1].detail
+    assert "/usr/lib/group" in detail and "/etc/group" in detail and "usermod" in detail
+    plain = distro.Distro(id="fedora", name="Fedora", version="45", family="fedora")
+    assert "/usr/lib/group" not in devices.npu_preflight(plain)[1].detail
 
 
 def test_missing_npu_help_ends_with_the_distro_remediation(monkeypatch):

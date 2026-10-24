@@ -25,10 +25,12 @@ the wizard both speak your distro:
 
 | Family | Covered | Confidence |
 |---|---|---|
-| Fedora / RHEL / Alma / Rocky / Nobara / Bazzite / Silverblue | ✓ | Built and run here |
+| Fedora / RHEL / Alma / Rocky / Nobara | ✓ | Built and run here |
+| Fedora Atomic (Silverblue, Kinoite, Bazzite) | ✓ `rpm-ostree install` | From the docs, not from use; `pw-record` ships in the image |
 | Debian / Ubuntu / Pop / Mint / elementary / Raspbian | ✓ | From the package index, not from use |
 | Arch / CachyOS / EndeavourOS / Manjaro / Garuda | ✓ | Same |
 | openSUSE / SLES | ✓ | Same |
+| openSUSE Aeon / MicroOS | ✓ `transactional-update pkg install` | Same |
 | Void, Gentoo, Alpine | ✓ | Same |
 | NixOS | ✓ | Configuration advice, not `nix-env` lines: imperative installs there do not persist |
 | Anything else | degrades | Generic advice, and it says so |

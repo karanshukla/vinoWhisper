@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from conftest import fake_version
 
-from vinowhisper import config, integrity, wizard
+from vinowhisper import capture, config, distro, integrity, wizard
 
 
 def test_the_npu_export_disables_stateful():
@@ -140,6 +140,19 @@ def test_a_step_that_fails_is_tallied(capsys):
     assert instance.failed == ["Broken thing"]
     assert instance.skipped == ["Deferred thing"]
     assert "✗ it did not work" in capsys.readouterr().out
+
+
+def test_a_layered_capture_tool_waits_for_a_reboot(monkeypatch):
+    instance = wizard.Wizard(assume_yes=True)
+    instance.distro = distro.Distro(
+        id="fedora", name="Silverblue", version="45", family="fedora", image="ostree"
+    )
+    ran = []
+    monkeypatch.setattr(capture, "available_backends", lambda: [])
+    monkeypatch.setattr(instance, "execute", lambda argv, env=None: ran.append(argv) or True)
+    outcome = instance.check_audio()
+    assert ran == [["sudo", "rpm-ostree", "install", "--idempotent", "pipewire-utils"]]
+    assert outcome.ok is None and "reboot" in outcome.summary
 
 
 def test_python_314_is_reported_as_unusable(monkeypatch):
