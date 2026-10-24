@@ -19,6 +19,24 @@ use crate::uinput::{KEY_INSERT, KEY_LEFTSHIFT};
 const XKB_V1: u32 = 1;
 const PRESSED: u32 = 1;
 const RELEASED: u32 = 0;
+// Shift is the first modifier xkb defines, so bit 0 in any keymap.
+const SHIFT_MASK: u32 = 1;
+
+enum Step {
+    Key(u16, u32),
+    Modifiers(u32),
+}
+
+// Sway 1.9 applies no modifier from a virtual keyboard's key events, only from
+// `modifiers` (measured 2026-10-24: a bare Insert reached the window), so both.
+const SHIFT_INSERT: [Step; 6] = [
+    Step::Key(KEY_LEFTSHIFT, PRESSED),
+    Step::Modifiers(SHIFT_MASK),
+    Step::Key(KEY_INSERT, PRESSED),
+    Step::Key(KEY_INSERT, RELEASED),
+    Step::Key(KEY_LEFTSHIFT, RELEASED),
+    Step::Modifiers(0),
+];
 
 pub struct VirtualKeyboard {
     manager: ZwpVirtualKeyboardManagerV1,
@@ -67,13 +85,11 @@ impl VirtualKeyboard {
         };
         // Requests are ordered on the connection, so no settling and no gaps between keys.
         let time = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
-        for (key, state) in [
-            (KEY_LEFTSHIFT, PRESSED),
-            (KEY_INSERT, PRESSED),
-            (KEY_INSERT, RELEASED),
-            (KEY_LEFTSHIFT, RELEASED),
-        ] {
-            keyboard.key(time, key.into(), state);
+        for step in SHIFT_INSERT {
+            match step {
+                Step::Key(key, state) => keyboard.key(time, key.into(), state),
+                Step::Modifiers(depressed) => keyboard.modifiers(depressed, 0, 0, 0),
+            }
         }
         self.conn.flush().map_err(io::Error::other)
     }
@@ -125,5 +141,18 @@ mod tests {
         assert!(text.contains("<LFSH> = 50;"), "{text}");
         assert!(text.contains("<INS> = 118;"), "{text}");
         assert!(text.contains("modifier_map Shift { <LFSH> };"), "{text}");
+    }
+
+    #[test]
+    fn shift_is_held_as_a_modifier_while_insert_goes_down() {
+        let mut held = 0;
+        for step in SHIFT_INSERT {
+            match step {
+                Step::Modifiers(depressed) => held = depressed,
+                Step::Key(KEY_INSERT, _) => assert_eq!(held, SHIFT_MASK),
+                Step::Key(..) => {}
+            }
+        }
+        assert_eq!(held, 0, "nothing left held afterwards");
     }
 }

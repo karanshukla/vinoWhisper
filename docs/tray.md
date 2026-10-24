@@ -177,8 +177,68 @@ not move a binding that already exists; rebind it in the desktop instead.
 `.desktop` file, the portal refuses the app id ("App info not found"), and
 the shortcut portal then refuses the shortcut ("An app id is required"). So
 the first run writes the launcher itself if `--install` never did. With no
-portal at all, bind `vinowhisper-tray toggle` in your desktop's keyboard
-settings; it reaches the running instance the same way.
+portal at all, bind the commands below instead; they reach the running
+instance the same way.
+
+### Without a shortcuts portal
+
+Sway, niri and COSMIC have no GlobalShortcuts portal, and Hyprland's
+registers the shortcuts but leaves the key to you (`preferred_trigger` is
+ignored). The tray logs "no global shortcut" and keeps running; bind its
+commands in the compositor instead:
+
+| Command | Does | Bind it to |
+|---|---|---|
+| `vinowhisper-tray toggle` | show or hide the captions; starts the tray if it is not running | a key press |
+| `vinowhisper-tray dictate-press` | the dictation key going down | a key press |
+| `vinowhisper-tray dictate-release` | the dictation key coming up: types what was said, or turns a short tap into hands-free | the same key's release |
+| `vinowhisper-tray dictate` | a whole tap: start, or stop and type | a key press, where the compositor has no release bindings |
+
+Press and release together give the same hold-to-talk and tap-for-hands-free
+behaviour as the portal, timed in the tray (`dictation::TAP`, 350ms). The
+`dictate*` commands do nothing when the tray is not running, so start it at
+login (`vinowhisper-tray --autostart`, or `exec vinowhisper-tray --hidden`
+in the compositor's config).
+
+Sway (`~/.config/sway/config`):
+
+```
+bindsym --no-repeat $mod+Alt+c exec vinowhisper-tray toggle
+bindsym --no-repeat $mod+h exec vinowhisper-tray dictate-press
+bindsym --release $mod+h exec vinowhisper-tray dictate-release
+```
+
+`--no-repeat` matters: without it Sway runs the press binding again on every
+key repeat while you hold the key, about 25 processes a second. The tray
+ignores the extra presses, but there is no reason to start them.
+
+Hyprland (`~/.config/hypr/hyprland.conf`):
+
+```
+bind = SUPER ALT, C, exec, vinowhisper-tray toggle
+bind = SUPER, H, exec, vinowhisper-tray dictate-press
+bindr = SUPER, H, exec, vinowhisper-tray dictate-release
+```
+
+niri (`~/.config/niri/config.kdl`) has no release bindings, so dictation is
+tap to start, tap to finish (hands-free also stops itself after silence):
+
+```
+binds {
+    Mod+Alt+C repeat=false { spawn "vinowhisper-tray" "toggle"; }
+    Mod+H repeat=false { spawn "vinowhisper-tray" "dictate"; }
+}
+```
+
+COSMIC: Settings > Keyboard > Keyboard Shortcuts > Custom Shortcuts, with
+`vinowhisper-tray toggle` and `vinowhisper-tray dictate` as the commands.
+
+Checked 2026-10-24 on headless Sway 1.9 (Ubuntu 24.04), keys sent over VNC,
+with a stub in place of `vinowhisper-dictate`: the bindings above gave
+hold-to-talk, tap-for-hands-free and tap-to-finish, the text went on the
+clipboard through wlr-data-control and was pasted into foot by the virtual
+keyboard, and `toggle` showed and hid the overlay. Hyprland, niri and COSMIC
+are from their documentation.
 
 **Change…** needs version 2 of the shortcut portal, where
 ConfigureShortcuts first appears. On version 1 the binding is still an
@@ -338,17 +398,35 @@ has no dialog and no notification. Whether you can open it depends on udev:
 on this laptop Steam's `60-steam-input.rules` grants it. The log says which
 path is in use.
 
+To grant it without Steam, the same rule Steam uses, which hands the device
+to whoever is logged in at the seat through logind's `uaccess` tag rather
+than a group. Group names differ between distros, and on Fedora Atomic
+`usermod` cannot see groups that live in `/usr/lib/group`; `uaccess` needs
+neither, and `/etc/udev/rules.d` is writable on image-based systems too:
+
+```bash
+echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' \
+  | sudo tee /etc/udev/rules.d/60-vinowhisper-uinput.rules
+sudo udevadm control --reload && sudo udevadm trigger --name-match=uinput
+```
+
+It lets any program you run create a virtual keyboard, which is also what
+Steam's rule does. Only KDE needs it: elsewhere the compositor's virtual
+keyboard (next) types without it.
+
 **The compositor's virtual keyboard, added 2026-09-22, is for everything
 that is not KDE with Steam.** `zwp_virtual_keyboard_v1` needs no udev rule
 and no portal: on the first paste that needs it, the overlay hands the
 compositor a two-key keymap (Shift and Insert, at their evdev codes plus 8,
 with a `modifier_map` so Shift really sets Shift) and sends the four key
 events on the same Wayland connection that set the clipboard, so they cannot
-overtake it. It is made on the first paste rather than at startup, because
+overtake it. It also sends Shift as an explicit `modifiers` request around
+Insert: Sway 1.9 takes no modifier state from a virtual keyboard's key events,
+so until 2026-10-24 the window got a bare Insert (`^[[2~` in a terminal) and
+nothing was pasted. It is made on the first paste rather than at startup, because
 a new keyboard on the seat has side effects: Sway hands its keymap to the
-focused window. The keymap was compiled
-through libxkbcommon before shipping; it has not been tried against a live
-compositor yet. It sits between uinput and the portal because the uinput
+focused window. Tried against a live compositor for the first time on
+2026-10-24 (Sway 1.9, above), which is how the modifier problem was found. It sits between uinput and the portal because the uinput
 path is the one measured on hardware, and on Sway, niri and COSMIC there is
 no remote-desktop portal to fall back to. A compositor that restricts the
 protocol (Hyprland's `ecosystem:enforce_permissions`, off by default) may
@@ -579,15 +657,21 @@ hint, and it is a Wayland protocol that not every compositor offers:
 | Desktop | Overlay | Tray | Shortcut | Dictation types via | Status |
 |---|---|---|---|---|---|
 | KDE Plasma 6.7 (Wayland) | yes | yes | portal | uinput, then virtual keyboard, then portal | **Tested on hardware, 2026-09-12; dictation 2026-09-21** |
-| Hyprland | layer-shell: yes | needs an SNI tray | portal | virtual keyboard | untested |
-| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind `dictate-press`/`dictate-release` | virtual keyboard | untested |
+| Hyprland | layer-shell: yes | needs an SNI tray | bind in `hyprland.conf` ([above](#without-a-shortcuts-portal)) | virtual keyboard | untested |
+| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind the commands ([above](#without-a-shortcuts-portal)) | virtual keyboard | Sway 1.9: see below; niri, COSMIC untested |
 | GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | no data-control, so no paste | will not start; use the terminal |
 | X11 sessions | no | | | | will not start; use the terminal |
 
-The clipboard half needs `ext-data-control-v1`: KWin 6.3, wlroots 0.19 (Sway
-1.11), Hyprland 0.49, niri 25.02 and COSMIC all have it; older ones offer
-only the `wlr-` version, which the overlay does not speak. GNOME has neither,
-which is what rules it out for dictation independently of layer-shell.
+The clipboard half uses `ext-data-control-v1` where the compositor has it
+(KWin 6.3, wlroots 0.19 / Sway 1.11, Hyprland 0.49, niri 25.02, COSMIC), and
+falls back to `zwlr_data_control_manager_v1`, the protocol it was
+standardised from, which is all that Sway 1.9 and 1.10 (Ubuntu 24.04, Debian
+13) and older Hyprland and KWin offer. The requests are the same;
+version 1 of the wlr protocol has no primary selection, so Shift+Insert then
+pastes nothing in terminals that read the primary (the log says so). Until
+2026-10-24 the overlay spoke only the `ext-` protocol, so dictation could
+only report "no clipboard access" there. GNOME has neither, which is what
+rules it out for dictation independently of layer-shell.
 
 On a compositor without layer-shell it exits with a message that says so,
 rather than falling back to a normal window that cannot stay on top.
@@ -611,7 +695,7 @@ vinowhisper-tray ──spawns──> vinowhisper-caption --json ──HTTP──
       │              ▲ start / stop / cancel on stdin
       ├── tray (StatusNotifierItem over D-Bus)
       ├── shortcuts (xdg-desktop-portal GlobalShortcuts: Activated and Deactivated)
-      ├── paste: ext-data-control, then Shift+Insert via /dev/uinput,
+      ├── paste: ext- (or wlr-) data-control, then Shift+Insert via /dev/uinput,
       │          zwp_virtual_keyboard_v1, or RemoteDesktop
       └── $XDG_RUNTIME_DIR/vinowhisper-tray.sock (show/hide/toggle/dictate/quit)
 ```
@@ -701,7 +785,8 @@ prefixed `[caption]`.
 | Box shows raw error text | The caption process exited without an `Error` record, so the box shows its last stderr lines. Run `vinowhisper-caption` in a terminal for the rest |
 | Text in an unexpected font | fontconfig names a sans-serif that is not installed. It falls back to the first installed of Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans and Liberation Sans |
 | Dictation: "vinowhisper-dictate was not found" | Older install. `pip install -U vinowhisper`, then `vinowhisper-setup` links it |
-| Dictation: a notification every time | No `/dev/uinput` access, so it types through the portal. A udev rule giving your user `/dev/uinput` (as Steam's does) stops it |
+| Dictation: a notification every time | No `/dev/uinput` access, so it types through the portal. The `uaccess` udev rule [above](#dictation) stops it |
+| "no global shortcut" in the log | No GlobalShortcuts portal (Sway, niri, COSMIC) or one that leaves the key to you (Hyprland). Bind the commands [in the compositor](#without-a-shortcuts-portal) |
 | Dictation: "On the clipboard, not typed" | The paste was refused or failed; the text is on the clipboard. After refusing the portal dialog, restart the overlay to be asked again |
 | Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every key and state change |
 | Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

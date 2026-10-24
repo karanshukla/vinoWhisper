@@ -284,7 +284,7 @@ and the traps found building it:
   key press also calls `/health`, so a cold model load overlaps the speech.
 - **Typing is clipboard + Shift+Insert, both selections.** Ghostty binds
   Shift+Insert to `paste_from_selection` (primary), so the text goes on both,
-  via `ext-data-control-v1` (no wl-copy).
+  via `ext-data-control-v1`, or the wlr- protocol on older compositors (no wl-copy).
 - **The portal works and was not good enough.** RemoteDesktop with a saved
   restore token starts silently (0.00s, 3/3, new token each start), but KDE
   posts "Remote control session started" and a tray icon per session, which
@@ -296,9 +296,14 @@ and the traps found building it:
   the portal. Sway, niri and COSMIC have no RemoteDesktop portal, so without
   it a stock Fedora spin (no udev rule for uinput) could only fill the
   clipboard. The two-key keymap compiled under libxkbcommon and sets Shift
-  on keycode 50; no live compositor has run it. Without a shortcuts portal,
-  `vinowhisper-tray dictate-press` / `dictate-release` on a key's press and
-  release give hold-to-talk. GNOME stays out: no layer-shell for the pill
+  on keycode 50. First run on a live compositor 2026-10-24 (headless Sway
+  1.9 in the linuxlab VM, keys over VNC, stub dictate): Sway ignored the
+  Shift key event, so the window got a bare Insert; Shift now also goes out
+  as a `modifiers` request. The same run needed the wlr-data-control
+  fallback, since Sway before 1.11 has no ext-data-control. Without a
+  shortcuts portal, `vinowhisper-tray dictate-press` / `dictate-release` on
+  a key's press and release give hold-to-talk (Sway needs `--no-repeat` on
+  the press binding; config examples in `docs/tray.md`). GNOME stays out: no layer-shell for the pill
   and no data-control for the clipboard, so it needs a different design
   (portal `NotifyKeyboardKeysym` per character, no overlay), not a route.
 - **Keys wait on a `wl_display.sync`.** uinput pasted the *previous*
@@ -354,7 +359,7 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
   src/protocol.rs the --json wire formats (captions and dictation)
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
-  src/clipboard.rs ext-data-control: set, sync, clear after the paste reads
+  src/clipboard.rs ext- (or wlr-) data-control: set, sync, clear after the paste reads
   src/paste.rs    Shift+Insert: uinput.rs first, RemoteDesktop portal fallback
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
