@@ -74,9 +74,17 @@ def save_language(language: str, task: str, path: Path | None = None) -> None:
     import json
 
     check_language(language, task)
-    target = path or LANGUAGE_FILE
+    # resolve(): through a symlink, so a dotfiles-managed link stays a link.
+    target = (path or LANGUAGE_FILE).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"language": language, "task": task}, indent=2) + "\n")
+    # Renamed over the old file: the server reads a torn one as English, silently.
+    partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
+    try:
+        partial.write_text(json.dumps({"language": language, "task": task}, indent=2) + "\n")
+        os.replace(partial, target)
+    except OSError:
+        partial.unlink(missing_ok=True)
+        raise
 
 
 def resolve_language(language: str | None, task: str | None) -> tuple[str, str]:

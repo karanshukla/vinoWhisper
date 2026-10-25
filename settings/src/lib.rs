@@ -134,11 +134,7 @@ impl Speech {
     }
 
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        std::fs::write(path, text + "\n")
+        write_json(path, self)
     }
 }
 
@@ -217,11 +213,7 @@ impl Cleanup {
     }
 
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        std::fs::write(path, text + "\n")
+        write_json(path, self)
     }
 
     /// Whether dictated text stays on this machine. Anything that is not plainly
@@ -348,16 +340,35 @@ impl Settings {
     }
 
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        std::fs::write(path, text + "\n")
+        write_json(path, self)
     }
 }
 
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
+// Renamed over the file, so a reader or a crash never sees half of one: every
+// loader reads a broken file as defaults, silently.
+fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    // Through a symlink, so a dotfiles-managed link stays a link.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let text = serde_json::to_string_pretty(value).map_err(io::Error::other)? + "\n";
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let partial = dir.join(format!(".{name}.{}.partial", std::process::id()));
+    let written = std::fs::File::create(&partial).and_then(|mut file| {
+        io::Write::write_all(&mut file, text.as_bytes())?;
+        file.sync_all()
+    });
+    match written.and_then(|()| std::fs::rename(&partial, &path)) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = std::fs::remove_file(&partial);
+            Err(err)
+        }
+    }
 }
 
 fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
@@ -443,6 +454,71 @@ mod tests {
                 tray_idle: false,
             }
         );
+    }
+
+    #[test]
+    fn a_save_replaces_the_file_rather_than_rewriting_it() {
+        use std::os::unix::fs::MetadataExt;
+        let path = scratch("atomic");
+        Settings::default().save_to(&path).unwrap();
+        let before = std::fs::metadata(&path).unwrap().ino();
+        let changed = Settings {
+            size: TextSize::Large,
+            ..Settings::default()
+        };
+        changed.save_to(&path).unwrap();
+        // A new inode: renamed into place, so no reader saw it truncated.
+        assert_ne!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(Settings::load_from(&path), changed);
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["gui.json"]);
+    }
+
+    #[test]
+    fn a_save_through_a_symlink_keeps_the_link() {
+        let path = scratch("symlink");
+        let dir = path.parent().unwrap();
+        let real = dir.join("dotfiles/gui.json");
+        Settings::default().save_to(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &path).unwrap();
+        let changed = Settings {
+            position: Position::Top,
+            ..Settings::default()
+        };
+        changed.save_to(&path).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(Settings::load_from(&real), changed);
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_old_file_and_no_partial() {
+        let path = scratch("failed");
+        Settings::default().save_to(&path).unwrap();
+        // A directory where the file should be: the rename fails.
+        let blocked = path.parent().unwrap().join("blocked.json");
+        std::fs::create_dir_all(blocked.join("inside")).unwrap();
+        assert!(Settings::default().save_to(&blocked).is_err());
+        let partials = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".partial")
+            })
+            .count();
+        assert_eq!(partials, 0);
+        assert_eq!(Settings::load_from(&path), Settings::default());
     }
 
     #[test]
