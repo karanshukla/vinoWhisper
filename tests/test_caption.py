@@ -10,8 +10,11 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+import requests
+
 from tests import pcm
-from vinowhisper import caption, events
+from vinowhisper import caption, config, events
 
 _EVERY_EVENT = [
     events.Ready(device="CPU", device_full="Intel(R) Core(TM)", degraded=True, warnings=["no NPU"]),
@@ -323,3 +326,57 @@ def test_transcript_is_off_unless_asked_for(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert _scripted(monkeypatch, tmp_path) == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def _failing(monkeypatch, exc, *flags):
+    def fake_events(**_kwargs):
+        yield events.Ready(device="NPU")
+        raise exc
+
+    monkeypatch.setattr(caption, "caption_events", fake_events)
+    monkeypatch.setattr(sys, "argv", ["vinowhisper-caption", *flags])
+    return caption.main()
+
+
+def _json_records(out: str) -> list[dict]:
+    return [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+
+
+def test_an_unreachable_server_exits_1_with_an_error_record_the_tray_reads(monkeypatch, capsys):
+    status = _failing(monkeypatch, requests.ConnectionError("refused"), "--json")
+    assert status == 1
+    out, err = capsys.readouterr()
+    assert _json_records(out)[-1]["event"] == "Error"
+    assert "vinowhisper-doctor" in _json_records(out)[-1]["message"]
+    assert "systemctl --user status vinowhisper-server.socket" in err
+
+
+def test_a_capture_failure_exits_1_with_an_error_record(monkeypatch, capsys):
+    status = _failing(monkeypatch, caption.CaptureError("pw-record exited"), "--json")
+    assert status == 1
+    out, err = capsys.readouterr()
+    assert _json_records(out)[-1] == {
+        "event": "Error",
+        "message": "Capture failed: pw-record exited",
+    }
+    assert "capture failed: pw-record exited" in err
+
+
+def test_a_closed_pipe_is_a_clean_exit(monkeypatch, tmp_path):
+    # `vinowhisper-caption | head`: stdout's fd is swapped for /dev/null, so use a real one.
+    target = tmp_path / "out"
+    with target.open("w") as handle:
+        monkeypatch.setattr(sys, "stdout", handle)
+        assert _failing(monkeypatch, BrokenPipeError(), "--plain") == 0
+
+
+def test_ctrl_c_is_a_clean_exit(monkeypatch, capsys):
+    assert _failing(monkeypatch, KeyboardInterrupt(), "--json") == 0
+    assert "Error" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("window", ["0", str(config.MAX_WINDOW_S + 1)])
+def test_a_window_outside_the_short_form_limit_is_a_usage_error(monkeypatch, capsys, window):
+    monkeypatch.setattr(sys, "argv", ["vinowhisper-caption", "--window", window])
+    assert caption.main() == 2
+    assert "--window" in capsys.readouterr().err

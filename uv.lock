@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -2044,6 +2044,7 @@ export = [
 [package.dev-dependencies]
 dev = [
     { name = "bump-my-version" },
+    { name = "flask" },
     { name = "mypy" },
     { name = "numpy" },
     { name = "poethepoet" },
@@ -2053,6 +2054,7 @@ dev = [
     { name = "rich" },
     { name = "ruff" },
     { name = "types-requests" },
+    { name = "werkzeug" },
 ]
 
 [package.metadata]
@@ -2073,6 +2075,7 @@ provides-extras = ["export"]
 [package.metadata.requires-dev]
 dev = [
     { name = "bump-my-version", specifier = ">=0.24" },
+    { name = "flask" },
     { name = "mypy", specifier = ">=1.10" },
     { name = "numpy" },
     { name = "poethepoet", specifier = ">=0.27" },
@@ -2082,6 +2085,7 @@ dev = [
     { name = "rich" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-requests" },
+    { name = "werkzeug" },
 ]
 
 [[package]]

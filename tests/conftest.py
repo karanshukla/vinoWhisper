@@ -5,7 +5,7 @@ without OpenVINO installed at all. That is a hard constraint, not a
 preference: CI has none of the three, and a test suite that only runs on one
 laptop is the test suite this project spent its first months not having.
 
-So: no test imports vinowhisper.transcriber or vinowhisper.server, and
+So: no test imports openvino (transcriber and server import it lazily), and
 anything that would shell out to pw-record/pactl is monkeypatched at the
 capture-module boundary.
 """
