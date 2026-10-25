@@ -15,7 +15,9 @@ uv pip install --group dev    # tests and lint only, ~5 seconds, what CI uses
 The `dev` group is installable on its own on purpose. CI has no NPU, no audio
 server and no reason to download ~400MB of OpenVINO wheels to run tests that
 are not allowed to import it. Nothing under `tests/` imports `openvino`,
-`transcriber` or `server`, which is what keeps the split honest.
+which is what keeps the split honest. `transcriber.py` and `server.py` import
+it lazily, so they are tested with a fake pipeline; `flask` and `werkzeug` are
+in the dev group for `tests/test_server.py`.
 
 `requests` is in the dev group even though no test talks to the server:
 `vinowhisper.caption` imports it at module scope through `client.py`, so
@@ -24,9 +26,13 @@ Python.
 
 Pytest imports the package from the source tree (`pythonpath = ["."]`) rather
 than from an install, because installing the project would pull in the
-OpenVINO stack the dev group exists to avoid. For the same reason
-`transcriber.py`, `server.py` and `replay.py` are left out of coverage: they
-need an NPU, an audio server or a live socket.
+OpenVINO stack the dev group exists to avoid.
+
+Coverage is branch coverage of the whole package, nothing omitted, so the
+figure counts what needs an NPU or an audio server too (`replay.py` is the
+largest such gap). CI fails under the floor in `ci.yml`, posts the per-file
+table to the job summary and uploads `coverage.xml`. The Rust jobs run their
+tests under `cargo llvm-cov` and upload `lcov.info` the same way.
 
 ## Running your own build
 
@@ -215,7 +221,8 @@ libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
 | ashpd | Global shortcuts, and Shift+Insert for dictation (xdg-desktop-portal) |
 | rustix | Signals, the child's parent-death signal, the memfd that carries a keymap to the compositor, and the tray's idle timerfd |
 
-`rust-version = "1.88"` is for let-chains.
+`rust-version = "1.89"` is what the locked cosmic-text 0.19 needs (let-chains
+alone would be 1.88); CI's `msrv` job builds with it.
 
 ## Shell completion
 
@@ -269,14 +276,15 @@ startup per Tab, only on `--target`.
 
 | Workflow | Runs | What it is for |
 |---|---|---|
-| `ci.yml` | every push and PR | ruff, mypy, pytest on 3.11 to 3.13, shellcheck, and the overlay's `cargo` checks |
-| `bandit.yml` | pushes and PRs to main, and Mondays | The Bandit scan, into Security > Code scanning. Config is `[tool.bandit]`, so `poe security` matches it |
+| `ci.yml` | every push and PR | `uv lock --check`, ruff, mypy, pytest with coverage on 3.11 to 3.13, the built wheel's commands (`scripts/smoke_wheel.sh`), shellcheck, the Rust crates' `cargo` checks and coverage, and a build at each crate's `rust-version` |
+| `bandit.yml` | pushes and PRs to main, and Mondays | The Bandit scan, into Security > Code scanning, then the same scan as a gate. Config is `[tool.bandit]`, so `poe security` matches it |
+| `audit.yml` | Mondays, and on changes to `uv.lock` or a `Cargo.lock` | pip-audit on the locked runtime and dev set, and on the export extra as a warning only (`transformers<5.4` carries two advisories whose fixes break the NPU export; see CLAUDE.md); `cargo audit` on the three Cargo locks |
 | `deps-canary.yml` | Mondays, and on changes to `pyproject.toml` or `uv.lock` | The full dependency set, which nothing on the PR path installs |
-| `release.yml` | a `v*` tag | Build, PyPI, GitHub Release |
+| `release.yml` | a `v*` tag | Build (the tray binary runs `--version` and must be static; the wheel goes through `smoke_wheel.sh`), PyPI, GitHub Release |
 
 3.14 is left out of the test matrix on purpose, for the reason in
-[install.md](install.md). shellcheck runs on the installer and the export
-script because they are the first thing a new user runs. The overlay's tests
+[install.md](install.md). shellcheck runs on every script in `scripts/`; the
+installer and the export script are the first thing a new user runs. The overlay's tests
 need no compositor, tray or portal: they draw into memory, bind scratch
 sockets and write into temp dirs, the same bargain `tests/` makes about the
 NPU.

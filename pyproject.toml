@@ -83,6 +83,9 @@ dev = [
     "rich",
     # caption.py imports it, so tests/test_caption.py cannot be collected without it
     "requests",
+    # server.py imports both, and tests/test_server.py imports server.py
+    "flask",
+    "werkzeug",
 ]
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -134,8 +137,7 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["vinowhisper"]
-# Need an NPU, an audio server or a live socket
-omit = ["vinowhisper/transcriber.py", "vinowhisper/server.py", "vinowhisper/replay.py"]
+branch = true
 
 [tool.coverage.report]
 show_missing = true

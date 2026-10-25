@@ -429,3 +429,53 @@ def test_characterization_actually_alone_never_justifies_dropping_a_clause():
     assert cleanup.deletions_justified(
         "Hello, my name's Karan. No wait, my name's Jim.", "Hello, my name's Jim."
     )
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self.body
+
+
+def test_a_bad_address_never_reaches_urlopen(monkeypatch):
+    def urlopen(*args, **kwargs):
+        raise AssertionError("urlopen was called")
+
+    monkeypatch.setattr(cleanup.urllib.request, "urlopen", urlopen)
+    for url in ("file:///etc/passwd", "ftp://example.test"):
+        with pytest.raises(ValueError, match="bad address"):
+            cleanup.post(cleanup.Settings(base_url=url, api_key="k"), "hello")
+
+
+def test_post_sends_the_key_and_the_prompt_and_reads_the_text(monkeypatch):
+    sent = {}
+
+    def urlopen(request, timeout):
+        sent["request"], sent["timeout"] = request, timeout
+        reply = {"content": [{"type": "text", "text": "<transcript>Hello.</transcript>"}]}
+        return _FakeResponse(json.dumps(reply).encode())
+
+    monkeypatch.setattr(cleanup.urllib.request, "urlopen", urlopen)
+    settings = cleanup.Settings(base_url="https://api.example.test/", api_key="sk-x", budget_s=2)
+    assert cleanup.post(settings, "um hello") == "Hello."
+    request = sent["request"]
+    assert request.full_url == "https://api.example.test/v1/messages"
+    assert request.get_method() == "POST"
+    assert request.get_header("X-api-key") == "sk-x"
+    assert request.get_header("Content-type") == "application/json"
+    body = json.loads(request.data)
+    assert body["messages"][0]["content"] == "<transcript>um hello</transcript>"
+    assert sent["timeout"] == 2
+
+
+def test_a_truncated_answer_is_refused():
+    with pytest.raises(ValueError, match="truncated"):
+        cleanup.parse_response(json.dumps({"stop_reason": "max_tokens", "content": []}).encode())

@@ -983,8 +983,10 @@ Ordered by what would most change the design.
   test-free" convention. The reason for the reversal: the tool stopped being
   single-machine, and CI has no NPU, no audio server and no OpenVINO. So the
   hard rule is that constraint, not the tests — **nothing under `tests/` may
-  import `openvino`, `vinowhisper.transcriber` or `vinowhisper.server`**, and
-  anything that would shell out is monkeypatched at the `capture` boundary.
+  import `openvino`**, and anything that would shell out is monkeypatched at
+  the `capture` boundary. `transcriber.py` and `server.py` import OpenVINO
+  lazily, so tests import them with a fake pipeline (`tests/test_server.py`,
+  2026-10-25; flask and werkzeug are in the dev group for it).
   The old throwaway verification scripts from the 2026-08-06/08-07 reviews are
   in there as fixtures now, which is where they should have been.
 - **A test named `test_characterization_*` pins a known oddity on purpose, and

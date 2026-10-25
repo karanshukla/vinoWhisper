@@ -1,0 +1,56 @@
+name: Audit
+
+# Known advisories in what users install: the Python lock and the three Cargo locks.
+# Weekly and on lock changes, not on every PR: an advisory published today would
+# otherwise fail every unrelated PR.
+
+on:
+  schedule:
+    - cron: "17 7 * * 1" # Mondays, after the dependency canary
+  workflow_dispatch:
+  push:
+    paths:
+      - "uv.lock"
+      - "*/Cargo.lock"
+      - ".github/workflows/audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # --no-deps against the exported lock: audits exactly what is pinned, installs nothing.
+      - name: pip-audit, runtime and dev
+        run: |
+          uv export --frozen --all-groups --no-emit-project -o requirements.txt
+          uvx pip-audit==2.10.0 --disable-pip --no-deps -r requirements.txt
+
+      # transformers is held below 5.4 for the NPU export, and both fixes are past
+      # that line (CLAUDE.md, 2026-09-18). Reported, not failed, until that moves.
+      - name: pip-audit, export extra
+        run: |
+          uv export --frozen --extra export --no-emit-project -o export.txt
+          uvx pip-audit==2.10.0 --disable-pip --no-deps -r export.txt \
+            || echo "::warning::advisories in the export extra; see the log"
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        run: |
+          status=0
+          for crate in tray gui settings; do
+            echo "::group::$crate"
+            cargo audit --file "$crate/Cargo.lock" || status=1
+            echo "::endgroup::"
+          done
+          exit $status

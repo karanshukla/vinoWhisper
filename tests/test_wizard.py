@@ -265,3 +265,148 @@ def test_characterization_the_service_hardening_leaves_the_accelerators_reachabl
     assert "UMask=0077" in directives
     for absent in ("MemoryDenyWriteExecute", "PrivateDevices", "ProtectClock", "PrivateUsers"):
         assert not any(line.startswith(f"{absent}=") for line in directives)
+
+
+@pytest.fixture
+def venv_bin(monkeypatch, tmp_path):
+    """A venv's bin/ holding every entry point, and an empty ~/.local/bin."""
+    bin_dir = tmp_path / "venv/bin"
+    bin_dir.mkdir(parents=True)
+    for name in wizard.COMMANDS:
+        (bin_dir / f"vinowhisper-{name}").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(wizard.sys, "executable", str(bin_dir / "python"))
+    monkeypatch.setattr(wizard, "BIN_DIR", tmp_path / "local/bin")
+    monkeypatch.setenv("PATH", str(tmp_path / "local/bin"))
+    return bin_dir
+
+
+def test_linking_points_every_command_at_the_venv(venv_bin):
+    outcome = wizard.Wizard(assume_yes=True).link_binaries()
+    assert outcome.ok
+    for name in wizard.COMMANDS:
+        link = wizard.BIN_DIR / f"vinowhisper-{name}"
+        assert link.is_symlink()
+        assert link.resolve() == (venv_bin / f"vinowhisper-{name}").resolve()
+
+
+def test_linking_replaces_a_stale_link_and_an_old_script(venv_bin):
+    # A previous checkout's link, and a `pip install --user` entry point: both are ours.
+    wizard.BIN_DIR.mkdir(parents=True)
+    (wizard.BIN_DIR / "vinowhisper-caption").symlink_to("/nonexistent/vinowhisper-caption")
+    (wizard.BIN_DIR / "vinowhisper-doctor").write_text("#!/bin/sh\nold\n")
+    assert wizard.Wizard(assume_yes=True).link_binaries().ok
+    for name in ("caption", "doctor"):
+        link = wizard.BIN_DIR / f"vinowhisper-{name}"
+        assert link.resolve() == (venv_bin / f"vinowhisper-{name}").resolve()
+
+
+def test_linking_says_when_the_directory_is_not_on_path(venv_bin, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    outcome = wizard.Wizard(assume_yes=True).link_binaries()
+    assert outcome.ok
+    assert "not on your PATH" in outcome.summary
+
+
+def test_a_dry_run_links_nothing(venv_bin):
+    outcome = wizard.Wizard(dry_run=True).link_binaries()
+    assert outcome.ok is None
+    assert not wizard.BIN_DIR.exists()
+
+
+def test_linking_names_a_missing_entry_point(venv_bin):
+    (venv_bin / "vinowhisper-replay").unlink()
+    outcome = wizard.Wizard(assume_yes=True).link_binaries()
+    assert outcome.ok is False
+    assert "vinowhisper-replay" in outcome.summary
+    assert "uv sync" in outcome.summary
+    assert not wizard.BIN_DIR.exists()
+
+
+def test_completion_links_each_command_to_the_one_script(monkeypatch, tmp_path):
+    monkeypatch.setattr(wizard, "COMPLETION_DIR", tmp_path / "completions")
+    tmp_path.joinpath("completions").mkdir()
+    (tmp_path / "completions/vinowhisper-caption").write_text("stale")
+    assert wizard.Wizard(dry_run=True).install_completion().ok is None
+    assert (tmp_path / "completions/vinowhisper-caption").read_text() == "stale"
+    assert wizard.Wizard(assume_yes=True).install_completion().ok
+    source = wizard._repo_root() / "scripts/vinowhisper-completion.bash"
+    for name in wizard.COMMANDS:
+        assert (tmp_path / f"completions/vinowhisper-{name}").resolve() == source.resolve()
+
+
+def test_completion_from_a_wheel_is_skipped_not_failed(monkeypatch, tmp_path):
+    monkeypatch.setattr(wizard, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(wizard, "COMPLETION_DIR", tmp_path / "completions")
+    outcome = wizard.Wizard(assume_yes=True).install_completion()
+    assert outcome.ok is None
+    assert "wheel" in outcome.summary
+    assert not (tmp_path / "completions").exists()
+
+
+@pytest.mark.parametrize("failing", ["enable", "restart"])
+def test_a_failed_systemctl_fails_the_step_after_writing_the_units(monkeypatch, tmp_path, failing):
+    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path)
+    monkeypatch.setattr(wizard, "_has_systemd", lambda: True)
+    monkeypatch.setattr(
+        wizard.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, int(argv[2] == failing)),
+    )
+    outcome = wizard.Wizard(assume_yes=True).install_units()
+    assert outcome.ok is False
+    assert f"systemctl --user {failing}` failed" in outcome.summary
+    assert (tmp_path / "vinowhisper-server.service").is_file()
+    assert (tmp_path / "vinowhisper-server.socket").is_file()
+
+
+def test_no_systemd_skips_the_units(monkeypatch, tmp_path):
+    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path / "units")
+    monkeypatch.setattr(wizard, "_has_systemd", lambda: False)
+    outcome = wizard.Wizard(assume_yes=True).install_units()
+    assert outcome.ok is None
+    assert "vinowhisper-server" in outcome.summary
+    assert not (tmp_path / "units").exists()
+
+
+STEPS = (
+    "check_python",
+    "check_audio",
+    "check_device",
+    "check_model",
+    "save_language",
+    "install_units",
+    "link_binaries",
+    "install_completion",
+)
+
+
+def _steps(monkeypatch, **results):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(wizard.devices, "hardware", lambda: [])
+    for name in STEPS:
+        ok = results.get(name, True)
+        monkeypatch.setattr(
+            wizard.Wizard, name, lambda self, ok=ok, name=name: wizard.Outcome(ok, name)
+        )
+
+
+def test_run_all_is_ready_when_every_step_passes(monkeypatch, capsys):
+    _steps(monkeypatch)
+    assert wizard.Wizard(assume_yes=True).run_all() == 0
+    assert "Ready." in capsys.readouterr().out
+
+
+def test_run_all_succeeds_but_lists_skipped_steps(monkeypatch, capsys):
+    _steps(monkeypatch, install_units=None)
+    wiz = wizard.Wizard(assume_yes=True)
+    assert wiz.run_all() == 0
+    assert wiz.skipped == ["Systemd units"]
+    assert "left undone" in capsys.readouterr().out
+
+
+def test_run_all_fails_when_any_step_fails(monkeypatch, capsys):
+    _steps(monkeypatch, check_model=False, install_units=None)
+    wiz = wizard.Wizard(assume_yes=True)
+    assert wiz.run_all() == 1
+    assert wiz.failed == ["Model export"]
+    assert "vinowhisper-doctor" in capsys.readouterr().out
