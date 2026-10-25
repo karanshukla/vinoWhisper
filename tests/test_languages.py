@@ -208,3 +208,38 @@ def test_the_doctor_ignores_an_export_nobody_made(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "MULTILINGUAL_STATEFUL_MODEL_DIR", tmp_path / "b")
     labels = [result.label for result in doctor._models()]
     assert not [label for label in labels if "multilingual" in label]
+
+
+def test_saving_the_language_replaces_the_file_rather_than_rewriting_it(tmp_path):
+    # The server can start mid-save; a torn file would read as English.
+    path = tmp_path / "language.json"
+    config.save_language("fr", "transcribe", path)
+    before = path.stat().st_ino
+    config.save_language("de", "translate", path)
+    assert path.stat().st_ino != before
+    assert config.load_language(path) == ("de", "translate")
+    assert [p.name for p in tmp_path.iterdir()] == ["language.json"]
+
+
+def test_saving_the_language_through_a_symlink_keeps_the_link(tmp_path):
+    real = tmp_path / "dotfiles/language.json"
+    config.save_language("fr", "transcribe", real)
+    link = tmp_path / "language.json"
+    link.symlink_to(real)
+    config.save_language("es", "transcribe", link)
+    assert link.is_symlink()
+    assert config.load_language(real) == ("es", "transcribe")
+
+
+def test_a_failed_language_save_leaves_no_partial_file(tmp_path, monkeypatch):
+    path = tmp_path / "language.json"
+    config.save_language("fr", "transcribe", path)
+
+    def refuse(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config.os, "replace", refuse)
+    with pytest.raises(OSError):
+        config.save_language("de", "transcribe", path)
+    assert [p.name for p in tmp_path.iterdir()] == ["language.json"]
+    assert config.load_language(path) == ("fr", "transcribe")
