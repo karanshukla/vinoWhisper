@@ -221,7 +221,8 @@ libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
 | ashpd | Global shortcuts, and Shift+Insert for dictation (xdg-desktop-portal) |
 | rustix | Signals, the child's parent-death signal, the memfd that carries a keymap to the compositor, and the tray's idle timerfd |
 
-`rust-version = "1.88"` is for let-chains.
+`rust-version = "1.89"` is what the locked cosmic-text 0.19 needs (let-chains
+alone would be 1.88); CI's `msrv` job builds with it.
 
 ## Shell completion
 

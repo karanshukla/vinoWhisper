@@ -2,8 +2,8 @@
 name = "vinowhisper-tray"
 version = "1.0.1"
 edition = "2024"
-# let-chains
-rust-version = "1.88"
+# cosmic-text 0.19 (let-chains alone would be 1.88)
+rust-version = "1.89"
 description = "Floating captions, dictation, tray icon and global shortcuts for vinoWhisper, on Wayland"
 license = "MIT"
 repository = "https://github.com/karanshukla/vinoWhisper"
