@@ -21,6 +21,11 @@ jobs:
       - run: rustup default "$RUST_TOOLCHAIN"
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path tray/Cargo.toml
       - run: cp tray/target/x86_64-unknown-linux-musl/release/vinowhisper-tray vinowhisper-tray-x86_64-linux
+      # What users download and the wheel pins: it runs, is this tag, and links nothing.
+      - name: Smoke-test the binary
+        run: |
+          file vinowhisper-tray-x86_64-linux | grep 'static'
+          test "$(./vinowhisper-tray-x86_64-linux --version)" = "vinowhisper-tray ${GITHUB_REF_NAME#v}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tray
@@ -85,6 +90,9 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Install the wheel and run every command
+        run: scripts/smoke_wheel.sh dist/*.whl
 
       - name: Check the wheel carries both pins
         run: |

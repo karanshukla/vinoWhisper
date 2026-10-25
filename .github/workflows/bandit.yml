@@ -36,3 +36,8 @@ jobs:
         with:
           sarif_file: bandit.sarif
           category: bandit
+
+      # The SARIF run above can never fail, so this one gates: no findings at all
+      # today (2026-10-25), so any new one is a reviewed skip or a fix.
+      - name: Bandit gate
+        run: uvx --from 'bandit[toml]==1.9.4' bandit -c pyproject.toml -r vinowhisper/ -q

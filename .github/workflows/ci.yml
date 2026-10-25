@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
       - run: uv venv
       - run: uv pip install --group dev
       - run: .venv/bin/ruff check .
@@ -36,14 +38,35 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv venv --python ${{ matrix.python-version }}
       - run: uv pip install --group dev
-      - run: .venv/bin/python -m pytest --cov=vinowhisper --cov-report=term-missing
+      # Branch coverage, from [tool.coverage.run]; tests/ is not measured.
+      - run: >-
+          .venv/bin/python -m pytest --cov=vinowhisper
+          --cov-report=term-missing:skip-covered --cov-report=xml
+      - name: Coverage summary
+        if: always() && matrix.python-version == '3.13'
+        run: .venv/bin/coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && matrix.python-version == '3.13'
+        with:
+          name: coverage-python
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  # The wheel as pip installs it: package data present, every command starts.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv build --wheel
+      - run: scripts/smoke_wheel.sh dist/*.whl
 
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck
-        run: shellcheck scripts/install.sh scripts/convert_model.sh
+        run: shellcheck scripts/*.sh scripts/*.bash
       - name: bash -n the completion script
         run: bash -n scripts/vinowhisper-completion.bash
 
@@ -54,27 +77,94 @@ jobs:
         working-directory: tray
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview
       - run: rustup default stable
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: tray
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
+      # The tests, run once, instrumented: cargo llvm-cov is cargo test plus a report.
+      - run: cargo llvm-cov --locked --no-report
+      - name: Coverage
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info
+          { echo '### tray'; echo '```'; cargo llvm-cov report --summary-only; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --summary-only
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-tray
+          path: tray/lcov.info
 
   # The settings types both binaries read and write live in settings/, tested here
   gui:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview
       - run: rustup default stable
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            gui
+            settings
       - run: cargo fmt --check
         working-directory: gui
       - run: cargo clippy --locked --all-targets -- -D warnings
         working-directory: gui
-      - run: cargo test --locked
+      - run: cargo llvm-cov --locked --no-report
         working-directory: gui
-      - run: cargo test --locked
+      - run: cargo llvm-cov --locked --no-report
         working-directory: settings
+      - name: Coverage
+        run: |
+          for crate in gui settings; do
+            (
+              cd "$crate"
+              cargo llvm-cov report --lcov --output-path lcov.info
+              { echo "### $crate"; echo '```'; cargo llvm-cov report --summary-only; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+              cargo llvm-cov report --summary-only
+            )
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-gui
+          path: |
+            gui/lcov.info
+            settings/lcov.info
+
+  # rust-version in each Cargo.toml, built with that toolchain. Not run anywhere else.
+  msrv:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: tray
+            toolchain: "1.88"
+          - crate: settings
+            toolchain: "1.88"
+          - crate: gui
+            toolchain: "1.95"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: rust-version matches the matrix
+        run: grep -qx 'rust-version = "${{ matrix.toolchain }}"' Cargo.toml
+      - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: ${{ matrix.crate }}
+          key: msrv
+      - run: cargo +${{ matrix.toolchain }} check --locked
 
   site:
     runs-on: ubuntu-latest
