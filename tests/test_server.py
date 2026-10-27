@@ -314,3 +314,21 @@ def test_warm_returns_at_once_and_health_reports_the_model(client, cleaner):
     response = client.post("/cleanup/warm")
     assert response.status_code == 202 and cleaner.warmed == 1
     assert client.get("/health").get_json()["cleanup"]["device"] == "NPU"
+
+
+@pytest.mark.parametrize(
+    ("budget", "expect"),
+    [
+        (2.5, 2.5),
+        (None, config.CLEANUP_MAX_BUDGET_S),
+        (600, config.CLEANUP_MAX_BUDGET_S),
+        (0, config.CLEANUP_MAX_BUDGET_S),
+        (-1, config.CLEANUP_MAX_BUDGET_S),
+        (True, config.CLEANUP_MAX_BUDGET_S),
+        ("5", config.CLEANUP_MAX_BUDGET_S),
+    ],
+)
+def test_no_request_can_hold_the_model_past_the_servers_ceiling(client, cleaner, budget, expect):
+    body = {"text": "um hello"} if budget is None else {"text": "um hello", "budget_s": budget}
+    assert client.post("/cleanup", json=body).status_code == 200
+    assert cleaner.seen[3] == expect

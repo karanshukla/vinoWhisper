@@ -222,6 +222,9 @@ REQUEST_TIMEOUT_S = 60.0
 IDLE_TIMEOUT_S = 5 * 60
 # Captions keep the server up for hours; the cleanup model should not ride along.
 CLEANUP_IDLE_UNLOAD_S = 5 * 60
+# The server's own deadline when a request names none or a longer one: no request holds
+# the model, and every dictation behind it, for longer.
+CLEANUP_MAX_BUDGET_S = 10.0
 IDLE_CHECK_INTERVAL_S = 30.0
 
 
