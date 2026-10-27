@@ -285,6 +285,59 @@ Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
 Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
 "Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.
 
+### Cleaning up what you say
+
+Optional, off by default (beta). Turn on **Clean up dictation** on the settings
+window's Cleanup page and a small language model, running on this machine, tidies
+the text before it is typed. **It only ever deletes words.** It removes:
+
+| You say | It types |
+|---|---|
+| "So um I think we should uh ship it on Friday." | "So I think we should ship it on Friday." |
+| "We need that that fixed." | "We need that fixed." |
+| "Let's meet at three, no wait, four in the lobby." | "Let's meet at four in the lobby." |
+| "Send the invoice. Remind Sam about lunch. Scratch that. Call the dentist." | "Send the invoice. Call the dentist." |
+| "The release is ready for review, delete that last word." | "The release is ready for." |
+| "To undo it, say literal scratch that." | "To undo it, say scratch that." |
+
+- **Fillers**: um, uh, er, hmm, and euh, ähm, eh in French, German and Spanish.
+- **Stammers and false starts**: a word said twice, a sentence restarted.
+- **Self-corrections**: "no wait", "I mean", "sorry", "or rather" keep what came
+  after and drop what it replaced. "Actually" is only a filler: "My name's Karan.
+  Actually, my name's Jim" keeps both sentences.
+- **Spoken edits**: "scratch that" removes the sentence or clause before it,
+  "delete that last word" the word before it. Say **literal** first to type the
+  phrase itself.
+- The same in **French, German and Spanish** ("non attends", "streich das", "borra
+  eso", …).
+
+**What it never does:** add a word, reword or shorten a sentence, reorder anything,
+change "three" to "3", or answer what you said. Dictating "what is the capital of
+France?" types the question; "write me a poem" types those words. Every answer is
+checked, and anything that is not a pure deletion of what you said is thrown away
+and your words are typed as Whisper heard them. The same happens when the model is
+slower than the time limit (4 seconds) or something fails, so dictation never breaks
+because of it. Rewriting rambling speech into tidier prose is a different, riskier
+job, and this deliberately does not do it.
+
+**Most dictations skip it.** In the default mode, the model only runs when it hears
+one of the words above or a repeated word; everything else is typed at once. Pick
+"Every dictation" on the Cleanup page to run it every time, for corrections spoken
+without a cue word.
+
+**Nothing leaves the machine.** The model is SmolLM3-3B, on the NPU when there is one
+(the GPU or CPU otherwise). The Cleanup page downloads it once (1.7 GB, checked file
+by file), and can verify or delete it. It loads when you press the dictation key, so
+the load overlaps your speech: a few seconds the first time after a while, then about
+2 seconds per cleaned dictation. It unloads after 5 minutes unused. The pill says
+"Cleaning up with the model…" while it works.
+
+To see what went in and what the model answered, run the tray with
+`VINOWHISPER_CLEANUP_DEBUG=1`. How it was chosen and measured is under
+[LLM cleanup](#llm-cleanup-beta) below.
+
+### How dictation works
+
 One utterance is one `Dictated`, and none of the caption stitching applies.
 While the key is held (or hands-free is on), the audio is cut at pauses and each
 finished piece is decoded in the background; on release only the tail is
@@ -485,7 +538,9 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
-**LLM cleanup (beta), added 2026-10-11, local since 2026-10-27, off by default**, from
+#### LLM cleanup (beta)
+
+Added 2026-10-11, local since 2026-10-27, off by default, from
 [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81) and
 [#91](https://github.com/karanshukla/vinoWhisper/issues/91).
 Beta means: measured on one laptop, one microphone and one model, so the thresholds

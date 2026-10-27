@@ -87,8 +87,10 @@ included, with a tray icon, a global shortcut and a start-at-login toggle. It
 links nothing but libc, adds nothing to the Python install, and draws the same
 event stream as the terminal UI. It also does **dictation**: hold Meta+H (the
 dictation key on laptops that have one), talk, and let go to type what you
-said into the focused window, one NPU decode per utterance.
-[docs/tray.md](https://docs.vinowhisper.com/tray/)
+said into the focused window, one NPU decode per utterance. Optionally, a small
+model on the NPU tidies it first, and only by deleting: "um", stammers, "three, no
+wait, four", "scratch that". It never adds or rewords a word, and nothing leaves the
+machine. [docs/tray.md](https://docs.vinowhisper.com/tray/)
 
 ## Install
 
