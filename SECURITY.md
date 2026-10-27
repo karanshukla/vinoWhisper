@@ -17,8 +17,11 @@ LLM cleanup of dictation (opt-in, `VINOWHISPER_CLEANUP=1` or the settings window
 a model on this machine too, inside the same server. Until 2026-10-27 it sent the text
 of a dictation to a configurable endpoint with an API key; that path is gone. The
 cleanup model is a one-time download from Hugging Face, pinned by commit and checked
-per file against sha256 digests in `vinowhisper/cleanup_model.json`. See "LLM cleanup"
-in `docs/tray.md`.
+per file against sha256 digests in `vinowhisper/cleanup_model.json`, and re-hashed
+before a load whenever a file's size, mtime or inode changed. Whatever the model
+answers, only a pure deletion of the dictated words is typed, so a tampered model can
+drop words but cannot add any. The server caps any one cleanup request at 10 seconds.
+See "LLM cleanup" in `docs/tray.md`.
 
 `--record` writes audio and transcripts to a directory you name. That file is
 as sensitive as whatever was playing; nothing else touches it. The files are

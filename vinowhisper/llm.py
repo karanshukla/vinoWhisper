@@ -8,9 +8,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import config, devices, ovfetch, source
+from .integrity import sha256_file
 
 PINS_PATH = Path(__file__).resolve().parent / "cleanup_model.json"
 REVISION_MARKER = ".vinowhisper-revision"
+# Size, mtime and inode of each file when it last hashed clean: a load re-hashes only
+# when one of them moved. Anything running as the user can rewrite this too; it catches
+# corruption and careless edits, not a determined same-user attacker.
+VERIFIED_STAMP = ".vinowhisper-verified"
 
 # The NPU compiles for a fixed window. 3072 holds the cleanup prompt and five minutes of
 # dictation; 1024 holds the edited copy of that dictation coming back.
@@ -63,6 +68,36 @@ def is_present(pin: source.Source, directory: Path | None = None) -> bool:
     )
 
 
+def _fingerprint(pin: source.Source, directory: Path) -> str:
+    lines = []
+    for name in sorted(pin.sha256):
+        stat = (directory / name).stat()
+        lines.append(f"{name} {stat.st_size} {stat.st_mtime_ns} {stat.st_ino}")
+    return "\n".join(lines) + "\n"
+
+
+def verify(pin: source.Source, directory: Path | None = None) -> list[str]:
+    directory = directory or config.CLEANUP_MODEL_DIR
+    stamp = directory / VERIFIED_STAMP
+    try:
+        if stamp.read_text(encoding="utf-8") == _fingerprint(pin, directory):
+            return []
+    except OSError:
+        pass
+    bad = [
+        name
+        for name, expected in sorted(pin.sha256.items())
+        if not (directory / name).is_file() or sha256_file(directory / name) != expected
+    ]
+    if bad:
+        # Not downloaded any more, as far as the settings window and dictation can tell.
+        (directory / REVISION_MARKER).unlink(missing_ok=True)
+        stamp.unlink(missing_ok=True)
+    else:
+        stamp.write_text(_fingerprint(pin, directory), encoding="utf-8")
+    return bad
+
+
 def status(
     pin: source.Source | None = None,
     directory: Path | None = None,
@@ -99,6 +134,8 @@ def fetch(
     total = sum(pin.sizes.values())
     marker = directory / REVISION_MARKER
     marker.unlink(missing_ok=True)
+    # source.fetch refuses a directory holding files the pin does not name.
+    (directory / VERIFIED_STAMP).unlink(missing_ok=True)
     source.fetch(
         pin,
         directory,
@@ -107,6 +144,7 @@ def fetch(
         progress=lambda done: progress(done, total),
     )
     marker.write_text(pin.revision + "\n", encoding="utf-8")
+    (directory / VERIFIED_STAMP).write_text(_fingerprint(pin, directory), encoding="utf-8")
     return directory
 
 
@@ -169,6 +207,12 @@ class CleanupModel:
             pin = pinned()
             if pin is None or not is_present(pin, self._directory):
                 raise ModelMissing("the cleanup model isn't downloaded")
+            bad = verify(pin, self._directory)
+            if bad:
+                raise ModelMissing(
+                    f"the cleanup model's {', '.join(bad)} no longer match the pinned sha256; "
+                    "download it again in Settings"
+                )
             # A bad ovfetch prefix only costs the NPU, and the loop below moves on to the GPU.
             with contextlib.suppress(ovfetch.OvfetchError):
                 ovfetch.preload()
