@@ -1,8 +1,8 @@
-"""Run a corpus of dictations through the configured cleanup endpoint and score it.
+"""Run a corpus of dictations through the local cleanup model and score it.
 
-Uses your settings and key (the same lookup dictation uses), makes real requests, and
-costs a few cents. Not part of the test suite; tests/test_cleanup_provenance.py is the
-offline half.
+Goes through the running server, as dictation does, so the model has to be downloaded
+(vinowhisper-cleanup model fetch). Not part of the test suite;
+tests/test_cleanup_provenance.py is the offline half.
 
     uv run python scripts/cleanup_eval.py [--reps 3] [--json out.json]
 
@@ -155,13 +155,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reps", type=int, default=3)
     parser.add_argument("--json", type=Path)
-    parser.add_argument("--workers", type=int, default=4)
+    # One model answers one request at a time; more workers only queue behind the lock.
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     settings = cleanup.load_settings(
         {**__import__("os").environ, cleanup.ENABLE_ENV: "1", cleanup.MODE_ENV: "always"}
     )
-    if settings is None or not settings.api_key:
-        print("no API key: store one in the settings window or set ANTHROPIC_API_KEY")
+    if settings is None or not settings.model_ready:
+        print("the cleanup model isn't downloaded: run vinowhisper-cleanup model fetch")
         return 1
     jobs = [(i, rep) for i in range(len(CORPUS)) for rep in range(args.reps)]
 
@@ -185,7 +186,9 @@ def main() -> int:
 
     with ThreadPoolExecutor(args.workers) as pool:
         rows = list(pool.map(run, jobs))
-    print(f"{len(rows)} requests, {len(CORPUS)} dictations x {args.reps}, model {settings.model}\n")
+    print(
+        f"{len(rows)} requests, {len(CORPUS)} dictations x {args.reps}, model {cleanup.config.CLEANUP_MODEL_ID}\n"
+    )
     print(f"{'kind':16}{'good':>6}{'fine':>6}{'raw-safe':>10}{'raw-lost':>10}{'WRONG':>7}")
     for kind in dict.fromkeys(k for _, _, _, k in CORPUS):
         c = Counter(r["result"] for r in rows if r["kind"] == kind)

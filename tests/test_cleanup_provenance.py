@@ -21,7 +21,7 @@ import pytest
 from tests.test_dictate import SPEECH, FakeClient, FakeRecording
 from vinowhisper import cleanup, dictate
 
-SETTINGS = cleanup.Settings(api_key="k", budget_s=1.0, mode="always")
+SETTINGS = cleanup.Settings(budget_s=1.0, mode="always")
 FIXTURE = Path(__file__).parent / "fixtures" / "cleanup_model_answers.jsonl"
 
 
@@ -246,8 +246,9 @@ def test_every_captured_model_answer_is_handled_as_recorded():
 def _typed(monkeypatch, tmp_path, transcript_text: str, answer: str) -> dict:
     (tmp_path / "c.json").write_text(json.dumps({"enabled": True, "mode": "always"}))
     monkeypatch.setattr(cleanup.config, "CLEANUP_FILE", tmp_path / "c.json")
-    monkeypatch.setattr(cleanup, "stored_key", lambda attributes=(): "k")
-    monkeypatch.setattr(cleanup, "post", lambda settings, text: answer)
+    monkeypatch.setattr(cleanup, "model_ready", lambda: True)
+    monkeypatch.setattr(cleanup, "local", lambda settings, text: answer)
+    monkeypatch.setattr(dictate, "_warm_cleanup", lambda: None)
     records: list[dict] = []
     dictation = dictate.Dictation(
         records.append,

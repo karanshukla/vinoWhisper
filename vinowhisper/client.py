@@ -93,6 +93,19 @@ class TranscriptionClient:
         response.raise_for_status()
         return response.json()
 
+    def clean_up(self, text: str, timeout_s: float) -> requests.Response:
+        return self._session.post(
+            f"{BASE_URL}/cleanup",
+            json={"text": text, "budget_s": timeout_s},
+            timeout=(config.CONNECT_TIMEOUT_S, timeout_s),
+        )
+
+    def warm_cleanup(self) -> None:
+        self._session.post(
+            f"{BASE_URL}/cleanup/warm",
+            timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
+        ).raise_for_status()
+
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
         started_at = time.monotonic()
         response = self._session.post(

@@ -9,7 +9,7 @@ import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import __version__, audio, config, devices, failures, listen
+from . import __version__, audio, cleanup, config, devices, failures, listen, llm
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
@@ -18,6 +18,7 @@ app.config["MAX_CONTENT_LENGTH"] = (
     int(config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ) * audio.BYTES_PER_SAMPLE + 4096
 )
 transcriber = WhisperTranscriber()
+cleaner = llm.CleanupModel()
 
 _activity_lock = threading.Lock()
 _last_request_at = time.monotonic()
@@ -57,12 +58,56 @@ def transcribe() -> Response:
 
 @app.route("/health", methods=["GET"])
 def health() -> Response:
-    return jsonify({"status": "ok", "version": __version__, **transcriber.describe()})
+    return jsonify(
+        {
+            "status": "ok",
+            "version": __version__,
+            **transcriber.describe(),
+            "cleanup": cleaner.describe(),
+        }
+    )
 
 
-def _error(message: str) -> Response:
+@app.route("/cleanup", methods=["POST"])
+def clean() -> Response:
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error("body must be JSON with a non-empty 'text'")
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return _error("body must be JSON with a non-empty 'text'")
+    budget = body.get("budget_s")
+    budget_s = float(budget) if isinstance(budget, int | float) and budget > 0 else None
+    _mark_activity(+1)
+    try:
+        answer, truncated = cleaner.generate(
+            cleanup.PROMPT,
+            f"<transcript>{text}</transcript>",
+            cleanup.max_tokens(text),
+            budget_s=budget_s,
+        )
+    except llm.ModelMissing as exc:
+        return _error(str(exc), 409)
+    except TimeoutError as exc:
+        return _error(str(exc), 504)
+    except Exception as exc:
+        return _error(f"cleanup failed: {exc}".splitlines()[0], 503)
+    finally:
+        _mark_activity(-1)
+    return jsonify({"text": answer, "truncated": truncated, "device": cleaner.device})
+
+
+@app.route("/cleanup/warm", methods=["POST"])
+def warm() -> Response:
+    cleaner.warm()
+    response = jsonify(cleaner.describe())
+    response.status_code = 202
+    return response
+
+
+def _error(message: str, status: int = 400) -> Response:
     response = jsonify({"error": message})
-    response.status_code = 400
+    response.status_code = status
     return response
 
 
@@ -80,6 +125,7 @@ def _idle_watchdog(timeout_s: float) -> None:
         with _activity_lock:
             idle_for = time.monotonic() - _last_request_at
             busy = _in_flight > 0
+        cleaner.unload_if_idle(config.CLEANUP_IDLE_UNLOAD_S)
         if not busy and idle_for >= timeout_s:
             # _exit(0): a clean exit tells systemd this was an idle unload, not a crash.
             os._exit(0)
@@ -131,8 +177,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
         return 1
 
-    global transcriber
+    global transcriber, cleaner
     transcriber = WhisperTranscriber(device=args.device, language=args.language, task=args.task)
+    cleaner = llm.CleanupModel(device=args.device)
 
     try:
         selection = transcriber.select_device()

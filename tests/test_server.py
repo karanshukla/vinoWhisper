@@ -244,3 +244,73 @@ def test_a_failed_load_names_how_to_clear_the_mark(monkeypatch, main_env, capsys
     assert "compile failed" in err
     assert failures.CLEAR_HINT in err
     assert not FakeServer.served
+
+
+class FakeCleaner:
+    def __init__(self, answer=("Hello.", False), raises=None):
+        self.answer, self.raises = answer, raises
+        self.seen = None
+        self.warmed = 0
+        self.device = "NPU"
+
+    def generate(self, system, user, max_new_tokens, budget_s=None):
+        self.seen = (system, user, max_new_tokens, budget_s)
+        if self.raises is not None:
+            raise self.raises
+        return self.answer
+
+    def warm(self):
+        self.warmed += 1
+
+    def describe(self):
+        return {"loaded": True, "loading": False, "device": "NPU", "error": None}
+
+    def unload_if_idle(self, idle_s):
+        return False
+
+
+@pytest.fixture
+def cleaner(monkeypatch):
+    fake = FakeCleaner()
+    monkeypatch.setattr(server, "cleaner", fake)
+    return fake
+
+
+def test_cleanup_wraps_the_text_and_passes_the_budget(client, cleaner):
+    from vinowhisper import cleanup
+
+    response = client.post("/cleanup", json={"text": "um hello", "budget_s": 2.5})
+    assert response.status_code == 200
+    assert response.get_json() == {"text": "Hello.", "truncated": False, "device": "NPU"}
+    system, user, max_new, budget = cleaner.seen
+    assert system == cleanup.PROMPT
+    assert user == "<transcript>um hello</transcript>"
+    assert (max_new, budget) == (cleanup.max_tokens("um hello"), 2.5)
+
+
+@pytest.mark.parametrize("body", [None, {}, {"text": ""}, {"text": 3}, ["um"]])
+def test_cleanup_without_text_is_a_400(client, cleaner, body):
+    assert client.post("/cleanup", json=body).status_code == 400
+    assert cleaner.seen is None
+
+
+@pytest.mark.parametrize(
+    ("raises", "status"),
+    [
+        (server.llm.ModelMissing("the cleanup model isn't downloaded"), 409),
+        (TimeoutError("past the time limit"), 504),
+        (RuntimeError("could not load\ntrace"), 503),
+    ],
+)
+def test_cleanup_failures_have_their_own_status(client, cleaner, raises, status):
+    cleaner.raises = raises
+    response = client.post("/cleanup", json={"text": "um hello"})
+    assert response.status_code == status
+    assert "\n" not in response.get_json()["error"]
+    assert server._in_flight == 0
+
+
+def test_warm_returns_at_once_and_health_reports_the_model(client, cleaner):
+    response = client.post("/cleanup/warm")
+    assert response.status_code == 202 and cleaner.warmed == 1
+    assert client.get("/health").get_json()["cleanup"]["device"] == "NPU"

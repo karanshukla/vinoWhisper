@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "note": "The prebuilt cleanup model: arankays/SmolLM3-3B-int4-cw-ov at this commit, our own export of HuggingFaceTB/SmolLM3-3B@a07cc9a04f16 (OpenVINO INT4, symmetric, channel-wise, for the NPU). Downloaded back from the Hub and hashed 2026-10-27; every file matched the local export byte for byte. Bump the revision and re-hash together.",
+  "models": {
+    "arankays/SmolLM3-3B-int4-cw-ov": {
+      "label": "SmolLM3-3B",
+      "base": "HuggingFaceTB/SmolLM3-3B@a07cc9a04f16550a088caea529712d1d335b0ac1",
+      "revision": "136eac7690714ab0a1e65806eb24f98d993f0438",
+      "recorded": "2026-10-27",
+      "files": {
+        "chat_template.jinja": {
+          "sha256": "3e0e275a527f249670056e0078e474eadbdd007c134b4fdfae5a7b3089702814",
+          "size": 5598
+        },
+        "config.json": {
+          "sha256": "4a4820b5b1683899dde3d99181ab491ca98b033efd9f70c7776ef9a70c1f8611",
+          "size": 1936
+        },
+        "generation_config.json": {
+          "sha256": "ec9b7d2f60e514dafe0cfd8563d86fbcbba342d58c5ca6c1a19a20fe6faf6631",
+          "size": 176
+        },
+        "openvino_config.json": {
+          "sha256": "79a0cdc60d1edb709a6c71ba4e7be379a9ea4299b36150032ad62406f24e8e83",
+          "size": 447
+        },
+        "openvino_detokenizer.bin": {
+          "sha256": "83031cd7f937bb06d7f84a6fd1f35ed22432ef9e0b28d82465ca87444b8b7866",
+          "size": 1865684
+        },
+        "openvino_detokenizer.xml": {
+          "sha256": "37a90db08d1f925512fb935bad1da9245e30fd2810c1bc1f5b3a63488580e60b",
+          "size": 15324
+        },
+        "openvino_model.bin": {
+          "sha256": "7311e7b606a566139925f55c69e3c4434a22b74ce15b0432fb1fe8a68369afcc",
+          "size": 1671893261
+        },
+        "openvino_model.xml": {
+          "sha256": "e69454d4a21c46647f35ed82c2c228c2d4a535bc0746541200ec2962c0876dd9",
+          "size": 2589974
+        },
+        "openvino_tokenizer.bin": {
+          "sha256": "1e31a162bdcb030992e39efcb751d52c0367181eb2fb26e75ef984bbc95fad12",
+          "size": 8396290
+        },
+        "openvino_tokenizer.xml": {
+          "sha256": "4410d9c2c2445bae4af82d1f4b41a3c34165d18d2d5c5e289d1f3ab4ca73b712",
+          "size": 31317
+        },
+        "tokenizer.json": {
+          "sha256": "7b6a500b662a34eb3f0374db856ba4ad7de4c81040571d78dc0d357238930005",
+          "size": 17208819
+        },
+        "tokenizer_config.json": {
+          "sha256": "69994bdbef7e2a704e0ed45ff352803424d85f38efd6fbcb9d8ad741c7569c03",
+          "size": 326
+        }
+      }
+    }
+  }
+}

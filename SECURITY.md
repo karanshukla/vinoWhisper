@@ -13,11 +13,12 @@ traffic the project ever makes is package installation and the one-time model
 download from Hugging Face, both of which you trigger explicitly and the second
 of which is checked against pinned digests (below).
 
-The one exception is opt-in: with `VINOWHISPER_CLEANUP=1`, the final text of a
-dictation (never audio, never captions) is sent to the endpoint you configure,
-using your API key, so an LLM can drop fillers and apply spoken edits. It is
-off by default, falls back to the raw transcript on any failure, and a local
-endpoint keeps the text on the machine. See "LLM cleanup" in `docs/tray.md`.
+LLM cleanup of dictation (opt-in, `VINOWHISPER_CLEANUP=1` or the settings window) runs
+a model on this machine too, inside the same server. Until 2026-10-27 it sent the text
+of a dictation to a configurable endpoint with an API key; that path is gone. The
+cleanup model is a one-time download from Hugging Face, pinned by commit and checked
+per file against sha256 digests in `vinowhisper/cleanup_model.json`. See "LLM cleanup"
+in `docs/tray.md`.
 
 `--record` writes audio and transcripts to a directory you name. That file is
 as sensitive as whatever was playing; nothing else touches it. The files are
@@ -35,9 +36,9 @@ The transcription server listens on a Unix socket,
 directory, so only your own user can connect to it. It is two processes rather
 than one because the NPU model load costs 10-30 seconds and something has to
 hold the loaded model across sessions. Anything running as your user can talk
-to it and ask it to transcribe audio it sends; that is the same trust level as
-anything else running as you, and the endpoint exposes nothing beyond
-transcription and a health check.
+to it and ask it to transcribe audio it sends or clean up text it sends; that is the
+same trust level as anything else running as you, and the socket exposes nothing
+beyond transcription, cleanup and a health check.
 
 Until 0.6.x it listened on `127.0.0.1:8099`, and that was weaker than this
 file used to claim. A localhost port belongs to no user: any local account

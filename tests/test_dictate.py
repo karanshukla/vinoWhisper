@@ -7,7 +7,6 @@ server; what is under test is the command handling and what gets emitted.
 import dataclasses
 import threading
 import time
-import urllib.error
 
 import numpy as np
 import pytest
@@ -874,13 +873,16 @@ def test_a_cleanup_that_turns_itself_off_says_so_after_the_text():
     )
 
 
-SET = dictate.cleanup.Settings(api_key="sk-test", budget_s=0.5, mode="always")
+SET = dictate.cleanup.Settings(budget_s=0.5, mode="always")
 
 
 def _file_cleaner(transport, clock=lambda: 0.0, load=lambda: SET):
     loaded = [load]
     cleaner = dictate._FileCleaner(
-        load=lambda: loaded[0](), transport=transport, breaker=dictate.cleanup.Breaker(clock)
+        load=lambda: loaded[0](),
+        transport=transport,
+        breaker=dictate.cleanup.Breaker(clock),
+        warm=lambda: None,
     )
     return cleaner, loaded
 
@@ -892,23 +894,53 @@ def _press(cleaner):
     return cleaner("um hello there")
 
 
-def test_a_rejected_key_stops_the_requests_until_the_settings_change():
-    """#87: a bad key cost every dictation a round trip, and said nothing."""
+def test_a_missing_model_stops_cleanup_until_it_is_downloaded():
+    """#87: a setup failure cost every dictation a round trip, and said nothing."""
     calls = []
 
-    def rejected(settings, text):
-        calls.append(settings.api_key)
-        raise urllib.error.HTTPError(settings.endpoint, 401, "no", {}, None)  # type: ignore[arg-type]
+    def answer(settings, text):
+        calls.append(text)
+        return "hello there"
 
-    cleaner, loaded = _file_cleaner(rejected)
-    assert _press(cleaner).reason == "http 401"
-    assert "API key was rejected" in cleaner.take_notice()
+    cleaner, loaded = _file_cleaner(
+        answer, load=lambda: dataclasses.replace(SET, model_ready=False)
+    )
+    assert _press(cleaner).reason == "model missing"
+    assert "isn't downloaded" in cleaner.take_notice()
     assert _press(cleaner) is None and _press(cleaner) is None
     assert cleaner.take_notice() is None
-    assert calls == ["sk-test"]
-    loaded[0] = lambda: dataclasses.replace(SET, api_key="sk-fixed")
-    assert _press(cleaner) is not None
-    assert calls == ["sk-test", "sk-fixed"]
+    assert calls == []
+    loaded[0] = lambda: SET
+    assert _press(cleaner).cleaned
+    assert calls == ["um hello there"]
+
+
+def test_the_server_saying_the_model_is_missing_also_stops_cleanup():
+    def missing(settings, text):
+        raise dictate.cleanup.ModelNotReady("the cleanup model isn't downloaded")
+
+    cleaner, _ = _file_cleaner(missing)
+    assert _press(cleaner).reason == "model missing"
+    assert cleaner.take_notice() is not None
+    assert _press(cleaner) is None
+
+
+def test_the_key_press_warms_the_model_only_when_cleanup_can_run():
+    warmed = []
+    for settings, expect in ((SET, 1), (dataclasses.replace(SET, model_ready=False), 0)):
+        warmed.clear()
+        cleaner = dictate._FileCleaner(
+            load=lambda settings=settings: settings,
+            transport=lambda s, t: t,
+            warm=lambda: warmed.append(1),
+        )
+        cleaner.prepare()
+        assert cleaner.active is (expect == 1) or not settings.model_ready
+        for _ in range(100):
+            if len(warmed) == expect:
+                break
+            time.sleep(0.01)
+        assert len(warmed) == expect
 
 
 def test_repeated_timeouts_pause_cleanup_then_one_request_probes():
@@ -917,7 +949,7 @@ def test_repeated_timeouts_pause_cleanup_then_one_request_probes():
 
     def down(settings, text):
         calls.append(now[0])
-        raise urllib.error.URLError("refused")
+        raise requests.ConnectionError("refused")
 
     cleaner, _ = _file_cleaner(down, clock=lambda: now[0])
     for _ in range(dictate.cleanup.STRIKES - 1):
@@ -941,7 +973,9 @@ def test_a_refused_answer_is_not_a_service_error():
 
 
 def test_a_success_clears_the_strikes():
-    replies = iter([urllib.error.URLError("x"), urllib.error.URLError("x"), "hello there"] * 2)
+    replies = iter(
+        [requests.ConnectionError("x"), requests.ConnectionError("x"), "hello there"] * 2
+    )
 
     def flaky(settings, text):
         reply = next(replies)

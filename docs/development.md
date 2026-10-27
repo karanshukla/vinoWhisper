@@ -148,10 +148,9 @@ empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
 - every page is a `Tab` with its name and a selected state, reachable with Tab
   and opened with Enter or Space;
 - every field, list and number is named after its form label (`labelled_by`),
-  the API key is a `PasswordInput` whose value never carries the key, and
-  nothing that takes focus is nameless (egui's own scroll bar included);
-- section titles are headings, and the key status and the reload refusal are
-  polite live regions;
+  and nothing that takes focus is nameless (egui's own scroll bar included);
+- section titles are headings, and the model's download status and the reload
+  refusal are polite live regions;
 - the theme clears WCAG 2.2 contrast in both schemes: 4.5:1 for text, 3:1 for
   field edges, focus and the current-page bar (`theme.rs`, computed, not eyed);
 - at double zoom (Ctrl++) the sidebar folds into tabs and every control stays;

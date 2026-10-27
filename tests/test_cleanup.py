@@ -1,16 +1,17 @@
 """The LLM cleanup step: what it asks for, and when its answer is not used.
 
-The transport is a fake, so nothing here touches the network or a wallet.
+The transport is a fake, so nothing here starts a server or loads a model.
 """
 
 import json
 import threading
 
 import pytest
+import requests
 
-from vinowhisper import cleanup
+from vinowhisper import cleanup, client
 
-SETTINGS = cleanup.Settings(api_key="sk-test", budget_s=0.5, mode="always")
+SETTINGS = cleanup.Settings(budget_s=0.5, mode="always")
 
 
 def _reply(text: str):
@@ -119,12 +120,12 @@ def test_an_error_falls_back_and_never_raises():
     assert (outcome.text, outcome.cleaned) == ("hello", False)
 
 
-def test_no_key_means_no_request():
+def test_no_model_means_no_request():
     called = []
-    settings = cleanup.Settings(api_key="")
+    settings = cleanup.Settings(model_ready=False)
     outcome = cleanup.clean_up("hello", settings, lambda s, t: called.append(t) or t)
     assert called == []
-    assert outcome.reason == "no api key"
+    assert outcome.reason == "model missing"
 
 
 def test_the_budget_is_a_hard_deadline():
@@ -134,7 +135,7 @@ def test_the_budget_is_a_hard_deadline():
         release.wait(5.0)
         return text
 
-    fast = cleanup.Settings(api_key="k", budget_s=0.05, mode="always")
+    fast = cleanup.Settings(budget_s=0.05, mode="always")
     try:
         outcome = cleanup.clean_up("hello", fast, slow)
     finally:
@@ -151,57 +152,20 @@ def test_a_reason_never_carries_the_response_text():
     assert outcome.reason == "bad response"
 
 
-def test_characterization_the_request_turns_thinking_off():
-    """characterization: thinking tokens count against max_tokens.
-
-    Measured 2026-10-11 on claude-haiku-5-5: a ten-token answer spent about a hundred
-    on a thinking block and stopped at max_tokens, so a correct answer was thrown away
-    as "truncated". Leaving it on also adds output tokens to every dictation.
-    """
-    body = cleanup.request_body(SETTINGS, "one two three")
-    assert body["thinking"] == {"type": "disabled"}
-
-
-def test_the_request_has_no_sampling_parameters_and_a_bounded_output():
-    body = cleanup.request_body(SETTINGS, "one two three")
-    assert "temperature" not in body
-    assert body["messages"] == [
-        {"role": "user", "content": "<transcript>one two three</transcript>"}
-    ]
-    assert body["system"] == cleanup.PROMPT
-    assert body["max_tokens"] <= 4096
-
-
-def test_the_response_text_blocks_are_joined_and_truncation_is_refused():
-    ok = json.dumps({"content": [{"type": "text", "text": " Hello "}], "stop_reason": "end_turn"})
-    assert cleanup.parse_response(ok.encode()) == "Hello"
-    echoed = json.dumps({"content": [{"type": "text", "text": "<transcript>Hi</transcript>"}]})
-    assert cleanup.parse_response(echoed.encode()) == "Hi"
-    cut = json.dumps({"content": [{"type": "text", "text": "Hel"}], "stop_reason": "max_tokens"})
-    with pytest.raises(ValueError, match="truncated"):
-        cleanup.parse_response(cut.encode())
-
-
-def test_off_unless_asked_and_the_env_key_beats_the_wallet(tmp_path):
+def test_off_unless_asked_and_the_model_check_is_carried(tmp_path):
     assert cleanup.load_settings({}, path=tmp_path / "missing.json") is None
-    env = {cleanup.ENABLE_ENV: "1", cleanup.KEY_ENV: "from-env"}
-    assert cleanup.load_settings(env, lookup=lambda: "from-wallet").api_key == "from-env"
-    only_wallet = {cleanup.ENABLE_ENV: "1"}
-    assert cleanup.load_settings(only_wallet, lambda: "from-wallet").api_key == "from-wallet"
+    env = {cleanup.ENABLE_ENV: "1"}
+    assert cleanup.load_settings(env, lambda: True).model_ready
+    assert not cleanup.load_settings(env, lambda: False).model_ready
 
 
 def test_the_default_budget_leaves_room_over_a_typical_call():
-    assert cleanup.DEFAULT_BUDGET_S >= 3.0
+    assert cleanup.DEFAULT_BUDGET_S >= 4.0
 
 
 def test_a_garbled_budget_keeps_the_default():
     env = {cleanup.ENABLE_ENV: "1", cleanup.BUDGET_ENV: "soon"}
-    assert cleanup.load_settings(env, lambda: "").budget_s == cleanup.DEFAULT_BUDGET_S
-
-
-def test_the_endpoint_is_the_messages_path_under_the_base_url():
-    custom = cleanup.Settings(base_url="http://localhost:8080/", api_key="k")
-    assert custom.endpoint == "http://localhost:8080/v1/messages"
+    assert cleanup.load_settings(env, lambda: True).budget_s == cleanup.DEFAULT_BUDGET_S
 
 
 def _file(tmp_path, **fields):
@@ -210,37 +174,29 @@ def _file(tmp_path, **fields):
     return path
 
 
-def test_the_settings_file_turns_it_on_and_supplies_the_endpoint(tmp_path):
-    path = _file(tmp_path, enabled=True, url="http://localhost:9", model="m", budget_s=1.5)
-    settings = cleanup.load_settings({}, lambda: "wallet-key", path)
-    assert settings == cleanup.Settings("http://localhost:9", "m", 1.5, "wallet-key")
+def test_the_settings_file_turns_it_on(tmp_path):
+    path = _file(tmp_path, enabled=True, budget_s=1.5, mode="always")
+    settings = cleanup.load_settings({}, lambda: True, path)
+    assert settings == cleanup.Settings(1.5, "always", True)
 
 
 def test_an_environment_variable_beats_the_file(tmp_path):
-    path = _file(tmp_path, enabled=True, url="http://file", model="file-model")
-    env = {cleanup.URL_ENV: "http://env", cleanup.MODEL_ENV: "env-model"}
-    settings = cleanup.load_settings(env, lambda: "k", path)
-    assert (settings.base_url, settings.model) == ("http://env", "env-model")
+    path = _file(tmp_path, enabled=True, budget_s=1.5)
+    env = {cleanup.BUDGET_ENV: "2.5", cleanup.MODE_ENV: "always"}
+    settings = cleanup.load_settings(env, lambda: True, path)
+    assert (settings.budget_s, settings.mode) == (2.5, "always")
     off = {cleanup.ENABLE_ENV: "0"}
-    assert cleanup.load_settings(off, lambda: "k", path) is None
+    assert cleanup.load_settings(off, lambda: True, path) is None
 
 
-def test_a_blank_or_broken_file_is_off_not_an_error(tmp_path):
+def test_a_broken_file_is_off_and_an_old_one_still_loads(tmp_path):
     path = tmp_path / "cleanup.json"
     path.write_text("{not json")
-    assert cleanup.load_settings({}, lambda: "k", path) is None
-    assert cleanup.load_settings({}, lambda: "k", tmp_path / "absent.json") is None
-    blank = _file(tmp_path, enabled=True, url="", model="")
-    settings = cleanup.load_settings({}, lambda: "k", blank)
-    assert (settings.base_url, settings.model) == (cleanup.DEFAULT_URL, cleanup.DEFAULT_MODEL)
-
-
-def test_the_wallet_entry_matches_what_the_settings_window_writes():
-    from pathlib import Path
-
-    source = (Path(__file__).parent.parent / "settings/src/lib.rs").read_text()
-    for part in cleanup.SECRET_ATTRIBUTES:
-        assert f'"{part}"' in source
+    assert cleanup.load_settings({}, lambda: True, path) is None
+    assert cleanup.load_settings({}, lambda: True, tmp_path / "absent.json") is None
+    # Written before cleanup went local: the endpoint and model it names are ignored.
+    old = _file(tmp_path, enabled=True, url="https://api.example.test", model="m", budget_s=3.0)
+    assert cleanup.load_settings({}, lambda: True, old) == cleanup.Settings(3.0, "smart", True)
 
 
 @pytest.mark.parametrize(
@@ -279,10 +235,10 @@ def test_smart_mode_skips_the_request_and_always_mode_does_not():
         sent.append(text)
         return text
 
-    smart = cleanup.Settings(api_key="k", mode="smart")
+    smart = cleanup.Settings(mode="smart")
     skipped = cleanup.clean_up("Send the report.", smart, transport)
     assert (skipped.cleaned, skipped.reason, sent) == (False, "nothing to fix", [])
-    always = cleanup.Settings(api_key="k", mode="always")
+    always = cleanup.Settings(mode="always")
     cleanup.clean_up("Send the report.", always, transport)
     assert sent == ["Send the report."]
 
@@ -290,9 +246,9 @@ def test_smart_mode_skips_the_request_and_always_mode_does_not():
 def test_the_mode_comes_from_the_file_and_an_unknown_one_is_smart(tmp_path):
     path = tmp_path / "cleanup.json"
     path.write_text(json.dumps({"enabled": True, "mode": "always"}))
-    assert cleanup.load_settings({}, lambda: "k", path).mode == "always"
+    assert cleanup.load_settings({}, lambda: True, path).mode == "always"
     path.write_text(json.dumps({"enabled": True, "mode": "sometimes"}))
-    assert cleanup.load_settings({}, lambda: "k", path).mode == "smart"
+    assert cleanup.load_settings({}, lambda: True, path).mode == "smart"
 
 
 @pytest.mark.parametrize(
@@ -404,16 +360,6 @@ def test_an_inverted_question_mark_the_model_adds_is_refused_but_a_spoken_one_is
     assert not cleanup.only_deletes("Cu\u00e1l es la capital de Francia", spoken)
 
 
-@pytest.mark.parametrize(
-    "url",
-    ["file:///etc/passwd", "ftp://example.test", "gopher://example.test", "example.test/v1"],
-)
-def test_only_http_and_https_addresses_are_requested(url):
-    settings = cleanup.Settings(base_url=url, api_key="k", budget_s=0.5, mode="always")
-    outcome = cleanup.clean_up("hello there", settings)
-    assert (outcome.text, outcome.cleaned, outcome.reason) == ("hello there", False, "bad address")
-
-
 def test_characterization_actually_alone_never_justifies_dropping_a_clause():
     """characterization: reported 2026-10-11, 'my name's Karan. Actually, my name's Jim.'
 
@@ -431,51 +377,59 @@ def test_characterization_actually_alone_never_justifies_dropping_a_clause():
     )
 
 
-class _FakeResponse:
-    def __init__(self, body: bytes):
-        self.body = body
+def _response(status: int, body: dict) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps(body).encode()
+    return response
 
-    def __enter__(self):
+
+class _FakeClient:
+    def __init__(self, response: requests.Response):
+        self.response = response
+        self.sent: list[tuple[str, float]] = []
+
+    def __call__(self):
         return self
 
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self.body
+    def clean_up(self, text: str, timeout_s: float) -> requests.Response:
+        self.sent.append((text, timeout_s))
+        return self.response
 
 
-def test_a_bad_address_never_reaches_urlopen(monkeypatch):
-    def urlopen(*args, **kwargs):
-        raise AssertionError("urlopen was called")
-
-    monkeypatch.setattr(cleanup.urllib.request, "urlopen", urlopen)
-    for url in ("file:///etc/passwd", "ftp://example.test"):
-        with pytest.raises(ValueError, match="bad address"):
-            cleanup.post(cleanup.Settings(base_url=url, api_key="k"), "hello")
-
-
-def test_post_sends_the_key_and_the_prompt_and_reads_the_text(monkeypatch):
-    sent = {}
-
-    def urlopen(request, timeout):
-        sent["request"], sent["timeout"] = request, timeout
-        reply = {"content": [{"type": "text", "text": "<transcript>Hello.</transcript>"}]}
-        return _FakeResponse(json.dumps(reply).encode())
-
-    monkeypatch.setattr(cleanup.urllib.request, "urlopen", urlopen)
-    settings = cleanup.Settings(base_url="https://api.example.test/", api_key="sk-x", budget_s=2)
-    assert cleanup.post(settings, "um hello") == "Hello."
-    request = sent["request"]
-    assert request.full_url == "https://api.example.test/v1/messages"
-    assert request.get_method() == "POST"
-    assert request.get_header("X-api-key") == "sk-x"
-    assert request.get_header("Content-type") == "application/json"
-    body = json.loads(request.data)
-    assert body["messages"][0]["content"] == "<transcript>um hello</transcript>"
-    assert sent["timeout"] == 2
+def test_local_sends_the_text_and_budget_and_strips_echoed_tags(monkeypatch):
+    fake = _FakeClient(
+        _response(200, {"text": "<transcript>Hello.</transcript>", "truncated": False})
+    )
+    monkeypatch.setattr(client, "TranscriptionClient", fake)
+    assert cleanup.local(cleanup.Settings(budget_s=2.0), "um hello") == "Hello."
+    assert fake.sent == [("um hello", 2.0)]
 
 
-def test_a_truncated_answer_is_refused():
-    with pytest.raises(ValueError, match="truncated"):
-        cleanup.parse_response(json.dumps({"stop_reason": "max_tokens", "content": []}).encode())
+def test_local_turns_server_answers_into_reasons(monkeypatch):
+    cases = [
+        (_response(409, {"error": "the cleanup model isn't downloaded"}), "model missing"),
+        (_response(504, {"error": "past the time limit"}), "http 504"),
+        (_response(503, {"error": "cleanup failed"}), "http 503"),
+        (_response(200, {"text": "Hel", "truncated": True}), "truncated"),
+    ]
+    for response, reason in cases:
+        monkeypatch.setattr(client, "TranscriptionClient", _FakeClient(response))
+        outcome = cleanup.clean_up("um hello", SETTINGS)
+        assert (outcome.text, outcome.cleaned, outcome.reason) == ("um hello", False, reason)
+
+
+def test_a_server_that_is_not_running_is_unreachable(monkeypatch):
+    class Down(_FakeClient):
+        def clean_up(self, text, timeout_s):
+            raise requests.ConnectionError("no socket")
+
+    monkeypatch.setattr(client, "TranscriptionClient", Down(_response(200, {})))
+    assert cleanup.clean_up("um hello", SETTINGS).reason == "unreachable"
+
+
+def test_the_answer_fits_the_npu_response_window():
+    from vinowhisper import llm
+
+    assert cleanup.max_tokens("word " * 5000) == llm.MIN_RESPONSE_LEN
+    assert cleanup.max_tokens("one two") == 132

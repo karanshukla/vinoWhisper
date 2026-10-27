@@ -1,39 +1,29 @@
+import argparse
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
 import unicodedata
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+import requests
+
+from . import config, llm
 from .stitch import _norm
 
 ENABLE_ENV = "VINOWHISPER_CLEANUP"
-URL_ENV = "VINOWHISPER_CLEANUP_URL"
-MODEL_ENV = "VINOWHISPER_CLEANUP_MODEL"
 MODE_ENV = "VINOWHISPER_CLEANUP_MODE"
 BUDGET_ENV = "VINOWHISPER_CLEANUP_BUDGET_S"
-KEY_ENV = "ANTHROPIC_API_KEY"
 
-DEFAULT_URL = "https://api.anthropic.com"
-DEFAULT_MODEL = "claude-haiku-5-5"
 # "smart" skips the request when the transcript shows nothing to fix; "always" never does.
 MODES = ("smart", "always")
 DEFAULT_MODE = "smart"
-DEFAULT_BUDGET_S = 3.0
-ANTHROPIC_VERSION = "2023-06-01"
-
-# The window stores the key under these attributes; the env var wins when both exist.
-SECRET_ATTRIBUTES = ("service", "vinowhisper", "account", "anthropic-api-key")
-_SECRET_TOOL_TIMEOUT_S = 3.0
+# SmolLM3 on the NPU: 1.9s median, p90 under 3s on the eval corpus (2026-10-27).
+DEFAULT_BUDGET_S = 4.0
 
 PROMPT = """\
 The user message holds a dictated transcript between <transcript> tags, in any language
@@ -75,15 +65,10 @@ final text only, never an explanation or a second attempt.
 
 @dataclass(frozen=True)
 class Settings:
-    base_url: str = DEFAULT_URL
-    model: str = DEFAULT_MODEL
     budget_s: float = DEFAULT_BUDGET_S
-    api_key: str = ""
     mode: str = DEFAULT_MODE
-
-    @property
-    def endpoint(self) -> str:
-        return self.base_url.rstrip("/") + "/v1/messages"
+    # Part of the settings so a download is a change, which is what resets the breaker.
+    model_ready: bool = True
 
 
 @dataclass(frozen=True)
@@ -120,18 +105,9 @@ def enabled(env: Mapping[str, str] | None = None, path: Path | None = None) -> b
     return _truthy(read_file(path).get("enabled"))
 
 
-def stored_key(attributes: tuple[str, ...] = SECRET_ATTRIBUTES) -> str:
-    try:
-        done = subprocess.run(
-            ["secret-tool", "lookup", *attributes],
-            capture_output=True,
-            text=True,
-            timeout=_SECRET_TOOL_TIMEOUT_S,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return done.stdout.strip() if done.returncode == 0 else ""
+def model_ready() -> bool:
+    pin = llm.pinned()
+    return pin is not None and llm.is_present(pin)
 
 
 def _mode(value: object) -> str:
@@ -149,7 +125,7 @@ def _budget(value: object) -> float:
 
 def load_settings(
     env: Mapping[str, str] | None = None,
-    lookup: Callable[[], str] | None = None,
+    ready: Callable[[], bool] | None = None,
     path: Path | None = None,
 ) -> Settings | None:
     """The file is what the settings window writes; an environment variable beats it."""
@@ -158,11 +134,9 @@ def load_settings(
         return None
     saved = read_file(path)
     return Settings(
-        base_url=env.get(URL_ENV) or str(saved.get("url") or "") or DEFAULT_URL,
-        model=env.get(MODEL_ENV) or str(saved.get("model") or "") or DEFAULT_MODEL,
         budget_s=_budget(env.get(BUDGET_ENV, saved.get("budget_s"))),
-        api_key=env.get(KEY_ENV) or (lookup or stored_key)(),
         mode=_mode(env.get(MODE_ENV) or saved.get("mode")),
+        model_ready=(ready or model_ready)(),
     )
 
 
@@ -370,63 +344,48 @@ def deletions_justified(original: str, edited: str) -> bool:
     return runs is not None and all(_justified(source, start, end) for start, end in runs)
 
 
-def _max_tokens(text: str) -> int:
-    return min(4096, len(text.split()) * 2 + 128)
+def max_tokens(text: str) -> int:
+    return min(llm.MIN_RESPONSE_LEN, len(text.split()) * 2 + 128)
 
 
-def request_body(settings: Settings, text: str) -> dict:
-    # No temperature: current models reject any non-default sampling parameter.
-    return {
-        "model": settings.model,
-        "system": PROMPT,
-        "max_tokens": _max_tokens(text),
-        # Thinking is on by default for current models, and its tokens count against
-        # max_tokens: a ten-token answer used a hundred and then truncated.
-        "thinking": {"type": "disabled"},
-        "messages": [{"role": "user", "content": f"<transcript>{text}</transcript>"}],
-    }
-
-
-def parse_response(payload: bytes) -> str:
-    data = json.loads(payload)
-    if data.get("stop_reason") == "max_tokens":
-        raise ValueError("truncated")
-    blocks = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
-    answer = "".join(blocks).strip()
+def _strip_tags(answer: str) -> str:
     for tag in ("<transcript>", "</transcript>"):
         answer = answer.replace(tag, "")
     return answer.strip()
 
 
-def post(settings: Settings, text: str) -> str:
-    # urlopen also opens file: and custom schemes, and the address is user-configured.
-    if urllib.parse.urlsplit(settings.endpoint).scheme not in ("http", "https"):
-        raise ValueError("bad address")
-    request = urllib.request.Request(  # noqa: S310
-        settings.endpoint,
-        data=json.dumps(request_body(settings, text)).encode("utf-8"),
-        headers={
-            "content-type": "application/json",
-            "x-api-key": settings.api_key,
-            "anthropic-version": ANTHROPIC_VERSION,
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=settings.budget_s) as response:  # noqa: S310  # nosec B310
-        return parse_response(response.read())
+class ModelNotReady(RuntimeError):
+    pass
+
+
+def local(settings: Settings, text: str) -> str:
+    from .client import TranscriptionClient
+
+    response = TranscriptionClient().clean_up(text, settings.budget_s)
+    if response.status_code == 409:
+        raise ModelNotReady(response.json().get("error", ""))
+    response.raise_for_status()
+    data = response.json()
+    if data.get("truncated"):
+        raise ValueError("truncated")
+    return _strip_tags(str(data.get("text", "")))
 
 
 def _failure(exc: BaseException) -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"http {exc.code}"
-    if isinstance(exc, urllib.error.URLError):
+    if isinstance(exc, ModelNotReady):
+        return "model missing"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return f"http {exc.response.status_code}"
+    if isinstance(exc, requests.ConnectionError):
         return "unreachable"
+    if isinstance(exc, requests.Timeout):
+        return "timed out"
     if isinstance(exc, ValueError):
-        return str(exc) if str(exc) in ("truncated", "bad address") else "bad response"
+        return str(exc) if str(exc) == "truncated" else "bad response"
     return type(exc).__name__
 
 
-def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outcome:
+def clean_up(text: str, settings: Settings, transport: Transport = local) -> Outcome:
     started = time.monotonic()
 
     def done(result: str, cleaned: bool, reason: str | None) -> Outcome:
@@ -434,8 +393,8 @@ def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outc
 
     if not text.strip():
         return done(text, False, "empty input")
-    if not settings.api_key:
-        return done(text, False, "no api key")
+    if not settings.model_ready:
+        return done(text, False, "model missing")
     if settings.mode == "smart" and not needs_cleanup(text):
         return done(text, False, "nothing to fix")
 
@@ -447,7 +406,7 @@ def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outc
         except Exception as exc:
             box.append(exc)
 
-    # urlopen's timeout bounds each socket wait, not the whole call.
+    # requests' timeout bounds each socket wait, not the whole call.
     worker = threading.Thread(target=call, name="cleanup-request", daemon=True)
     worker.start()
     worker.join(settings.budget_s)
@@ -465,9 +424,9 @@ def clean_up(text: str, settings: Settings, transport: Transport = post) -> Outc
     return done(result, True, None)
 
 
-# Reasons that are about the answer, not the service: the endpoint worked, so they never
+# Reasons that are about the answer, not the service: the model ran, so they never
 # count against it. Anything else (http errors, unreachable, timeouts, an exception's type
-# name) is the endpoint, the key or the network failing.
+# name) is the server or the model failing.
 _ANSWER_REASONS = frozenset(
     {
         None,
@@ -482,12 +441,8 @@ _ANSWER_REASONS = frozenset(
 )
 # Failures that the same settings will hit on every request: cleanup stays off until they change.
 _SETUP_FAILURES = {
-    "no api key": "no API key is set",
-    "bad address": "the address isn't http or https",
-    "http 400": "the endpoint refused the request (http 400)",
-    "http 401": "the API key was rejected (http 401)",
-    "http 403": "the API key was refused (http 403)",
-    "http 404": "the endpoint or model wasn't found (http 404)",
+    "model missing": "LLM cleanup off: the cleanup model isn't downloaded. Download it in Settings.",
+    "http 400": "LLM cleanup off: the server refused the request (http 400).",
 }
 # Each failed request can hold the typing back by the whole budget (#87), so a service that
 # keeps failing is left alone for a while instead of costing every dictation 3s.
@@ -496,7 +451,7 @@ COOLDOWN_S = 600.0
 
 
 class Breaker:
-    """Turns cleanup off after errors, so dictation stops paying for a broken endpoint.
+    """Turns cleanup off after errors, so dictation stops paying for a broken model.
 
     Setup failures turn it off until the settings change. Transient ones (timeouts, 5xx,
     unreachable) turn it off for COOLDOWN_S after STRIKES in a row, then let one request
@@ -525,7 +480,7 @@ class Breaker:
             return None
         if reason in _SETUP_FAILURES:
             self._trip(settings, None)
-            return f"LLM cleanup off: {_SETUP_FAILURES[reason]}. Fix it in Settings."
+            return _SETUP_FAILURES[reason]
         self._strikes += 1
         if self._tripped_for is None and self._strikes < STRIKES:
             return None
@@ -539,8 +494,45 @@ class Breaker:
         self._strikes, self._tripped_for, self._until = 0, None, None
 
 
+def _emit(record: dict) -> None:
+    print(json.dumps(record), flush=True)
+
+
+def _model_command(action: str) -> int:
+    if action == "status":
+        _emit(llm.status())
+        return 0
+    if action == "delete":
+        llm.delete()
+        _emit({"event": "deleted"})
+        return 0
+    last = [0.0]
+
+    def progress(done: int, total: int) -> None:
+        # One line per 1% at most: the window redraws on each.
+        now = done / max(total, 1)
+        if now - last[0] >= 0.01 or done >= total:
+            last[0] = now
+            _emit({"event": "progress", "done": done, "total": total})
+
+    try:
+        directory = llm.fetch(progress)
+    except (requests.RequestException, OSError, RuntimeError) as exc:
+        _emit({"event": "error", "message": str(exc).splitlines()[0]})
+        return 1
+    _emit({"event": "done", "bytes": llm.status()["bytes"], "dir": str(directory)})
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["model"]:
+        parser = argparse.ArgumentParser(
+            prog="vinowhisper-cleanup model",
+            description="The local cleanup model. Each command prints JSON lines.",
+        )
+        parser.add_argument("action", choices=("status", "fetch", "delete"))
+        return _model_command(parser.parse_args(args[1:]).action)
     text = " ".join(args) if args else sys.stdin.read()
     settings = load_settings({**os.environ, ENABLE_ENV: "1"})
     if settings is None:
