@@ -576,7 +576,9 @@ mod tests {
         assert_eq!(d.linger(), Some(Duration::from_millis(1500)));
         let typed = d.epoch();
         d.event(Dictate::Notice {
-            message: "LLM cleanup off: no API key is set. Fix it in Settings.".into(),
+            message:
+                "LLM cleanup off: the cleanup model isn't downloaded. Download it in Settings."
+                    .into(),
         });
         assert_ne!(
             d.epoch(),

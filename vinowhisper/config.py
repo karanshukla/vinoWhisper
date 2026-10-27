@@ -10,6 +10,10 @@ def _config_home() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
 
+def _cache_home() -> Path:
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+
+
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
 TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
@@ -54,6 +58,10 @@ REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
 
 # Written by the settings window; the API key is never in it (see cleanup.SECRET_ATTRIBUTES).
 CLEANUP_FILE = _config_home() / "vinowhisper/cleanup.json"
+CLEANUP_MODEL_ID = "arankays/SmolLM3-3B-int4-cw-ov"
+CLEANUP_MODEL_DIR = MODEL_ROOT / "SmolLM3-3B-int4-cw-ov"
+# Compiled NPU blobs: a first load compiles for ~25s, a cached one takes a few.
+CLEANUP_CACHE_DIR = _cache_home() / "vinowhisper/cleanup-cache"
 
 
 def load_language(path: Path | None = None) -> tuple[str, str]:
@@ -212,6 +220,8 @@ MODEL_LOAD_TIMEOUT_S = 180.0
 REQUEST_TIMEOUT_S = 60.0
 
 IDLE_TIMEOUT_S = 5 * 60
+# Captions keep the server up for hours; the cleanup model should not ride along.
+CLEANUP_IDLE_UNLOAD_S = 5 * 60
 IDLE_CHECK_INTERVAL_S = 30.0
 
 

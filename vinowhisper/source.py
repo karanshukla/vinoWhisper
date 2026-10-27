@@ -83,16 +83,20 @@ def fetch(
     directory: Path | None = None,
     session: requests.Session | None = None,
     say: Callable[[str], None] = lambda line: print(line, file=sys.stderr, flush=True),
+    progress: Callable[[int], None] = lambda done: None,
 ) -> Path:
     target_dir = directory or source.directory
     target_dir.mkdir(parents=True, exist_ok=True)
     for leftover in target_dir.glob(f"*{_PART}"):
         leftover.unlink()
     http = session or requests.Session()
+    done = 0
 
     for name, expected in sorted(source.sha256.items()):
         target = target_dir / name
         if target.is_file() and sha256_file(target) == expected:
+            done += source.sizes.get(name, 0)
+            progress(done)
             continue
         size = source.sizes.get(name, 0)
         say(f"downloading {name}" + (f" ({size / 1e6:.0f}MB)" if size >= 10**7 else ""))
@@ -104,6 +108,8 @@ def fetch(
                 for chunk in response.iter_content(_CHUNK):
                     digest.update(chunk)
                     handle.write(chunk)
+                    done += len(chunk)
+                    progress(done)
         if digest.hexdigest() != expected:
             part.unlink()
             raise SourceError(

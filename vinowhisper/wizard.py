@@ -16,7 +16,7 @@ from . import source as model_source
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
-COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup")
+COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup", "cleanup")
 
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"

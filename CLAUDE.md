@@ -324,6 +324,37 @@ and the traps found building it:
 Not yet done: `vinowhisper-setup` links `vinowhisper-dictate` only on a fresh
 run; the released overlay binary predates all of this.
 
+## Local LLM cleanup, 2026-10-27 (issue #91)
+
+Dictation cleanup moved from a hosted Anthropic endpoint to **SmolLM3-3B on the NPU**,
+and the cloud path (API key, wallet entry, address and model fields) was removed, by the
+user's choice. Picked by benchmark against Gemma 4 E2B, Qwen3-4B-2507, Qwen3-1.7B,
+LFM2.5-1.2B and Phi-3.5-mini; the table is in `docs/tray.md`, "LLM cleanup". Facts that
+would otherwise be re-learned:
+
+- **Our own export, hosted at `arankays/SmolLM3-3B-int4-cw-ov`**, pinned by commit and
+  per-file sha256 in `cleanup_model.json`. Made from `HuggingFaceTB/SmolLM3-3B@a07cc9a04f16`
+  with `--weight-format int4 --sym --ratio 1.0 --group-size -1`. Channel-wise matters:
+  a group-wise INT4 model never finished compiling on the NPU. Users download it; they
+  do not export it (it needs torch, optimum and ~6 GB of RAM).
+- **optimum writes its fp16 intermediate to `$TMPDIR`**, 6 GB for a 3B model, and
+  `/tmp` is tmpfs here: an uncapped export global-OOM'd the laptop. Export LLMs with
+  `TMPDIR` on disk and under `systemd-run --user --scope -p MemoryMax=...`.
+  `convert_model.sh` does not set `TMPDIR`; fine for Whisper, not for an LLM.
+- **It runs in the server** (`/cleanup`, `/cleanup/warm`), warmed at the key press,
+  unloaded after `CLEANUP_IDLE_UNLOAD_S` (measured: NPU memory 2,078 MB to 8 MB), and
+  cancelled server-side at the time limit so a runaway answer does not hold the lock.
+- **The NPU driver pins model memory outside RSS.** Read it from
+  `/proc/<pid>/fdinfo/<accel fd>` (`drm-resident-memory`); `Unevictable` in
+  `/proc/meminfo` is the system-wide sign. That is how vinoPop holding Gemma for hours
+  after a cancelled run was found.
+- No repetition penalty for cleanup (the answer copies the input, and a penalty makes it
+  reword, which the check refuses); 1.1 is what summaries will need, since greedy
+  decoding looped on a long one.
+- Summaries of saved sessions (#82) are the next user: same model, same server, run in
+  the background after a session, chunked at the `[MM:SS]` paragraphs, written next to
+  the transcript for vinosearch to index. Not built.
+
 ## Architecture
 
 ```
@@ -347,6 +378,9 @@ vinowhisper/
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
+  cleanup.py      LLM cleanup of a dictation: prompt, the deletion-only checks, breaker,
+                  vinowhisper-cleanup (model status|fetch|delete)
+  llm.py          the local cleanup model: pins, download, LLMPipeline in the server
   ui.py           RichRenderer, the pinned status bar
   paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
   session.py      --record writer, --transcript writer (TranscriptWriter), reading a session back

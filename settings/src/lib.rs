@@ -138,14 +138,10 @@ impl Speech {
     }
 }
 
-pub const DEFAULT_CLEANUP_URL: &str = "https://api.anthropic.com";
+pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 4.0;
 
-pub const DEFAULT_CLEANUP_MODEL: &str = "claude-haiku-5-5";
-
-pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 3.0;
-
-/// When a dictation is sent for cleanup. Smart skips the request when the transcript
-/// shows nothing to fix, which is most of them and saves about a second each.
+/// When a dictation is sent for cleanup. Smart skips the model when the transcript
+/// shows nothing to fix, which is most of them and saves about two seconds each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CleanupMode {
@@ -158,18 +154,12 @@ impl CleanupMode {
     pub const ALL: [CleanupMode; 2] = [CleanupMode::Smart, CleanupMode::Always];
 }
 
-/// The Secret Service attributes the API key is stored under, which
-/// `vinowhisper-dictate` looks up with `secret-tool` (cleanup.SECRET_ATTRIBUTES).
-pub const SECRET_ATTRIBUTES: [&str; 4] = ["service", "vinowhisper", "account", "anthropic-api-key"];
-
-/// LLM cleanup of dictation (issue #81). Not in gui.json, and never holds the key: the
+/// LLM cleanup of dictation (issue #81), run by a local model. Not in gui.json: the
 /// Python side reads this file at each key press (config.CLEANUP_FILE).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Cleanup {
     pub enabled: bool,
-    pub url: String,
-    pub model: String,
     pub budget_s: f64,
     pub mode: CleanupMode,
 }
@@ -178,8 +168,6 @@ impl Default for Cleanup {
     fn default() -> Self {
         Cleanup {
             enabled: false,
-            url: DEFAULT_CLEANUP_URL.to_owned(),
-            model: DEFAULT_CLEANUP_MODEL.to_owned(),
             budget_s: DEFAULT_CLEANUP_BUDGET_S,
             mode: CleanupMode::default(),
         }
@@ -214,31 +202,6 @@ impl Cleanup {
 
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
         write_json(path, self)
-    }
-
-    /// Whether dictated text stays on this machine. Anything that is not plainly
-    /// loopback counts as leaving it, including a LAN address. The host is cut out
-    /// the way Python's urllib does, which ends the authority at `/`, `?` or `#`.
-    pub fn is_local(&self) -> bool {
-        let Some((scheme, rest)) = self.url.split_once("://") else {
-            return false;
-        };
-        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-            return false;
-        }
-        let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
-        let authority = &rest[..end];
-        if authority.contains('@') {
-            return false;
-        }
-        let host = match authority.strip_prefix('[') {
-            Some(v6) => v6.split(']').next().unwrap_or(""),
-            None => authority.split(':').next().unwrap_or(""),
-        };
-        matches!(
-            host.to_ascii_lowercase().as_str(),
-            "localhost" | "127.0.0.1" | "::1"
-        )
     }
 }
 
@@ -615,19 +578,30 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_is_off_and_hosted_until_the_file_says_otherwise() {
-        let defaults = Cleanup::default();
-        assert!(!defaults.enabled);
-        assert!(!defaults.is_local());
+    fn cleanup_is_off_until_the_file_says_otherwise() {
+        assert!(!Cleanup::default().enabled);
         let path = scratch("cleanup-partial");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"enabled": true, "model": "m"}"#).unwrap();
+        std::fs::write(&path, r#"{"enabled": true}"#).unwrap();
         let loaded = Cleanup::load_from(&path);
         assert!(loaded.enabled);
-        assert_eq!(loaded.model, "m");
-        assert_eq!(loaded.url, DEFAULT_CLEANUP_URL);
         assert_eq!(loaded.budget_s, DEFAULT_CLEANUP_BUDGET_S);
         assert_eq!(loaded.mode, CleanupMode::Smart);
+    }
+
+    #[test]
+    fn a_file_from_the_hosted_endpoint_days_still_loads() {
+        let path = scratch("cleanup-legacy");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"enabled": true, "url": "https://api.anthropic.com", "model": "m", "budget_s": 2.5, "mode": "always"}"#,
+        )
+        .unwrap();
+        let loaded = Cleanup::load_from(&path);
+        assert!(loaded.enabled);
+        assert_eq!(loaded.budget_s, 2.5);
+        assert_eq!(loaded.mode, CleanupMode::Always);
     }
 
     #[test]
@@ -635,42 +609,18 @@ mod tests {
         let path = scratch("cleanup");
         let cleanup = Cleanup {
             enabled: true,
-            url: "http://localhost:8080".into(),
-            model: "m".into(),
             budget_s: 1.5,
             mode: CleanupMode::Always,
         };
         cleanup.save_to(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        for key in ["enabled", "url", "model", "budget_s", "mode"] {
+        for key in ["enabled", "budget_s", "mode"] {
             assert!(text.contains(&format!("\"{key}\"")), "{key}");
         }
+        for gone in ["url", "model"] {
+            assert!(!text.contains(&format!("\"{gone}\"")), "{gone}");
+        }
         assert_eq!(Cleanup::load_from(&path), cleanup);
-    }
-
-    #[test]
-    fn only_loopback_counts_as_staying_on_the_machine() {
-        let local = |url: &str| {
-            Cleanup {
-                url: url.into(),
-                ..Cleanup::default()
-            }
-            .is_local()
-        };
-        assert!(local("http://localhost:8080"));
-        assert!(local("http://127.0.0.1:11434/v1"));
-        assert!(local("http://[::1]:9000"));
-        assert!(local("HTTP://LOCALHOST:8080"));
-        assert!(!local("localhost"));
-        assert!(!local("ftp://localhost"));
-        assert!(!local("http://evil.example?@localhost"));
-        assert!(!local("http://evil.example#@localhost"));
-        assert!(!local("http://evil.example\\@localhost"));
-        assert!(!local("http://user@localhost"));
-        assert!(!local("https://api.anthropic.com"));
-        assert!(!local("http://192.168.1.20:8080"));
-        assert!(!local("http://localhost.evil.example"));
-        assert!(!local("http://localhost@evil.example"));
     }
 
     #[test]

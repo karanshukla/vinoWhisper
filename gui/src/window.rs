@@ -6,7 +6,7 @@ use eframe::egui::accesskit::{Live, Role};
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke};
 
 use crate::forward::{self, Shortcuts};
-use crate::secret::{self, Key};
+use crate::model::{self, Line, ModelState, Status};
 use crate::theme;
 use vinowhisper_settings::{
     Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Task, TextSize,
@@ -145,8 +145,8 @@ struct SettingsWindow {
     speech: Speech,
     cleanup: Cleanup,
     cleanup_dirty: bool,
-    key: Arc<Mutex<Key>>,
-    key_input: String,
+    model: Arc<Mutex<ModelState>>,
+    confirm_delete: bool,
     multilingual: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
@@ -182,8 +182,8 @@ impl SettingsWindow {
             speech,
             cleanup,
             cleanup_dirty: false,
-            key: Arc::new(Mutex::new(Key::Checking)),
-            key_input: String::new(),
+            model: Arc::new(Mutex::new(ModelState::default())),
+            confirm_delete: false,
             multilingual: false,
             focused: true,
             kde_header: None,
@@ -382,19 +382,52 @@ impl SettingsWindow {
         changed
     }
 
-    fn run_key(&self, ctx: &egui::Context, job: impl FnOnce() -> Key + Send + 'static) {
-        let key = Arc::clone(&self.key);
+    fn refresh_model(&self, ctx: &egui::Context) {
+        let model = Arc::clone(&self.model);
         let ctx = ctx.clone();
-        *key.lock().unwrap() = Key::Checking;
         std::thread::spawn(move || {
-            let answer = job();
-            *key.lock().unwrap() = answer;
+            let status = model::status();
+            model.lock().unwrap().status = Some(status);
+            ctx.request_repaint();
+        });
+    }
+
+    fn run_model(&self, ctx: &egui::Context, action: &'static str) {
+        let model = Arc::clone(&self.model);
+        let ctx = ctx.clone();
+        {
+            let mut state = model.lock().unwrap();
+            state.busy = true;
+            state.error.clear();
+            if action == "fetch" {
+                state.fetching = Some((0, 0));
+            }
+        }
+        std::thread::spawn(move || {
+            let result = model::run(action, |line| {
+                if let Line::Progress { done, total } = line {
+                    model.lock().unwrap().fetching = Some((done, total));
+                    ctx.request_repaint();
+                }
+            });
+            let status = model::status();
+            let mut state = model.lock().unwrap();
+            state.busy = false;
+            state.fetching = None;
+            state.error = result.err().unwrap_or_default();
+            state.status = Some(status);
+            drop(state);
             ctx.request_repaint();
         });
     }
 
     fn cleanup(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui.ctx());
+        let state = self.model.lock().unwrap().clone();
+        let known = match &state.status {
+            Some(Ok(status)) => Some(status.clone()),
+            _ => None,
+        };
         ui.add_space(10.0);
         egui::Frame::NONE
             .fill(p.code_bg)
@@ -420,35 +453,32 @@ impl SettingsWindow {
         row(
             ui,
             "Clean up:",
-            "Sends what you dictate to a language model before it is typed, to drop ums, apply \
-             corrections and act on \"scratch that\". It only ever deletes words, and any other \
-             answer is thrown away and the raw text is typed. Off by default.",
+            "Runs a small language model on this machine, on the NPU when there is one, to drop \
+             ums, apply corrections and act on \"scratch that\" before the text is typed. Nothing \
+             leaves the machine. It only ever deletes words, and any other answer is thrown away \
+             and the raw text is typed. Off by default.",
             |ui, _| {
                 self.cleanup_dirty |= ui
                     .checkbox(&mut self.cleanup.enabled, "Clean up dictation")
                     .changed();
+                if self.cleanup.enabled && known.as_ref().is_some_and(|s| !s.present) {
+                    live(
+                        &ui.label(
+                            RichText::new(
+                                "Download the model below first; until then the raw text is typed.",
+                            )
+                            .color(p.muted),
+                        ),
+                    );
+                }
             },
         );
         let off = !self.cleanup.enabled;
         ui.add_enabled_ui(!off, |ui| {
-            section(ui, "Endpoint");
-            let wide = (ui.available_width() - LABEL_WIDTH)
-                .clamp(200.0, 380.0)
-                .min(ui.available_width());
             row(
                 ui,
-                "Address:",
-                "An Anthropic-compatible server. A local one keeps the text on this machine.",
-                |ui, label| {
-                    let edit = ui
-                        .add(egui::TextEdit::singleline(&mut self.cleanup.url).desired_width(wide));
-                    self.cleanup_dirty |= labelled(edit, label).changed();
-                },
-            );
-            row(
-                ui,
-                "Send:",
-                "Each request takes about a second. Smart skips it for text with no filler, correction or spoken edit in it, which is most of what you say.",
+                "Run:",
+                "Each cleanup takes about two seconds. Smart skips it for text with no filler, correction or spoken edit in it, which is most of what you say.",
                 |ui, label| {
                     self.cleanup_dirty |= combo(
                         ui,
@@ -460,15 +490,10 @@ impl SettingsWindow {
                     );
                 },
             );
-            row(ui, "Model:", "Any model name the endpoint accepts.", |ui, label| {
-                let edit =
-                    ui.add(egui::TextEdit::singleline(&mut self.cleanup.model).desired_width(wide));
-                self.cleanup_dirty |= labelled(edit, label).changed();
-            });
             row(
                 ui,
                 "Time limit:",
-                "Seconds to wait before typing the raw text instead.",
+                "Seconds to wait before typing the raw text instead. The first cleanup after a while also loads the model.",
                 |ui, label| {
                     let slider = ui.add(
                         egui::DragValue::new(&mut self.cleanup.budget_s)
@@ -482,87 +507,107 @@ impl SettingsWindow {
                         .changed();
                 },
             );
-            let (tone, text) = if self.cleanup.is_local() {
-                (
-                    p.muted,
-                    "This address is on this machine. Nothing leaves it.",
-                )
-            } else {
-                (
-                    ui.visuals().warn_fg_color,
-                    "Dictated text is sent to this address, along with your key.",
-                )
-            };
-            row(ui, "", "", |ui, _| {
-                ui.label(RichText::new(text).color(tone));
-            });
-            if let Some(name) = overriding_variable() {
-                row(
-                    ui,
-                    "",
-                    &format!(
-                        "{name} is set in this window's environment and beats this page, so the address above may not be the one in use."
-                    ),
-                    |_, _| {},
-                );
-            }
         });
 
-        section(ui, "API key");
-        let state = self.key.lock().unwrap().clone();
-        let working = state == Key::Checking;
-        let status = match &state {
-            Key::Checking => "Checking…".to_owned(),
-            Key::Stored => "A key is stored in your desktop's wallet.".to_owned(),
-            Key::Missing => "No key is stored. ANTHROPIC_API_KEY in the environment is used if set."
-                .to_owned(),
-            Key::NoTool => "No wallet tool found (secret-tool). Set ANTHROPIC_API_KEY in the environment instead."
-                .to_owned(),
-            Key::Failed(why) => format!("The wallet said: {why}"),
-        };
-        row(ui, "Status:", "", |ui, _| {
-            let color = if matches!(state, Key::Failed(_)) {
-                ui.visuals().error_fg_color
-            } else {
-                p.muted
-            };
-            live(&ui.label(RichText::new(status).color(color)));
-        });
-        let usable = state != Key::NoTool;
-        ui.add_enabled_ui(usable && !working, |ui| {
-            row(
-                ui,
-                "New key:",
-                "Kept in the wallet, never in a settings file. It cannot be shown again once saved.",
-                |ui, label| {
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.key_input)
-                            .password(true)
-                            .hint_text("sk-ant-…")
-                            .desired_width(ui.available_width().min(300.0)),
+        match &state.status {
+            None => {
+                section(ui, "Model");
+                row(ui, "", "", |ui, _| {
+                    live(&ui.label(RichText::new("Checking…").color(p.muted)));
+                });
+            }
+            Some(Err(why)) => {
+                section(ui, "Model");
+                row(ui, "", "", |ui, _| {
+                    live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+                });
+            }
+            Some(Ok(status)) => self.model_rows(ui, status, &state),
+        }
+    }
+
+    fn model_rows(&mut self, ui: &mut egui::Ui, status: &Status, state: &ModelState) {
+        let p = theme::palette(ui.ctx());
+        section(ui, &status.label);
+        row(
+            ui,
+            "Download:",
+            "Needed for cleanup. Checked file by file against pinned sha256s.",
+            |ui, _| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.set_min_height(ui.spacing().interact_size.y);
+                    if let Some((done, total)) = state.fetching {
+                        let fraction = done as f32 / total.max(1) as f32;
+                        let text = if total == 0 {
+                            "Starting…".to_owned()
+                        } else {
+                            format!("{} of {}", model::size(done), model::size(total))
+                        };
+                        live(
+                            &ui.add(
+                                egui::ProgressBar::new(fraction)
+                                    .text(text)
+                                    .desired_width(220.0),
+                            ),
+                        );
+                    } else if state.busy {
+                        live(&ui.label(RichText::new("Deleting…").color(p.muted)));
+                    } else if status.present {
+                        live(&ui.label(format!("Downloaded, {}", model::size(status.bytes))));
+                    } else {
+                        let color = ui.visuals().warn_fg_color;
+                        live(
+                            &ui.label(
+                                RichText::new(format!(
+                                    "Not downloaded ({})",
+                                    model::size(status.download_bytes)
+                                ))
+                                .color(color),
+                            ),
+                        );
+                    }
+                    let label = if status.present { "Verify" } else { "Download" };
+                    if ui
+                        .add_enabled(!state.busy, egui::Button::new(label))
+                        .clicked()
+                    {
+                        self.confirm_delete = false;
+                        self.run_model(ui.ctx(), "fetch");
+                    }
+                    let deletable = status.present && !state.busy;
+                    if self.confirm_delete {
+                        if ui.button("Cancel").clicked() {
+                            self.confirm_delete = false;
+                        }
+                        if ui.button("Delete the model").clicked() {
+                            self.confirm_delete = false;
+                            self.run_model(ui.ctx(), "delete");
+                        }
+                    } else if ui
+                        .add_enabled(deletable, egui::Button::new("Delete…"))
+                        .clicked()
+                    {
+                        self.confirm_delete = true;
+                    }
+                });
+                if !state.error.is_empty() {
+                    live(
+                        &ui.label(
+                            RichText::new(format!("The last attempt failed: {}", state.error))
+                                .color(ui.visuals().error_fg_color),
+                        ),
                     );
-                    labelled(edit, label);
-                    ui.horizontal(|ui| {
-                        let has_input = !self.key_input.trim().is_empty();
-                        if ui
-                            .add_enabled(has_input, egui::Button::new("Save key"))
-                            .clicked()
-                        {
-                            let mut entered = std::mem::take(&mut self.key_input);
-                            let trimmed = entered.trim().to_owned();
-                            entered.clear();
-                            self.run_key(ui.ctx(), move || secret::store(&trimmed));
-                        }
-                        if ui
-                            .add_enabled(state == Key::Stored, egui::Button::new("Remove key"))
-                            .clicked()
-                        {
-                            self.run_key(ui.ctx(), secret::clear);
-                        }
-                    });
-                },
-            );
-        });
+                }
+            },
+        );
+        row(
+            ui,
+            "Compiled cache:",
+            "What the NPU compiled from the model on its first load. Deleting the model clears it too.",
+            |ui, _| {
+                ui.label(model::size(status.cache_bytes));
+            },
+        );
     }
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
@@ -621,17 +666,6 @@ impl SettingsWindow {
         );
         changed
     }
-}
-
-fn overriding_variable() -> Option<&'static str> {
-    [
-        "VINOWHISPER_CLEANUP",
-        "VINOWHISPER_CLEANUP_URL",
-        "VINOWHISPER_CLEANUP_MODEL",
-        "VINOWHISPER_CLEANUP_BUDGET_S",
-    ]
-    .into_iter()
-    .find(|name| std::env::var_os(name).is_some())
 }
 
 fn keys(ui: &mut egui::Ui, trigger: &str) {
@@ -858,7 +892,7 @@ impl eframe::App for SettingsWindow {
             self.ask_shortcuts(ctx, Duration::ZERO);
         }
         if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
-            self.run_key(ctx, secret::status);
+            self.refresh_model(ctx);
         }
         self.shown = Some(self.page);
         if let Some(reason) = self.refused.lock().unwrap().take() {
@@ -1038,7 +1072,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     // No file is read or written and nothing is spawned: `show` is the window minus its
-    // side effects, and the tests never press the buttons that run the tray or the wallet.
+    // side effects, and the tests never press the buttons that run the tray or vinowhisper-cleanup.
     struct Under {
         window: SettingsWindow,
         styled: bool,
@@ -1053,7 +1087,11 @@ mod tests {
             Cleanup::default(),
         );
         window.multilingual = true;
-        *window.key.lock().unwrap() = Key::Stored;
+        window.model.lock().unwrap().status = Some(Ok(Status {
+            label: "SmolLM3-3B".into(),
+            download_bytes: 1_702_000_000,
+            ..Status::default()
+        }));
         *window.shortcuts.lock().unwrap() = Shortcuts::Bound {
             captions: "Meta+Alt+C".into(),
             dictate: "Meta+H".into(),
@@ -1224,35 +1262,84 @@ mod tests {
     }
 
     #[test]
-    fn the_cleanup_page_names_its_fields_and_the_key_is_a_password_field() {
+    fn the_cleanup_page_names_its_fields_and_asks_for_no_key() {
         let mut harness = harness(Page::Cleanup, WIDE);
         harness.state_mut().window.cleanup.enabled = true;
         harness.run();
         harness.get_by_role_and_label(Role::CheckBox, "Clean up dictation");
-        for label in ["Address:", "Model:"] {
-            harness.get_by_role_and_label(Role::TextInput, label);
-        }
-        harness.get_by_role_and_label(Role::ComboBox, "Send:");
+        harness.get_by_role_and_label(Role::ComboBox, "Run:");
         harness.get_by_role_and_label(Role::SpinButton, "Time limit:");
-        let save = harness.get_by_role_and_label(Role::Button, "Save key");
-        assert!(save.accesskit_node().is_disabled(), "nothing typed yet");
-        let key = harness.get_by_role_and_label(Role::PasswordInput, "New key:");
-        assert_eq!(key.accesskit_node().placeholder(), Some("sk-ant-…"));
-        key.focus();
+        for gone in ["Address:", "Model:"] {
+            assert!(
+                harness
+                    .query_by_role_and_label(Role::TextInput, gone)
+                    .is_none(),
+                "{gone}"
+            );
+        }
+        assert!(
+            harness
+                .query_by_role_and_label(Role::PasswordInput, "New key:")
+                .is_none()
+        );
+        harness.get_by_label("Not downloaded (1.7 GB)");
+        harness.get_by_label("Download the model below first; until then the raw text is typed.");
+        let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
+        assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
+        harness.get_by_role_and_label(Role::Button, "Download");
+    }
+
+    #[test]
+    fn a_downloaded_model_offers_verify_and_a_confirmed_delete() {
+        let mut harness = harness(Page::Cleanup, WIDE);
+        harness.state_mut().window.model.lock().unwrap().status = Some(Ok(Status {
+            label: "SmolLM3-3B".into(),
+            download_bytes: 1_702_000_000,
+            present: true,
+            bytes: 1_701_000_000,
+            cache_bytes: 2_100_000_000,
+        }));
         harness.run();
+        harness.get_by_label("Downloaded, 1.7 GB");
+        harness.get_by_label("2.1 GB");
+        harness.get_by_role_and_label(Role::Button, "Verify");
         harness
-            .get_by_role_and_label(Role::PasswordInput, "New key:")
-            .type_text("sk-secret");
+            .get_by_role_and_label(Role::Button, "Delete…")
+            .click();
         harness.run();
-        assert_eq!(harness.state().window.key_input, "sk-secret");
-        let shown = harness
-            .get_by_role_and_label(Role::PasswordInput, "New key:")
-            .value()
-            .unwrap_or_default();
-        assert!(!shown.contains("secret"), "{shown}");
-        let save = harness.get_by_role_and_label(Role::Button, "Save key");
-        assert!(!save.accesskit_node().is_disabled(), "a key to save");
-        harness.get_by_role_and_label(Role::Button, "Remove key");
+        assert!(harness.state().window.confirm_delete);
+        harness.get_by_role_and_label(Role::Button, "Delete the model");
+        harness
+            .get_by_role_and_label(Role::Button, "Cancel")
+            .click();
+        harness.run();
+        assert!(!harness.state().window.confirm_delete);
+    }
+
+    #[test]
+    fn a_download_in_progress_shows_how_far_it_has_got() {
+        let mut harness = harness(Page::Cleanup, WIDE);
+        {
+            let state = &mut harness.state_mut().window.model;
+            let mut state = state.lock().unwrap();
+            state.busy = true;
+            state.fetching = Some((400_000_000, 1_702_000_000));
+        }
+        harness.run();
+        harness.get_by_label("400 MB of 1.7 GB");
+        let download = harness.get_by_role_and_label(Role::Button, "Download");
+        assert!(
+            download.accesskit_node().is_disabled(),
+            "one fetch at a time"
+        );
+    }
+
+    #[test]
+    fn a_failed_fetch_says_why() {
+        let mut harness = harness(Page::Cleanup, WIDE);
+        harness.state_mut().window.model.lock().unwrap().error = "sha256 mismatch".into();
+        harness.run();
+        harness.get_by_label("The last attempt failed: sha256 mismatch");
     }
 
     // AccessKit had the disabled flag right all along; accesskit_atspi_common before 0.21
@@ -1275,10 +1362,10 @@ mod tests {
     }
 
     #[test]
-    fn the_key_status_is_announced_when_it_changes() {
+    fn the_model_status_is_announced_when_it_changes() {
         let mut harness = harness(Page::Cleanup, WIDE);
         harness.run();
-        let status = harness.get_by_label("A key is stored in your desktop's wallet.");
+        let status = harness.get_by_label("Not downloaded (1.7 GB)");
         assert_eq!(status.accesskit_node().live(), Live::Polite);
     }
 
@@ -1287,8 +1374,8 @@ mod tests {
         let mut harness = harness(Page::Cleanup, WIDE);
         harness.run();
         assert!(!harness.state().window.cleanup.enabled);
-        let address = harness.get_by_role_and_label(Role::TextInput, "Address:");
-        assert!(address.accesskit_node().is_disabled());
+        let limit = harness.get_by_role_and_label(Role::SpinButton, "Time limit:");
+        assert!(limit.accesskit_node().is_disabled());
     }
 
     #[test]

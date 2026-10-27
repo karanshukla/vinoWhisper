@@ -2,7 +2,7 @@
 //! (`gui.json`, `language.json`) through `vinowhisper-settings`.
 
 mod forward;
-mod secret;
+mod model;
 mod theme;
 mod window;
 

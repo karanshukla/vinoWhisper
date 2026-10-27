@@ -661,7 +661,7 @@ class Dictation:
             if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
                 print(f"[vinowhisper] cleanup-debug pieces={decoder.texts!r}", file=sys.stderr)
             return decoder.apply_replacements(spoken), False
-        # The text is leaving the machine for the model, so the overlay says so.
+        # The model takes a second or two, so the overlay says why the text is late.
         self._emit({"event": "Cleaning"})
         outcome = self._cleaner(spoken)
         status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
@@ -685,6 +685,12 @@ class Dictation:
         self._discard()
 
 
+def _warm_cleanup() -> None:
+    from .client import TranscriptionClient
+
+    TranscriptionClient().warm_cleanup()
+
+
 class _FileCleaner:
     """Settings are read at each key press, off the path the text takes at release.
 
@@ -696,10 +702,12 @@ class _FileCleaner:
         load: Callable[[], cleanup.Settings | None] | None = None,
         transport: cleanup.Transport | None = None,
         breaker: cleanup.Breaker | None = None,
+        warm: Callable[[], None] | None = None,
     ) -> None:
-        # Looked up at each call when not given, so cleanup.post can be swapped out.
+        # Looked up at each call when not given, so cleanup.local can be swapped out.
         self._load = load
         self._transport = transport
+        self._warm = warm
         self._breaker = breaker or cleanup.Breaker()
         self._notice: str | None = None
         self._settings: cleanup.Settings | None = None
@@ -714,6 +722,13 @@ class _FileCleaner:
                 self._settings = (self._load or cleanup.load_settings)()
             finally:
                 self._ready.set()
+            settings = self._settings
+            if settings is not None and settings.model_ready and self._breaker.allows(settings):
+                # Loads the model while the user is still talking; a cold load is ~25s.
+                try:
+                    (self._warm or _warm_cleanup)()
+                except Exception as exc:
+                    print(f"[vinowhisper] cleanup: warm-up failed: {exc}", file=sys.stderr)
 
         threading.Thread(target=load, name="cleanup-settings", daemon=True).start()
 
@@ -733,7 +748,7 @@ class _FileCleaner:
         settings = self._settings
         if settings is None:
             return cleanup.Outcome(text, False, "disabled", 0.0)
-        outcome = cleanup.clean_up(text, settings, self._transport or cleanup.post)
+        outcome = cleanup.clean_up(text, settings, self._transport or cleanup.local)
         self._notice = self._breaker.record(settings, outcome)
         return outcome
 

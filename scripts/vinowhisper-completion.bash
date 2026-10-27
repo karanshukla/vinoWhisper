@@ -74,6 +74,13 @@ _vinowhisper() {
         vinowhisper-doctor)
             mapfile -t COMPREPLY < <(compgen -W "--json --no-probe --version --help" -- "$cur")
             ;;
+        vinowhisper-cleanup)
+            if [[ $prev == model ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "status fetch delete" -- "$cur")
+            elif ((COMP_CWORD == 1)); then
+                mapfile -t COMPREPLY < <(compgen -W "model --help" -- "$cur")
+            fi
+            ;;
         vinowhisper-setup|vinowhisper-server)
             if [[ $prev == --device ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "auto NPU GPU CPU" -- "$cur")
@@ -98,3 +105,4 @@ complete -F _vinowhisper vinowhisper-server
 complete -F _vinowhisper vinowhisper-replay
 complete -F _vinowhisper vinowhisper-doctor
 complete -F _vinowhisper vinowhisper-setup
+complete -F _vinowhisper vinowhisper-cleanup

@@ -485,40 +485,81 @@ words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
 
-**LLM cleanup (beta), added 2026-10-11, off by default**, from [issue #81](https://github.com/karanshukla/vinoWhisper/issues/81).
-Beta means: the behaviour is measured (below) but on one laptop, one microphone
-and one hosted model, the thresholds may move, and the settings file keys may
-change. It is safe to leave on in the sense that every failure types the raw
-transcript; it is not yet tuned for other rooms or voices.
-Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and the final transcript (never the live
-previews) goes to an Anthropic-compatible `/v1/messages` endpoint, which drops
-fillers, applies self-corrections and applies spoken edits ("scratch that",
-"delete that last word"; "literal" before the phrase keeps it as text).
-**This is the one path where dictated text leaves the machine**: with a local
-endpoint it does not, with the hosted default it does.
+**LLM cleanup (beta), added 2026-10-11, local since 2026-10-27, off by default**, from
+[issue #81](https://github.com/karanshukla/vinoWhisper/issues/81) and
+[#91](https://github.com/karanshukla/vinoWhisper/issues/91).
+Beta means: measured on one laptop, one microphone and one model, so the thresholds
+may move. Every failure types the raw transcript.
 
-The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `url`,
-`model`, `budget_s`), which `vinowhisper-dictate` re-reads at each key press, so
-no restart is needed. An environment variable beats the file:
+Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and
+the final transcript (never the live previews) goes to a small language model running
+on this machine, which drops fillers, applies self-corrections and applies spoken edits
+("scratch that", "delete that last word"; "literal" before the phrase keeps it as
+text). **Nothing leaves the machine.** Until 2026-10-27 this went to a hosted
+Anthropic-compatible endpoint with your API key; that path, the key and the wallet
+entry are gone.
+
+**The model is SmolLM3-3B** (Hugging Face, Apache 2.0, trained on en, fr, de, es, it
+and pt), exported to OpenVINO with INT4 channel-wise weights for the NPU and published
+as [`arankays/SmolLM3-3B-int4-cw-ov`](https://huggingface.co/arankays/SmolLM3-3B-int4-cw-ov).
+`vinowhisper/cleanup_model.json` pins its commit and the sha256 of every file. The
+Cleanup page downloads it (1.7 GB) with `vinowhisper-cleanup model fetch`, which checks
+each file before writing the revision marker; Verify re-hashes it, Delete removes it and
+its compiled cache. Without the download, cleanup stays off and the pill says so.
+
+Chosen 2026-10-27 against Gemma 4 E2B (what vinoPop runs), Qwen3-4B-Instruct-2507,
+Qwen3-1.7B, LFM2.5-1.2B and Phi-3.5-mini, on the NPU, with the 30-dictation corpus in
+`scripts/cleanup_eval.py` and summaries of 550-2800-token transcripts:
+
+| Model | Download | Decode | Cleanup: good / refused but wanted | Notes |
+|---|---|---|---|---|
+| **SmolLM3-3B** | 1.6 GB | ~20 tok/s | 22 / 2, median 1.9s | |
+| Gemma 4 E2B | 4.5 GB | 9-12 tok/s | 19 / 1, median 1.8s | NPU driver error on a 2.8k-token prompt, twice |
+| Qwen3-4B-2507 | 2.1 GB | ~15 tok/s | 19 / 1, median 2.3s | Obeyed a planted instruction in a transcript |
+| LFM2.5-1.2B | 0.6 GB | ~37 tok/s | 9 / 10 | Answered fr/de/es in English |
+| Phi-3.5-mini | 2.0 GB | 10-14 tok/s | 11 / 6 | Leaks prompt tags |
+| Qwen3-1.7B (group-wise INT4) | 1.2 GB | | | Still compiling on the NPU after 10 minutes |
+
+One laptop, n=1 per cell. Use channel-wise (`--group-size -1`) exports on the NPU.
+
+**It runs in the server**, next to Whisper, because the server already holds models,
+already exits when idle, and dictation already talks to it. `POST /cleanup` takes
+`{"text", "budget_s"}`; `POST /cleanup/warm` starts the load and answers at once.
+
+- **Warm at the key press.** A first load compiles for ~17-25s; a load from the
+  compiled cache (`~/.cache/vinowhisper/cleanup-cache`) takes 4.5s. The key press
+  starts it, so it overlaps the speech, as the Whisper warm-up does.
+- **Unloaded after 5 idle minutes** (`CLEANUP_IDLE_UNLOAD_S`), even while captions keep
+  the server up. Measured 2026-10-27: the server's NPU memory went from 2,078 MB to 8 MB
+  and its RSS from 1,474 to 1,059 MB at the unload. The last-used time is set in a
+  `finally`, so a failed or cancelled run still unloads; vinoPop's did not (fixed there
+  the same day, after it held ~2.5 GB pinned for hours).
+- **The time limit is enforced on both sides.** The client types the raw text at
+  `budget_s` (default 4s), and the server's streamer cancels generation at the same
+  deadline. Without that, a transcript that talks the model into writing a poem kept it
+  generating, and the next dictation waited behind it.
+- **Measured 2026-10-27 through the server on the NPU:** 1.8-2.7s for one- or
+  two-sentence dictations, including French. Greedy decoding, `/no_think` (SmolLM3
+  reasons out loud by default, and that would be typed), no repetition penalty: the
+  answer is mostly a copy of the input, and a penalty pushes it to reword, which the
+  check refuses.
+- **NPU window:** `MAX_PROMPT_LEN=3072`, `MIN_RESPONSE_LEN=1024`, enough for the prompt
+  plus five minutes of dictation and its edited copy.
+
+The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `budget_s`, `mode`),
+which `vinowhisper-dictate` re-reads at each key press, so no restart is needed. Files
+from before 2026-10-27 also name `url` and `model`; both are ignored. An environment
+variable beats the file:
 
 | Variable | File key | Default |
 |---|---|---|
 | `VINOWHISPER_CLEANUP` | `enabled` | off |
-| `VINOWHISPER_CLEANUP_URL` | `url` | `https://api.anthropic.com` |
-| `VINOWHISPER_CLEANUP_MODEL` | `model` | `claude-haiku-5-5` |
-| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `3.0`, a hard deadline |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `4.0`, a hard deadline |
 | `VINOWHISPER_CLEANUP_MODE` | `mode` | `smart`, or `always` |
-| `ANTHROPIC_API_KEY` | none | else the Secret Service entry `service=vinowhisper account=anthropic-api-key` |
-
-The key is never in that file. The window stores it with `secret-tool store`,
-passing the value on stdin so it is not in `ps`, and shows only whether one is
-stored. A wallet protects it from backups and a copied dotfile, not from other
-code running as you, which can ask the wallet too. The page also says whether
-the address is loopback (text stays here) or not (text and key leave).
 
 - **Deletion only.** The answer is used only if its words are an ordered
   subsequence of the transcript's (case and punctuation ignored). Anything
-  else, an empty answer, a timeout, an HTTP error or no key types the raw
+  else, an empty answer, a timeout or a server error types the raw
   transcript. That also means "three" becoming "3" is refused: v1 trades
   that for a check with no heuristics, and a model answering a dictated
   question or obeying it cannot get past it.
@@ -528,59 +569,32 @@ the address is loopback (text stays here) or not (text and key leave).
   appear that were not in the transcript.
 - **Replacements run after it**, on the cleaned text, so the check sees the
   words Whisper wrote.
-- **Smart mode skips most requests.** The call costs a fixed ~0.9-1.0s
-  whatever the size: measured 2026-10-11, 32 and 92 output tokens both took
-  1.02s, a reused connection saved nothing (TLS is ~30ms here), and halving the
-  prompt moved the median 4%. Nothing hides that second except not paying it, so
-  `smart` (the default) sends only text with a filler (um, uh, er), a cue
-  (actually, sorry, wait, "I mean", "scratch that", "delete that", "you know",
-  literal, and the French, German and Spanish equivalents: euh, ähm, "non attends",
-  "nein warte", "streich das", "no espera", "borra eso"…) or an adjacent repeated word, and types everything else at once with
-  no `Cleaning` state. A correction spoken with none of those words, like
-  "three, four", goes through only in `always`. Overlapping the call with the
-  final decode was considered and not built: previews are up to 1.5s stale and
-  skipped at pauses, so the text at release rarely equals the last preview's.
+- **Smart mode skips most requests.** `smart` (the default) sends only text with a
+  filler (um, uh, er), a cue (actually, sorry, wait, "I mean", "scratch that", "delete
+  that", "you know", literal, and the French, German and Spanish equivalents: euh, ähm,
+  "non attends", "nein warte", "streich das", "no espera", "borra eso"…) or an adjacent
+  repeated word, and types everything else at once with no `Cleaning` state. A
+  correction spoken with none of those words, like "three, four", goes through only in
+  `always`.
 - **Other languages.** The prompt asks for the same edits in the transcript's
-  language, with a French, a German and a Spanish example. Measured 2026-10-11
-  on `claude-haiku-5-5`: 11 of 12 correct across fr, de and es (corrections,
-  spoken edits, fillers, questions left alone). The miss paraphrased "genre",
-  which the check refused, so the raw text was typed. The cue lists are merged
-  across languages because the language is `auto` here and a stray match only
-  costs a request.
-- **Not streamed.** The text is pasted once, after the whole answer has been
-  checked, so first-token time buys nothing; only the last token matters.
-- **No `temperature`**: current models reject any non-default sampling
-  parameter.
-- **Thinking is off.** Measured 2026-10-11 on `claude-haiku-5-5`: with it on, a
-  ten-token answer spent about a hundred tokens on a thinking block and hit
-  `max_tokens`, so a correct answer was refused as truncated.
-- **Measured 2026-10-11** (n=21, seven dictations of 5 to 17 words, hosted
-  endpoint, this laptop): median 0.88-0.92s, max 1.3s per call, about 15-20
-  output tokens. That lands typing roughly 1.5s after release, against 0.65s
-  without it. The system prompt is most of the input (about 850 tokens), but
-  halving it moved the median by only 4%, so the round trip is dominated by
-  the network and first-token time, not the prompt.
-- **The model still sometimes paraphrases** ("the thing is that we need the
-  build" becoming "the build needs"): 1 in 8 on the hardest line, caught by the
-  check, so the raw text is typed.
-- The pill says "Cleaning up with the model…" while the request is out, from
-  the `Cleaning` event.
+  language, with a French, a German and a Spanish example. The cue lists are merged
+  across languages because the language is `auto` here and a stray match only costs a
+  request.
+- **Not streamed.** The text is pasted once, after the whole answer has been checked.
+- The pill says "Cleaning up with the model…" while the model runs, from the
+  `Cleaning` event.
 - **It turns itself off on errors** (#87), because each failed request holds the
-  typing back by up to the whole budget. A setup error (no key, http 400, 401,
-  403 or 404, an address that isn't http or https) turns it off until the
-  settings change: fixing the key on the Cleanup page is enough, no restart.
-  Three service errors in a row (timeouts, 5xx, 429, unreachable) pause it for
-  10 minutes. After that, one request is let through, and if it fails too the
-  pause starts again. An answer the checks refuse is not an error. Either way
-  the raw text is typed, and the pill then shows why for 6 seconds ("LLM cleanup
-  off: the API key was rejected (http 401). Fix it in Settings."), from a
-  `Notice` record sent after `Dictated`. The state is per `vinowhisper-dictate`
-  process, so restarting the tray clears it.
-- `python -m vinowhisper.cleanup "um so scratch that"` runs one round trip and
-  prints the wall time on stderr, which is the measurement #81 asks for first.
-
-Not run against a real endpoint or on hardware: unit tests only, with a fake
-transport. The latency table and the prompt's test set are still to do.
+  typing back by up to the whole budget. A missing model (or an http 400) turns it off
+  until the settings change, and downloading the model counts as a change: whether the
+  model is on disk is part of the settings dictation reads. Three service errors in a
+  row (timeouts, 5xx, an unreachable server) pause it for 10 minutes; then one request
+  is let through, and if that fails too the pause starts again. An answer the checks
+  refuse is not an error. The pill shows why for 6 seconds ("LLM cleanup off: the
+  cleanup model isn't downloaded. Download it in Settings."), from a `Notice` record
+  sent after `Dictated`. The state is per `vinowhisper-dictate` process, so restarting
+  the tray clears it.
+- `vinowhisper-cleanup "um so scratch that"` runs one dictation through the server and
+  prints the wall time on stderr.
 
 **Room noise is not speech, added 2026-10-11.** Reported from real use: a
 held key or a hands-free tail over ambient noise typed sentences nobody said.

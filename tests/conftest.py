@@ -27,14 +27,13 @@ def fake_version(major: int, minor: int, micro: int = 0) -> _Version:
 
 @pytest.fixture(autouse=True)
 def no_real_cleanup_settings(monkeypatch, tmp_path):
-    """Dictation reads the user's cleanup.json and wallet; a test must never see either."""
+    """Dictation reads the user's cleanup.json and model; a test must never see either."""
     monkeypatch.setattr(config, "CLEANUP_FILE", tmp_path / "no-cleanup.json")
+    monkeypatch.setattr(config, "CLEANUP_MODEL_DIR", tmp_path / "no-cleanup-model")
+    monkeypatch.setattr(config, "CLEANUP_CACHE_DIR", tmp_path / "no-cleanup-cache")
     for name in list(os.environ):
-        if name.startswith("VINOWHISPER_CLEANUP") or name == "ANTHROPIC_API_KEY":
+        if name.startswith("VINOWHISPER_CLEANUP"):
             monkeypatch.delenv(name)
-    from vinowhisper import cleanup
-
-    monkeypatch.setattr(cleanup, "stored_key", lambda attributes=(): "")
 
 
 @pytest.fixture(autouse=True)

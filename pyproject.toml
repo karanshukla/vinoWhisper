@@ -54,6 +54,7 @@ vinowhisper-server = "vinowhisper.server:main"
 vinowhisper-replay = "vinowhisper.replay:main"
 vinowhisper-doctor = "vinowhisper.doctor:main"
 vinowhisper-setup = "vinowhisper.wizard:main"
+vinowhisper-cleanup = "vinowhisper.cleanup:main"
 
 [build-system]
 requires = ["setuptools>=77"]  # PEP 639 license expressions
@@ -65,7 +66,7 @@ packages = ["vinowhisper"]
 
 # Dropping either from the wheel fails quietly (docs/development.md)
 [tool.setuptools.package-data]
-vinowhisper = ["model_digests.json", "model_sources.json", "tray_release.json", "gui_release.json", "ovfetch_release.json"]
+vinowhisper = ["model_digests.json", "model_sources.json", "tray_release.json", "gui_release.json", "ovfetch_release.json", "cleanup_model.json"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 
