@@ -186,7 +186,9 @@ def main() -> int:
 
     with ThreadPoolExecutor(args.workers) as pool:
         rows = list(pool.map(run, jobs))
-    print(f"{len(rows)} requests, {len(CORPUS)} dictations x {args.reps}, model {cleanup.config.CLEANUP_MODEL_ID}\n")
+    print(
+        f"{len(rows)} requests, {len(CORPUS)} dictations x {args.reps}, model {cleanup.config.CLEANUP_MODEL_ID}\n"
+    )
     print(f"{'kind':16}{'good':>6}{'fine':>6}{'raw-safe':>10}{'raw-lost':>10}{'WRONG':>7}")
     for kind in dict.fromkeys(k for _, _, _, k in CORPUS):
         c = Counter(r["result"] for r in rows if r["kind"] == kind)
