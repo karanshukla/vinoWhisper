@@ -190,3 +190,22 @@ def test_the_fixtures_vinosearch_copies_are_what_the_writer_makes(tmp_path, name
     if os.environ.get("VINOWHISPER_BLESS_FIXTURES"):
         fixture.write_bytes(path.read_bytes())
     assert fixture.read_bytes() == path.read_bytes()
+
+
+def test_a_bundle_from_elsewhere_cannot_make_reading_it_unbounded(tmp_path, monkeypatch):
+    path = tmp_path / "bomb.vwsession"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", bundle.MIMETYPE, zipfile.ZIP_STORED)
+        archive.writestr("transcript.txt", b"a" * 4096)
+        archive.writestr("attestation.json", b"{}")
+    monkeypatch.setattr(bundle, "_MAX_PART_BYTES", 1024)
+    with pytest.raises(bundle.BundleError, match="too large"):
+        bundle.read(path)
+
+
+def test_entries_outside_the_layout_are_never_read(tmp_path):
+    path = tmp_path / "s.vwsession"
+    bundle.write(_new(path))
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr("junk.bin", b"x" * 10)
+    assert bundle.read(path).transcript == TRANSCRIPT

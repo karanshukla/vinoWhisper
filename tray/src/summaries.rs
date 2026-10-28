@@ -42,14 +42,34 @@ pub fn take_ready(path: &Path) -> Vec<Ready> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+const MAX_LABEL_CHARS: usize = 120;
+
+// The title is model-written from untrusted captions, and notification bodies may be markup.
+fn plain(text: &str) -> String {
+    let mut out = String::new();
+    for (count, ch) in text.chars().filter(|ch| !ch.is_control()).enumerate() {
+        if count == MAX_LABEL_CHARS {
+            out.push('…');
+            break;
+        }
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn label(ready: &Ready) -> String {
-    ready.title.clone().unwrap_or_else(|| {
+    plain(&ready.title.clone().unwrap_or_else(|| {
         ready
             .path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default()
-    })
+    }))
 }
 
 fn open_args(target: Option<String>) -> Vec<String> {
@@ -264,5 +284,19 @@ mod tests {
             [ready("/t/a.vwsession", Some("A"), false)]
         );
         assert!(take_ready(&path).is_empty());
+    }
+
+    #[test]
+    fn a_title_cannot_carry_markup_or_run_on() {
+        let notice = notice(&[ready(
+            "/t/a.vwsession",
+            Some("<a href='x'>click</a> & \u{7}more"),
+            false,
+        )])
+        .unwrap();
+        assert_eq!(notice.body, "&lt;a href='x'&gt;click&lt;/a&gt; &amp; more");
+        let long = "x".repeat(500);
+        let notice = super::notice(&[ready("/t/a.vwsession", Some(&long), false)]).unwrap();
+        assert_eq!(notice.body.chars().count(), MAX_LABEL_CHARS + 1);
     }
 }

@@ -4,7 +4,7 @@ import os
 import re
 import tempfile
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +24,10 @@ MADE_BY_SUMMARY = "ai-generated-summary"
 
 # Fixed entry times keep the bytes a function of the content; real times are in the attestation.
 _ZIP_TIME = (1980, 1, 1, 0, 0, 0)
+# A bundle can come from anywhere a file manager opens one, so its sizes are not trusted.
 _MAX_PART_BYTES = 64 << 20
+_MAX_TOTAL_BYTES = 128 << 20
+_MAX_ENTRIES = 16
 _STAMP = re.compile(r"^\[(\d{2,}):(\d{2})\] ", re.M)
 _HEADER = re.compile(r"^vinoWhisper transcript, (\d{4}-\d{2}-\d{2} \d{2}:\d{2}), (.*), ([^,]*)$")
 _NAME = re.compile(r"^(\d{4}-\d{2}-\d{2}-\d{6})")
@@ -40,7 +43,6 @@ class Bundle:
     transcript: str
     attestation: dict
     summary: str | None = None
-    extra: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def session(self) -> dict:
@@ -126,16 +128,19 @@ def summary_entry(device: str | None, generated: str | None = None) -> dict:
 def read(path: Path) -> Bundle:
     try:
         with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-            if not names or names[0] != MIMETYPE_NAME:
+            infos = archive.infolist()
+            if not infos or infos[0].filename != MIMETYPE_NAME:
                 raise BundleError(f"{path.name}: the first entry is not {MIMETYPE_NAME}")
-            if archive.read(MIMETYPE_NAME) != MIMETYPE:
+            if len(infos) > _MAX_ENTRIES:
+                raise BundleError(f"{path.name}: too many entries")
+            wanted = [info for info in infos if info.filename in LAYOUT]
+            if sum(info.file_size for info in wanted) > _MAX_TOTAL_BYTES or any(
+                info.file_size > _MAX_PART_BYTES for info in wanted
+            ):
+                raise BundleError(f"{path.name}: too large")
+            if archive.read(infos[0]) != MIMETYPE:
                 raise BundleError(f"{path.name}: not a vinoWhisper session")
-            parts: dict[str, bytes] = {}
-            for info in archive.infolist():
-                if info.file_size > _MAX_PART_BYTES:
-                    raise BundleError(f"{path.name}: {info.filename} is too large")
-                parts[info.filename] = archive.read(info)
+            parts = {info.filename: _read_capped(archive, info) for info in wanted}
     except (OSError, zipfile.BadZipFile) as exc:
         raise BundleError(f"{path.name}: {exc}") from exc
     try:
@@ -149,8 +154,16 @@ def read(path: Path) -> Bundle:
         found = attestation.get("format") if isinstance(attestation, dict) else None
         raise BundleError(f"{path.name}: unknown format {found!r}, this version reads {FORMAT}")
     summary = parts[SUMMARY].decode("utf-8") if SUMMARY in parts else None
-    extra = {name: data for name, data in parts.items() if name not in LAYOUT}
-    return Bundle(path, transcript, attestation, summary, extra)
+    return Bundle(path, transcript, attestation, summary)
+
+
+def _read_capped(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
+    # The header's size can lie; stop at the cap whatever it claims.
+    with archive.open(info) as handle:
+        data = handle.read(_MAX_PART_BYTES + 1)
+    if len(data) > _MAX_PART_BYTES:
+        raise BundleError(f"{info.filename} is too large")
+    return data
 
 
 def write(bundle: Bundle) -> None:
@@ -172,8 +185,6 @@ def write(bundle: Bundle) -> None:
             with zipfile.ZipFile(handle, "w") as archive:
                 _add(archive, MIMETYPE_NAME, MIMETYPE, zipfile.ZIP_STORED)
                 for name, data in parts.items():
-                    _add(archive, name, data)
-                for name, data in bundle.extra.items():
                     _add(archive, name, data)
                 _add(archive, ATTESTATION, attestation.encode("utf-8"))
             handle.flush()
