@@ -159,14 +159,28 @@ pub enum Piece {
     Stamp(u64),
 }
 
+// Summaries written before the server tidied the model's "(0:02)" into "[00:02]" carry both.
+fn loose_stamp(text: &str) -> Option<u64> {
+    let (minutes, seconds) = text.split_once(':')?;
+    if minutes.is_empty() {
+        return None;
+    }
+    parse_stamp(&format!("{minutes:0>2}:{seconds}"))
+}
+
 pub fn pieces(line: &str) -> Vec<Piece> {
     let mut out = Vec::new();
     let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        let Some(close) = rest[open..].find(']').map(|i| open + i) else {
+    while let Some(open) = rest.find(['[', '(']) {
+        let closer = if rest[open..].starts_with('[') {
+            ']'
+        } else {
+            ')'
+        };
+        let Some(close) = rest[open..].find(closer).map(|i| open + i) else {
             break;
         };
-        match parse_stamp(&rest[open + 1..close]) {
+        match loose_stamp(&rest[open + 1..close]) {
             Some(seconds) => {
                 if open > 0 {
                     out.push(Piece::Text(rest[..open].to_owned()));
@@ -181,6 +195,40 @@ pub fn pieces(line: &str) -> Vec<Piece> {
         out.push(Piece::Text(rest.to_owned()));
     }
     out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SummaryLine {
+    Heading(String),
+    Bullet(String),
+    // A whole line in _underscores_: the footer saying a model wrote it.
+    Note(String),
+    Text(String),
+    Blank,
+}
+
+// The model is asked for one "# " title, an overview and "- " points, and does not always
+// keep to it: deeper headings and "*" bullets are drawn as such rather than as their marks.
+pub fn summary_line(line: &str) -> SummaryLine {
+    let line = line.trim_end();
+    if line.trim().is_empty() {
+        return SummaryLine::Blank;
+    }
+    let hashes = line.len() - line.trim_start_matches('#').len();
+    if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+        return SummaryLine::Heading(line[hashes..].trim().trim_end_matches(':').to_owned());
+    }
+    let trimmed = line.trim_start();
+    if let Some(item) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
+        return SummaryLine::Bullet(item.trim().to_owned());
+    }
+    if trimmed.len() > 2 && trimmed.starts_with('_') && trimmed.ends_with('_') {
+        return SummaryLine::Note(trimmed.trim_matches('_').to_owned());
+    }
+    SummaryLine::Text(line.to_owned())
 }
 
 // Paragraphs of a transcript with the second each starts at; the header has none.
@@ -342,6 +390,48 @@ mod tests {
                 Piece::Text(" and [aside]".into()),
             ]
         );
+    }
+
+    #[test]
+    fn the_models_own_stamps_are_links_and_other_brackets_are_text() {
+        assert_eq!(
+            pieces("Nuclear weapons (0:02)"),
+            [Piece::Text("Nuclear weapons ".into()), Piece::Stamp(2)]
+        );
+        assert_eq!(
+            pieces("a (see below) [1:05]"),
+            [
+                Piece::Text("a (see below)".into()),
+                Piece::Text(" ".into()),
+                Piece::Stamp(65)
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_lines_are_drawn_as_what_they_mean_not_their_marks() {
+        assert_eq!(
+            summary_line("#### Key Point 1: Nuclear Weapons (0:02)"),
+            SummaryLine::Heading("Key Point 1: Nuclear Weapons (0:02)".into())
+        );
+        assert_eq!(
+            summary_line("### Summary:"),
+            SummaryLine::Heading("Summary".into())
+        );
+        assert_eq!(
+            summary_line("#hashtag"),
+            SummaryLine::Text("#hashtag".into())
+        );
+        assert_eq!(
+            summary_line("- a [00:02]"),
+            SummaryLine::Bullet("a [00:02]".into())
+        );
+        assert_eq!(summary_line("  * b"), SummaryLine::Bullet("b".into()));
+        assert_eq!(
+            summary_line("_Machine-written summary._"),
+            SummaryLine::Note("Machine-written summary.".into())
+        );
+        assert_eq!(summary_line("   "), SummaryLine::Blank);
     }
 
     #[test]

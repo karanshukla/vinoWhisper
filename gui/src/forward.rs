@@ -11,6 +11,9 @@ pub enum Action {
     /// `page` is the name given to `--page`, for the tray to deep-link into a section.
     Window {
         page: Option<String>,
+    },
+    /// The saved sessions window, on a session when `open` names one.
+    Sessions {
         open: Option<String>,
     },
     Help,
@@ -18,20 +21,21 @@ pub enum Action {
 }
 
 pub fn decide(args: &[String]) -> Action {
-    let window = |page: Option<&String>, open: Option<&String>| Action::Window {
-        page: page.cloned(),
+    let sessions = |open: Option<&String>| Action::Sessions {
         open: open.cloned(),
     };
     match args {
-        [] => window(None, None),
-        [flag, page] if flag == "--page" => window(Some(page), None),
-        [flag, open] if flag == "--open" => window(None, Some(open)),
-        [a, x, b, y] if a == "--page" && b == "--open" => window(Some(x), Some(y)),
-        [a, y, b, x] if a == "--open" && b == "--page" => window(Some(x), Some(y)),
+        [] => Action::Window { page: None },
+        [flag] if flag == "--sessions" => sessions(None),
+        [flag, page] if flag == "--page" => Action::Window {
+            page: Some(page.clone()),
+        },
+        [flag, open] if flag == "--open" => sessions(Some(open)),
+        // vinoSearch, and notifications posted before the sessions window, name the page too.
+        [a, _, b, open] if a == "--page" && b == "--open" => sessions(Some(open)),
+        [a, open, b, _] if a == "--open" && b == "--page" => sessions(Some(open)),
         // A file manager opening a bundle (`Exec=vinowhisper-gui %f`).
-        [path] if path.ends_with(".vwsession") && !path.starts_with('-') => {
-            window(None, Some(path))
-        }
+        [path] if path.ends_with(".vwsession") && !path.starts_with('-') => sessions(Some(path)),
         [flag, ..] if flag == "-h" || flag == "--help" => Action::Help,
         _ => Action::Tray,
     }
@@ -44,6 +48,32 @@ pub fn tray_command() -> PathBuf {
         .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-tray")))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from("vinowhisper-tray"))
+}
+
+fn spawn_self(args: &[&str]) {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vinowhisper-gui"));
+    match Command::new(exe)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(err) => eprintln!("[vinowhisper-gui] could not open another window: {err}"),
+    }
+}
+
+pub fn open_sessions() {
+    spawn_self(&["--sessions"]);
+}
+
+pub fn open_settings(page: &str) {
+    spawn_self(&["--page", page]);
 }
 
 /// Tell a running tray to re-read the settings files. It prints and exits 0 when none is
@@ -168,13 +198,7 @@ mod tests {
 
     #[test]
     fn no_arguments_opens_the_window() {
-        assert_eq!(
-            decide(&[]),
-            Action::Window {
-                page: None,
-                open: None
-            }
-        );
+        assert_eq!(decide(&[]), Action::Window { page: None });
     }
 
     #[test]
@@ -182,8 +206,21 @@ mod tests {
         assert_eq!(
             decide(&args(&["--page", "speech"])),
             Action::Window {
-                page: Some("speech".into()),
-                open: None
+                page: Some("speech".into())
+            }
+        );
+    }
+
+    #[test]
+    fn sessions_open_their_own_window_and_the_page_stays_in_settings() {
+        assert_eq!(
+            decide(&args(&["--sessions"])),
+            Action::Sessions { open: None }
+        );
+        assert_eq!(
+            decide(&args(&["--page", "sessions"])),
+            Action::Window {
+                page: Some("sessions".into())
             }
         );
     }
@@ -192,8 +229,7 @@ mod tests {
     fn a_bundle_from_the_file_manager_opens_it() {
         assert_eq!(
             decide(&args(&["/t/2026-10-27-140512.vwsession"])),
-            Action::Window {
-                page: None,
+            Action::Sessions {
                 open: Some("/t/2026-10-27-140512.vwsession".into())
             }
         );
@@ -201,8 +237,7 @@ mod tests {
 
     #[test]
     fn open_names_a_session_with_or_without_the_page() {
-        let wanted = Action::Window {
-            page: Some("sessions".into()),
+        let wanted = Action::Sessions {
             open: Some("/t/a.vwsession#transcript@03:10".into()),
         };
         assert_eq!(
@@ -216,8 +251,7 @@ mod tests {
         );
         assert_eq!(
             decide(&args(&["--open", "/t/a.vwsession#summary"])),
-            Action::Window {
-                page: None,
+            Action::Sessions {
                 open: Some("/t/a.vwsession#summary".into())
             }
         );
