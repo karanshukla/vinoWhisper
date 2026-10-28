@@ -98,3 +98,59 @@ def test_optimum_cli_is_found_beside_the_interpreter_before_path(monkeypatch, tm
     monkeypatch.setattr(wizard.sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(wizard.shutil, "which", lambda name: None)
     assert wizard.optimum_cli() == str(tmp_path / "optimum-cli")
+
+
+def test_the_export_writes_its_temporary_files_off_tmp(monkeypatch, tmp_path):
+    """optimum writes a full-size intermediate to $TMPDIR; on tmpfs /tmp that is RAM (#124)."""
+    monkeypatch.setattr(config, "EXPORT_TMP_ROOT", tmp_path / "export-tmp")
+    seen = {}
+
+    def execute(argv, env=None):
+        seen["env"] = env
+        seen["existed"] = Path(env["TMPDIR"]).is_dir()
+        return True
+
+    w = wizard.Wizard(dry_run=True)
+    monkeypatch.setattr(w, "execute", execute)
+    assert w.export(["optimum-cli"])
+    tmpdir = Path(seen["env"]["TMPDIR"])
+    assert tmpdir.parent == tmp_path / "export-tmp"
+    assert seen["existed"]
+    assert not tmpdir.exists()
+    assert seen["env"]["HF_HUB_OFFLINE"] == "1"
+
+
+def test_the_temporary_directory_is_removed_when_the_export_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "EXPORT_TMP_ROOT", tmp_path / "export-tmp")
+    w = wizard.Wizard(dry_run=True)
+    monkeypatch.setattr(w, "execute", lambda argv, env=None: False)
+    assert not w.export(["optimum-cli"])
+    assert list((tmp_path / "export-tmp").iterdir()) == []
+
+
+def test_the_dry_run_says_where_temporary_files_go(monkeypatch, tmp_path, capsys):
+    use_cpu(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "EXPORT_TMP_ROOT", tmp_path / "export-tmp")
+    monkeypatch.setattr(wizard, "optimum_cli", lambda: "/venv/bin/optimum-cli")
+    wizard.Wizard(dry_run=True).check_model()
+    assert f"TMPDIR={tmp_path / 'export-tmp'}" in capsys.readouterr().out
+
+
+def test_the_memory_cap_is_a_user_scope_below_available_memory(monkeypatch):
+    monkeypatch.setattr(wizard, "_has_systemd", lambda: True)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    argv = wizard.memory_cap_argv()
+    if argv:
+        assert argv[:4] == ["systemd-run", "--user", "--scope", "--quiet"]
+        assert any(arg.startswith("MemoryMax=") for arg in argv)
+
+
+def test_no_systemd_means_no_memory_cap(monkeypatch):
+    monkeypatch.setattr(wizard, "_has_systemd", lambda: False)
+    assert wizard.memory_cap_argv() == []
+
+
+def test_the_convert_script_sets_tmpdir_off_tmp():
+    script = (ROOT / "scripts" / "convert_model.sh").read_text(encoding="utf-8")
+    assert 'TMPDIR="$EXPORT_TMP"' in script
+    assert "trap 'rm -rf \"$EXPORT_TMP\"' EXIT" in script
