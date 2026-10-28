@@ -139,14 +139,26 @@ def summaries() -> Response:
         for raw in body["paths"]:
             if not isinstance(raw, str):
                 return _error("'paths' must be a list of strings")
-            path = Path(raw).resolve()
-            if not bundle.is_bundle_name(path) or not path.is_file():
-                return _error(f"{raw} is not a .vwsession file")
+            path = _saved_session(raw)
+            if path is None:
+                return _error(f"{raw} is not a saved session in {config.TRANSCRIPT_DIR}")
             paths.append(path)
     summariser.kick(paths)
     response = jsonify(summariser.describe())
     response.status_code = 202
     return response
+
+
+# Only bundles in the transcripts folder: the server never opens a path a request names.
+def _saved_session(raw: str) -> Path | None:
+    root = os.path.realpath(config.TRANSCRIPT_DIR)
+    candidate = os.path.realpath(os.path.join(root, os.path.basename(raw)))
+    if not candidate.startswith(root + os.sep):
+        return None
+    path = Path(candidate)
+    if not bundle.is_bundle_name(path) or not path.is_file():
+        return None
+    return path
 
 
 def _error(message: str, status: int = 400) -> Response:
