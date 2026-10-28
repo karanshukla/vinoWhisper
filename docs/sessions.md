@@ -26,7 +26,7 @@ are kept, and only those are summarised.
 
 If the session never ended (crash, power loss), the next server start bundles
 the leftover `.txt` and summarises it. Transcripts saved before this feature are
-left alone: the Sessions page offers to bundle and summarise them (backfill).
+left alone: the sessions window offers to bundle and summarise them (backfill).
 What counts as "before" is the first time the summariser ran, recorded in
 `~/.local/state/vinowhisper/sessions.json`, along with failure counts and the
 sessions whose summary was deleted on purpose (they are not summarised again).
@@ -108,12 +108,14 @@ uses ([tray.md](tray.md), "LLM cleanup").
   transcript is the record. The date, length and model are in the attestation.
 - One failure is retried quietly on the next run. After three (`MAX_FAILURES`) the
   session stops being retried and the notification says so. A missing model stops
-  the queue without counting a failure; the Sessions page says to download it.
+  the queue without counting a failure; the sessions window says to download it.
 
-## The Sessions page and `vinowhisper-session`
+## The sessions window and `vinowhisper-session`
 
-The page lists every bundle (date, length, source, title or state). From there you
-can read the transcript or the summary (key points link to their stamp in the
+Saved sessions have a window of their own, `vinowhisper-gui --sessions`, the way
+vinoSearch's search window is its own (`vinosearch-settings --search`). The settings
+window's **Sessions** page keeps the summary setting and a button that opens it. It
+lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
 transcript), summarise again, delete the summary, delete the session, or show it in
 the file manager. It drives `vinowhisper-session`:
 
@@ -127,9 +129,13 @@ vinowhisper-session backfill
 Opening a session from elsewhere (vinoSearch, a notification, a file manager):
 
 ```
-vinowhisper-gui --page sessions --open <bundle>[#transcript[@MM:SS]|#summary]
+vinowhisper-gui --open <bundle>[#transcript[@MM:SS]|#summary]
 vinowhisper-gui <bundle>.vwsession
 ```
+
+`--page sessions --open <bundle>` is still read and opens the same window: vinoSearch
+and notifications posted by older trays send it. `--page sessions` alone is the settings
+page.
 
 The fragment is split off at the last `#` only when it is one of those three forms,
 so a path containing `#` still opens. `@MM:SS` scrolls to the paragraph holding that
@@ -158,7 +164,7 @@ on the NPU and Plasma:
 - [ ] Memory while summarising and after the unload (`drm-resident-memory` in the
       server's accel fdinfo).
 - [ ] The notification on screen, with "Open" landing on the summary.
-- [ ] The Sessions page on screen, light and dark.
-- [ ] A `.vwsession` with its icon in Dolphin, opening the settings window.
+- [ ] The sessions window on screen, light and dark, and opened from the settings window.
+- [ ] A `.vwsession` with its icon in Dolphin, opening the sessions window.
 - [ ] Whether cancelling SmolLM3 at a token boundary frees the NPU quickly enough
       that captions starting mid-summary don't stutter.

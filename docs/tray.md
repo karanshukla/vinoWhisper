@@ -154,7 +154,7 @@ shown again. Not run against a live overlay as of 2026-10-07; the argv and the
 settings file are covered by unit tests.
 
 Saved sessions are kept as `.vwsession` bundles and summarised in the background.
-The settings window's **Sessions** page lists them, and the tray posts a
+The sessions window (`vinowhisper-gui --sessions`) lists them, and the tray posts a
 notification when a summary is ready: see [sessions.md](sessions.md).
 
 Settings are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An

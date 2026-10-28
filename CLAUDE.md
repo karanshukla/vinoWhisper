@@ -370,9 +370,11 @@ background with SmolLM3. Full write-up in `docs/sessions.md`. The traps:
 - **Live transcripts hold an `flock`**, which is how the server's start-up recovery
   tells a crashed session from a running one. Transcripts older than the first
   summariser run are backfill, never auto-bundled (`sessions.json` `since`).
-- `vinowhisper-session` (in `session.py`) is what the settings window's Sessions page
-  runs; the tray learns a summary finished through `summaries-ready` on its socket
-  plus `$XDG_RUNTIME_DIR/vinowhisper/summaries-ready.json`.
+- `vinowhisper-session` (in `session.py`) is what the sessions window runs. It is
+  `vinowhisper-gui --sessions` (`gui/src/sessions_window.rs`, 2026-10-28), its own window
+  like vinoSearch's search window; the settings page keeps only the summary toggle.
+  The tray learns a summary finished through `summaries-ready` on its socket plus
+  `$XDG_RUNTIME_DIR/vinowhisper/summaries-ready.json`.
 - **The bundled Inter has no arrows** ("←" panicked egui in a test). Check glyphs
   before putting symbols in the settings window.
 - Nothing of this has run on the NPU yet: the checklist is at the end of `docs/sessions.md`.

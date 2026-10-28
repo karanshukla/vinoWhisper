@@ -30,6 +30,8 @@ FOOTER = "_Machine-written summary. The transcript is the record; check it at th
 TRAY_SOCKET = "vinowhisper-tray.sock"
 
 _STAMP_IN_TEXT = re.compile(r"\[(\d{2,}):(\d{2})\]")
+# What the model writes instead, seen on the NPU: "(0:02)" after a "####" heading.
+_STAMP_LOOSE = re.compile(r"[\[(](\d{1,}):(\d{2})[\])]")
 
 CHUNK_PROMPT = """\
 The user message holds part of a transcript of captioned audio between <transcript> tags.
@@ -132,7 +134,7 @@ def _data(tag: str, text: str) -> str:
 
 def snap_stamps(text: str, valid: list[int]) -> str:
     if not valid:
-        return _STAMP_IN_TEXT.sub("", text)
+        return _STAMP_LOOSE.sub("", text)
     ordered = sorted(set(valid))
     end = ordered[-1] + 60
 
@@ -143,7 +145,7 @@ def snap_stamps(text: str, valid: list[int]) -> str:
         best = max((s for s in ordered if s <= seconds), default=ordered[0])
         return f"[{best // 60:02d}:{best % 60:02d}]"
 
-    lines = [re.sub(r"[ \t]+$", "", _STAMP_IN_TEXT.sub(snap, line)) for line in text.splitlines()]
+    lines = [re.sub(r"[ \t]+$", "", _STAMP_LOOSE.sub(snap, line)) for line in text.splitlines()]
     return "\n".join(lines)
 
 

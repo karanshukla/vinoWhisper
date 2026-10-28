@@ -73,11 +73,10 @@ fn label(ready: &Ready) -> String {
 }
 
 fn open_args(target: Option<String>) -> Vec<String> {
-    let mut args = vec!["--page".to_owned(), "sessions".to_owned()];
-    if let Some(target) = target {
-        args.extend(["--open".to_owned(), target]);
+    match target {
+        Some(target) => vec!["--open".to_owned(), target],
+        None => vec!["--sessions".to_owned()],
     }
-    args
 }
 
 pub fn notice(ready: &[Ready]) -> Option<Notice> {
@@ -229,24 +228,19 @@ mod tests {
         assert_eq!(notice.body, "Talk");
         assert_eq!(
             notice.settings_args,
-            [
-                "--page",
-                "sessions",
-                "--open",
-                "/t/2026-10-27-140512.vwsession#summary"
-            ]
+            ["--open", "/t/2026-10-27-140512.vwsession#summary"]
         );
     }
 
     #[test]
-    fn a_backfill_is_one_notification_that_opens_the_sessions_page() {
+    fn a_backfill_is_one_notification_that_opens_the_sessions_window() {
         let many: Vec<Ready> = (0..5)
             .map(|i| ready(&format!("/t/{i}.vwsession"), Some(&format!("S{i}")), false))
             .collect();
         let notice = notice(&many).unwrap();
         assert_eq!(notice.summary, "5 summaries ready");
         assert_eq!(notice.body, "S0\nS1\nS2\nand 2 more");
-        assert_eq!(notice.settings_args, ["--page", "sessions"]);
+        assert_eq!(notice.settings_args, ["--sessions"]);
     }
 
     #[test]
@@ -260,10 +254,7 @@ mod tests {
         let notice = notice(&[ready("/t/a.vwsession", None, true)]).unwrap();
         assert_eq!(notice.summary, "Summary failed");
         assert!(notice.body.contains("try again"));
-        assert_eq!(
-            notice.settings_args,
-            ["--page", "sessions", "--open", "/t/a.vwsession"]
-        );
+        assert_eq!(notice.settings_args, ["--open", "/t/a.vwsession"]);
     }
 
     #[test]

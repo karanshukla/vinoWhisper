@@ -139,6 +139,11 @@ def test_invented_stamps_snap_back_to_real_paragraphs_or_go():
     assert text == "- a [00:00]\n- b\n- c [01:00]"
 
 
+def test_stamps_the_model_writes_its_own_way_become_links_too():
+    text = summary.snap_stamps("#### Nuclear weapons (0:02)\n- b [1:05]", [0, 60])
+    assert text == "#### Nuclear weapons [00:00]\n- b [01:00]"
+
+
 def test_an_answer_without_a_title_gets_one():
     out = summary.tidy("Some overview.\n- x [00:00]", [0], "Session of 2026-10-27 14:05")
     assert out.startswith("# Session of 2026-10-27 14:05\n\nSome overview.")
