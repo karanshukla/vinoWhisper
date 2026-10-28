@@ -1,0 +1,69 @@
+# Nothing auto-merges. The 7-day cooldown keeps a freshly compromised release
+# out of a PR until the ecosystem has had time to notice. Security updates
+# bypass the cooldown.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories: ["/tray", "/gui", "/settings"]
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+      # Our own crate, released from karanshukla/vinoUserInterface.
+      exclude: ["vino-user-interface"]
+    # A dependency takes the first group it matches: the vino theme gets a PR
+    # of its own on the next Monday run, with no week's wait.
+    groups:
+      vino-user-interface:
+        patterns: ["vino-user-interface"]
+      cargo:
+        patterns: ["*"]
+
+  # Dev tooling only, none of it ships to users. Runtime dependencies are bumped
+  # by hand: an OpenVINO-side version change can break the NPU path, which no CI
+  # runner can catch. numpy and the others the dev group shares with the
+  # runtime count as runtime.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: pytest
+      - dependency-name: pytest-cov
+      - dependency-name: ruff
+      - dependency-name: mypy
+      - dependency-name: poethepoet
+      - dependency-name: bump-my-version
+      - dependency-name: types-requests
+    groups:
+      dev-tooling:
+        patterns: ["*"]
+
+  # The docs site (docs.vinowhisper.com).
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      site:
+        patterns: ["*"]
+
+  # Actions stay pinned to commit SHAs; Dependabot bumps the SHA and the
+  # version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
