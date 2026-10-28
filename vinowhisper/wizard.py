@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -210,15 +211,19 @@ class Wizard:
         source = model_source.load(model_id)
         if source is None:
             return Outcome(False, f"no pinned source for {model_id}; reinstall vinowhisper")
-        argv = [cli, *export_argv(variant, directory, source.directory)[1:]]
+        argv = [*memory_cap_argv(), cli, *export_argv(variant, directory, source.directory)[1:]]
         self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
         self.say(
             f"  $ fetch {source.model_id}@{source.revision[:12]} into {source.directory}, "
             "checking every file's sha256"
         )
         self.say(
+            f"  Temporary export files go under {config.EXPORT_TMP_ROOT} (on disk, not /tmp), "
+            "removed afterwards"
+        )
+        self.say(
             f"  $ {' '.join(f'{key}={value}' for key, value in _EXPORT_ENV.items())} "
-            + " ".join(argv)
+            f"TMPDIR={config.EXPORT_TMP_ROOT}/… " + " ".join(argv)
         )
         if not self.confirm("download and export it now?"):
             return Outcome(None, f"run {export} when ready")
@@ -228,9 +233,14 @@ class Wizard:
             return Outcome(False, str(exc))
         except (requests.RequestException, OSError) as exc:
             return Outcome(None, f"download failed ({exc}); re-run to resume")
-        if self.execute(argv, env=_EXPORT_ENV):
+        if self.export(argv):
             return self.check_digests(variant, directory, f"exported to {directory}", model_id)
         return Outcome(None, f"run {export} when ready")
+
+    def export(self, argv: list[str]) -> bool:
+        config.EXPORT_TMP_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=config.EXPORT_TMP_ROOT) as tmp:
+            return self.execute(argv, env={**_EXPORT_ENV, "TMPDIR": tmp})
 
     def check_digests(
         self, variant: str, directory: Path, summary: str, model_id: str = config.MODEL_ID
@@ -552,6 +562,30 @@ def export_extra_argv() -> list[str]:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+# A cgroup cap at 90% of available memory, so a too-big export is killed alone.
+def memory_cap_argv() -> list[str]:
+    if not _has_systemd() or shutil.which("systemd-run") is None:
+        return []
+    try:
+        meminfo = Path("/proc/meminfo").read_text(encoding="ascii")
+    except OSError:
+        return []
+    for line in meminfo.splitlines():
+        if line.startswith("MemAvailable:"):
+            cap_kb = int(line.split()[1]) * 9 // 10
+            return [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "-p",
+                f"MemoryMax={cap_kb}K",
+                "-p",
+                "MemorySwapMax=0",
+            ]
+    return []
 
 
 def _has_systemd() -> bool:

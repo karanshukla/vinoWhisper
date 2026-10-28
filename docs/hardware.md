@@ -65,6 +65,15 @@ doctor and the server all check which one you have against the device you got.
 ./scripts/convert_model.sh --model openai/whisper-small   # multilingual, ...whisper-small-ov
 ```
 
+optimum writes a full-size intermediate copy of the model to `$TMPDIR` during
+the export, and `/tmp` is tmpfs (RAM) on Fedora. Exporting SmolLM3-3B put
+6.15 GB there on 2026-10-27 and set off a global OOM kill. So the script and
+`vinowhisper-setup` point `TMPDIR` at `~/.cache/vinowhisper/export-tmp/`, on
+disk, and remove it afterwards, including after a failure. Where `systemd-run`
+works they also run the export in a user scope capped at 90% of available
+memory, with no swap, so an export that is too big gets killed on its own
+instead of the kernel choosing what to kill.
+
 **The model is whisper-small.en, on purpose.** Benchmarked against base.en and
 tiny.en on this NPU (2026-08-03, same clip): base.en was 2.6x faster and
 tiny.en 3.8x, and both made real transcription errors (garbled and misheard

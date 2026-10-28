@@ -83,6 +83,24 @@ case "$status" in
     *) exit 1 ;;
 esac
 
+# optimum writes a full-size intermediate model to $TMPDIR; on tmpfs /tmp that is RAM.
+TMP_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/vinowhisper/export-tmp"
+mkdir -p -m 700 "$TMP_ROOT"
+EXPORT_TMP="$(mktemp -d "$TMP_ROOT/XXXXXXXX")"
+trap 'rm -rf "$EXPORT_TMP"' EXIT
+EXPORT_ENV+=(TMPDIR="$EXPORT_TMP")
+echo "==> temporary export files go to $EXPORT_TMP (removed afterwards)"
+
+# A cgroup cap, so a too-big export is killed alone instead of setting off a global OOM.
+CAP=()
+if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
+    avail_kb="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+    if [[ -n "$avail_kb" ]]; then
+        CAP=(systemd-run --user --scope --quiet -p "MemoryMax=$((avail_kb * 9 / 10))K" -p MemorySwapMax=0)
+        echo "==> capped at $((avail_kb * 9 / 10 / 1024)) MiB, 90% of available memory"
+    fi
+fi
+
 INTEGRITY_FAILED=0
 
 # Fails only when the pinned toolchain produced different bytes (docs/install.md)
@@ -100,7 +118,7 @@ export_one() {
 
     mkdir -p "$(dirname "$out")"
     echo "==> exporting $MODEL_ID ($variant) to $out"
-    env "${EXPORT_ENV[@]}" optimum-cli export openvino "${args[@]}" "$out"
+    "${CAP[@]}" env "${EXPORT_ENV[@]}" optimum-cli export openvino "${args[@]}" "$out"
     echo "==> done: $out"
     verify_one "$variant" "$out"
 }
