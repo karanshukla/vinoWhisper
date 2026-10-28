@@ -1,6 +1,8 @@
 import argparse
+import contextlib
 import json
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -9,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from . import __version__, audio, capture, config, events, session, style
+from . import __version__, audio, bundle, capture, config, events, session, style, summary
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
@@ -316,6 +318,9 @@ def _list_targets() -> int:
 
 
 def main() -> int:
+    # SIGINT is how the tray stops us, and a parent started in the background passes it on
+    # ignored, which Python keeps; then the tray's SIGKILL loses the transcript's bundling.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     args = _parse_args()
     try:
         if args.list_targets:
@@ -394,7 +399,17 @@ def main() -> int:
             transcript.close()
             if transcript.path is not None:
                 print(f"\n[vinowhisper] transcript saved to {transcript.path}", file=sys.stderr)
+                if transcript.path.suffix == bundle.SUFFIX:
+                    _queue_summary()
     return 0
+
+
+def _queue_summary() -> None:
+    if not summary.auto_enabled():
+        return
+    # Unreachable is fine: the server picks up unsummarised sessions when it next starts.
+    with contextlib.suppress(requests.RequestException):
+        TranscriptionClient().summarise()
 
 
 if __name__ == "__main__":

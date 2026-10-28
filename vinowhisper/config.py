@@ -14,9 +14,21 @@ def _cache_home() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
 
 
+def _state_home() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+
+
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
 TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
+# {"auto": bool}, written by the settings window's Sessions page (settings::Summaries).
+SUMMARIES_FILE = _config_home() / "vinowhisper/summaries.json"
+# The summariser's own bookkeeping: failures, declined summaries, and where backfill starts.
+SESSIONS_STATE_FILE = _state_home() / "vinowhisper/sessions.json"
+# Finished summaries the tray has not announced yet; relative to $XDG_RUNTIME_DIR.
+SUMMARIES_READY_RELPATH = "vinowhisper/summaries-ready.json"
+# What the summariser is on right now, for the Sessions page; gone when it is idle.
+SUMMARISING_RELPATH = "vinowhisper/summarising.json"
 
 MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"

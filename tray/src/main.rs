@@ -14,6 +14,7 @@ mod protocol;
 mod raster;
 mod session;
 mod shortcut;
+mod summaries;
 mod tray;
 mod uinput;
 mod virtual_keyboard;
@@ -54,6 +55,9 @@ Commands go to the running instance, starting one if there is none:
   shortcuts   print the bound shortcuts as JSON, for vinowhisper-gui
   configure-shortcut
               open the desktop's dialog for changing them
+  summaries-ready
+              notify about finished session summaries (the server sends
+              this itself)
 
 Options:
   --hidden          start in the tray, captions off (for autostart)
@@ -203,6 +207,7 @@ fn main() -> ExitCode {
             | Request::Dictate
             | Request::DictatePress
             | Request::DictateRelease
+            | Request::SummariesReady
     ) {
         eprintln!("vinowhisper-tray is not running");
         return ExitCode::SUCCESS;

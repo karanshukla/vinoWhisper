@@ -205,6 +205,48 @@ impl Cleanup {
     }
 }
 
+/// Background summaries of saved sessions (#123). Not in gui.json: the server and
+/// `vinowhisper-caption` read this file (config.SUMMARIES_FILE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Summaries {
+    pub auto: bool,
+}
+
+impl Default for Summaries {
+    fn default() -> Self {
+        Summaries { auto: true }
+    }
+}
+
+impl Summaries {
+    pub fn path() -> PathBuf {
+        config_home().join("vinowhisper/summaries.json")
+    }
+
+    pub fn load() -> Summaries {
+        Self::load_from(&Self::path())
+    }
+
+    pub fn load_from(path: &Path) -> Summaries {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) {
+        let path = Self::path();
+        if let Err(err) = write_json(&path, self) {
+            eprintln!("[vinowhisper] could not save {}: {err}", path.display());
+        }
+    }
+}
+
+pub fn transcripts_dir() -> PathBuf {
+    data_home().join("vinowhisper/transcripts")
+}
+
 /// Whether the multilingual export exists (either variant), so the tray can say what to run
 /// instead of offering a language the server could not load.
 pub fn multilingual_installed() -> bool {

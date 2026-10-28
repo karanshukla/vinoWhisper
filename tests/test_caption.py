@@ -14,7 +14,7 @@ import pytest
 import requests
 
 from tests import pcm
-from vinowhisper import caption, config, events
+from vinowhisper import bundle, caption, config, events
 
 _EVERY_EVENT = [
     events.Ready(device="CPU", device_full="Intel(R) Core(TM)", degraded=True, warnings=["no NPU"]),
@@ -318,7 +318,8 @@ def _scripted(monkeypatch, tmp_path, *flags):
 def test_transcript_flag_writes_beside_the_json_renderer(monkeypatch, tmp_path, capsys):
     assert _scripted(monkeypatch, tmp_path, "--transcript", str(tmp_path / "t")) == 0
     [saved] = (tmp_path / "t").iterdir()
-    assert "[00:00] hello world" in saved.read_text(encoding="utf-8")
+    assert saved.suffix == ".vwsession"
+    assert "[00:00] hello world" in bundle.read(saved).transcript
     assert '"event": "Cycle"' in capsys.readouterr().out
 
 
@@ -380,3 +381,24 @@ def test_a_window_outside_the_short_form_limit_is_a_usage_error(monkeypatch, cap
     monkeypatch.setattr(sys, "argv", ["vinowhisper-caption", "--window", window])
     assert caption.main() == 2
     assert "--window" in capsys.readouterr().err
+
+
+def test_characterization_an_inherited_ignored_sigint_is_undone(monkeypatch):
+    """characterization: the tray stops captions with SIGINT, then SIGKILL after 4s.
+
+    A tray started from a background shell job hands its children SIGINT ignored,
+    and Python keeps an inherited SIG_IGN. Measured 2026-10-28: the caption child
+    ignored the tray's SIGINT, was killed, and its transcript was never bundled or
+    summarised. Removing the reset brings that back for any tray not started by
+    the desktop.
+    """
+    import signal
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    monkeypatch.setattr(caption, "_parse_args", lambda: (_ for _ in ()).throw(SystemExit(0)))
+    try:
+        with pytest.raises(SystemExit):
+            caption.main()
+        assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)

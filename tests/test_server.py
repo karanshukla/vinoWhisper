@@ -332,3 +332,23 @@ def test_no_request_can_hold_the_model_past_the_servers_ceiling(client, cleaner,
     body = {"text": "um hello"} if budget is None else {"text": "um hello", "budget_s": budget}
     assert client.post("/cleanup", json=body).status_code == 200
     assert cleaner.seen[3] == expect
+
+
+def test_summaries_only_open_saved_sessions_in_the_transcripts_folder(
+    monkeypatch, client, tmp_path
+):
+    kicked = []
+    monkeypatch.setattr(server.summariser, "kick", lambda paths: kicked.append(paths))
+    monkeypatch.setattr(server.config, "TRANSCRIPT_DIR", tmp_path / "t")
+    (tmp_path / "t").mkdir()
+    inside = tmp_path / "t" / "2026-10-28-130558.vwsession"
+    inside.write_bytes(b"")
+    outside = tmp_path / "elsewhere.vwsession"
+    outside.write_bytes(b"")
+
+    assert client.post("/summaries", json={"paths": [str(inside)]}).status_code == 202
+    assert kicked == [[inside.resolve()]]
+    for raw in [str(outside), "../elsewhere.vwsession", "/etc/passwd", "t/../../x.vwsession"]:
+        response = client.post("/summaries", json={"paths": [raw]})
+        assert response.status_code == 400, raw
+    assert client.post("/summaries", json={}).status_code == 202

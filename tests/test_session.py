@@ -9,7 +9,7 @@ import json
 
 import numpy as np
 
-from vinowhisper import config, events, session
+from vinowhisper import bundle, config, events, session
 
 
 def test_events_round_trip_through_json():
@@ -140,6 +140,12 @@ def _transcript(target, clock=None, source="output"):
     )
 
 
+def _text(path):
+    if path.suffix == bundle.SUFFIX:
+        return bundle.read(path).transcript
+    return path.read_text(encoding="utf-8")
+
+
 def _cycle(confirmed):
     return events.Cycle(
         index=1,
@@ -166,8 +172,9 @@ def test_a_transcript_has_a_header_stamped_paragraphs_and_no_trailing_blank_line
     writer.event(_cycle(["Next", "one."]))
     writer.event(events.Stopped(flushed=["Tail."]))
 
-    assert writer.path == tmp_path / "2026-09-29-140207.txt"
-    assert writer.path.read_text(encoding="utf-8") == (
+    assert writer.path == tmp_path / "2026-09-29-140207.vwsession"
+    assert not (tmp_path / "2026-09-29-140207.txt").exists()
+    assert _text(writer.path) == (
         "vinoWhisper transcript, 2026-09-29 14:02, system audio, NPU\n\n"
         "[00:00] First paragraph.\n\n"
         "[01:11] Next one. Tail.\n"
@@ -178,7 +185,7 @@ def test_pending_words_are_never_written(tmp_path):
     writer = _transcript(tmp_path)
     writer.event(_cycle(["Seen."]))
     writer.close()
-    assert "not yet" not in writer.path.read_text(encoding="utf-8")
+    assert "not yet" not in _text(writer.path)
 
 
 def test_a_session_with_no_words_leaves_no_file(tmp_path):
@@ -195,7 +202,7 @@ def test_a_session_with_no_words_leaves_no_file(tmp_path):
 def test_words_reach_the_file_each_cycle_before_the_session_ends(tmp_path):
     writer = _transcript(tmp_path)
     writer.event(_cycle(["Killed", "mid-session"]))
-    assert writer.path.read_text(encoding="utf-8").endswith("[00:00] Killed mid-session")
+    assert _text(writer.path).endswith("[00:00] Killed mid-session")
 
 
 def test_a_long_paragraph_breaks_at_a_sentence_end(tmp_path):
@@ -203,7 +210,7 @@ def test_a_long_paragraph_breaks_at_a_sentence_end(tmp_path):
     words = ["word"] * 69 + ["end.", "Next"]
     writer.event(_cycle(words))
     writer.close()
-    body = writer.path.read_text(encoding="utf-8").split("\n\n", 1)[1]
+    body = _text(writer.path).split("\n\n", 1)[1]
     assert len(body.split("\n\n")) == 2
     assert body.split("\n\n")[1].startswith("[00:00] Next")
 
@@ -245,7 +252,7 @@ def test_the_transcript_breaks_exactly_where_the_terminal_does(tmp_path):
         ]
 
     terminal = paragraphs(console.file.getvalue())
-    saved = paragraphs(writer.path.read_text(encoding="utf-8").split("\n\n", 1)[1])
+    saved = paragraphs(_text(writer.path).split("\n\n", 1)[1])
     assert len(saved) == 3
     assert saved == terminal
 
@@ -292,3 +299,45 @@ def test_a_file_path_is_appended_to_not_overwritten(tmp_path):
     assert text.count("vinoWhisper transcript") == 2
     assert "[00:00] One.\n\nvinoWhisper" in text
     assert text.endswith("[00:00] Two.\n")
+
+
+def test_a_finished_session_becomes_a_bundle_with_its_provenance(tmp_path):
+    clock = _Clock()
+    writer = _transcript(tmp_path, clock)
+    writer.event(events.Ready(device="NPU", language="en", task="transcribe"))
+    writer.event(_cycle(["Hello."]))
+    clock.now = 125.4
+    writer.event(events.Stopped(flushed=[]))
+
+    saved = bundle.read(writer.path)
+    assert saved.summary is None
+    assert bundle.verify(saved) == []
+    assert saved.session["duration_s"] == 125
+    assert saved.session["started"].startswith("2026-09-29T14:02:07")
+    assert saved.session["source"] == "system audio"
+    entry = saved.attestation["files"][bundle.TRANSCRIPT]
+    assert entry["made_by"] == "speech-to-text"
+    assert entry["model"] == config.MODEL_ID
+    assert entry["device"] == "NPU"
+    assert len(entry["revision"]) == 40
+
+
+def test_a_named_file_target_is_never_bundled(tmp_path):
+    target = tmp_path / "talks.txt"
+    writer = _transcript(target)
+    writer.event(_cycle(["One."]))
+    writer.close()
+    assert writer.path == target
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_a_live_transcript_is_locked_until_it_closes(tmp_path):
+    from vinowhisper import summary
+
+    writer = _transcript(tmp_path)
+    writer.event(_cycle(["Live."]))
+    live = writer.path
+    assert summary._locked(live)
+    assert summary.recover(tmp_path, since=0) == []
+    writer.close()
+    assert not live.exists()

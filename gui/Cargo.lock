@@ -2862,6 +2862,7 @@ version = "1.0.1"
 dependencies = [
  "eframe",
  "egui_kittest",
+ "serde",
  "serde_json",
  "vinowhisper-settings",
 ]

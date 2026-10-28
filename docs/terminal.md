@@ -18,7 +18,9 @@ transcript would live in a widget that is gone on quit and cannot be piped.
   added 2026-10-07), whichever renderer is showing them, `--json` included.
   It is off unless asked for, because it writes whatever was playing to disk.
   With no PATH it writes to `$XDG_DATA_HOME/vinowhisper/transcripts/`. A
-  directory gets a new `YYYY-MM-DD-HHMMSS.txt` per session (local time); a path
+  directory gets a new `YYYY-MM-DD-HHMMSS.txt` per session (local time), which
+  becomes a `YYYY-MM-DD-HHMMSS.vwsession` bundle when the session ends and is
+  then summarised in the background ([sessions.md](sessions.md)); a path
   that is not a directory is a file and is appended to, with a new header each
   session. A path that does not exist yet and has no extension is taken as a
   directory.

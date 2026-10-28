@@ -29,6 +29,10 @@ class ModelMissing(RuntimeError):
     pass
 
 
+class Preempted(RuntimeError):
+    pass
+
+
 def pinned(
     model_id: str = config.CLEANUP_MODEL_ID, path: Path | None = None
 ) -> source.Source | None:
@@ -248,11 +252,14 @@ class CleanupModel:
         max_new_tokens: int,
         repetition_penalty: float = 1.0,
         budget_s: float | None = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, bool]:
         self.load()
         with self._lock:
             try:
-                return self._generate(system, user, max_new_tokens, repetition_penalty, budget_s)
+                return self._generate(
+                    system, user, max_new_tokens, repetition_penalty, budget_s, cancel
+                )
             finally:
                 self._last_used = self._clock()
 
@@ -263,6 +270,7 @@ class CleanupModel:
         max_new_tokens: int,
         repetition_penalty: float,
         budget_s: float | None,
+        cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, bool]:
         import openvino_genai as ov_genai
 
@@ -283,19 +291,30 @@ class CleanupModel:
         settings.repetition_penalty = repetition_penalty
         deadline = None if budget_s is None else self._clock() + budget_s
         late = threading.Event()
+        yielded = threading.Event()
 
         def streamer(_piece: str) -> object:
             # The caller has already typed the raw text by then; stop holding the lock.
             if deadline is not None and self._clock() > deadline:
                 late.set()
                 return ov_genai.StreamingStatus.CANCEL
+            # A background summary gives the NPU back to captions and dictation.
+            if cancel is not None and cancel():
+                yielded.set()
+                return ov_genai.StreamingStatus.CANCEL
             return ov_genai.StreamingStatus.RUNNING
 
         answer = str(pipe.generate(prompt, generation_config=settings, streamer=streamer))  # type: ignore[attr-defined]
         if late.is_set():
             raise TimeoutError("past the time limit")
+        if yielded.is_set():
+            raise Preempted("the NPU was wanted for captions or dictation")
         produced = len(tokenizer.encode(answer).input_ids.data[0])
         return _THINK.sub("", answer).strip(), produced >= max_new_tokens
+
+    def unload(self) -> None:
+        with self._lock:
+            self._pipe, self.device = None, None
 
     def unload_if_idle(self, idle_s: float) -> bool:
         if self._pipe is None or not self._lock.acquire(blocking=False):
