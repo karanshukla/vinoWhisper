@@ -253,3 +253,30 @@ def test_announce_merges_with_what_the_tray_has_not_read_yet(tmp_path, monkeypat
     ready = json.loads((tmp_path / "vinowhisper/summaries-ready.json").read_text())
     assert [entry["path"] for entry in ready] == ["/a", "/b"]
     assert sent == ["summaries-ready", "summaries-ready"]
+
+
+def test_the_session_command_lists_shows_and_declines(tmp_path, monkeypatch, capsys):
+    from vinowhisper import config, session
+
+    monkeypatch.setattr(config, "TRANSCRIPT_DIR", tmp_path)
+    path = _bundle(tmp_path)
+    assert session.main(["list", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    [entry] = report["sessions"]
+    assert entry["name"] == path.name
+    assert entry["summary"] is False and entry["verified"] is True
+    assert entry["duration_s"] == 60
+
+    assert session.main(["show", str(path)]) == 0
+    assert "[00:00]" in capsys.readouterr().out
+    assert session.main(["show", str(path), "--part", "summary"]) == 1
+
+    bundle.set_summary(bundle.read(path), "# T\n", "NPU")
+    assert session.main(["delete-summary", str(path)]) == 0
+    assert bundle.read(path).summary is None
+    assert summary.pending(tmp_path) == []
+
+    assert session.main(["verify", str(path)]) == 0
+    assert session.main(["delete", str(path)]) == 0
+    assert not path.exists()
+    assert summary.load_state()["declined"] == []

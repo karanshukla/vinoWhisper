@@ -11,17 +11,27 @@ pub enum Action {
     /// `page` is the name given to `--page`, for the tray to deep-link into a section.
     Window {
         page: Option<String>,
+        open: Option<String>,
     },
     Help,
     Tray,
 }
 
 pub fn decide(args: &[String]) -> Action {
+    let window = |page: Option<&String>, open: Option<&String>| Action::Window {
+        page: page.cloned(),
+        open: open.cloned(),
+    };
     match args {
-        [] => Action::Window { page: None },
-        [flag, page] if flag == "--page" => Action::Window {
-            page: Some(page.clone()),
-        },
+        [] => window(None, None),
+        [flag, page] if flag == "--page" => window(Some(page), None),
+        [flag, open] if flag == "--open" => window(None, Some(open)),
+        [a, x, b, y] if a == "--page" && b == "--open" => window(Some(x), Some(y)),
+        [a, y, b, x] if a == "--open" && b == "--page" => window(Some(x), Some(y)),
+        // A file manager opening a bundle (`Exec=vinowhisper-gui %f`).
+        [path] if path.ends_with(".vwsession") && !path.starts_with('-') => {
+            window(None, Some(path))
+        }
         [flag, ..] if flag == "-h" || flag == "--help" => Action::Help,
         _ => Action::Tray,
     }
@@ -158,7 +168,13 @@ mod tests {
 
     #[test]
     fn no_arguments_opens_the_window() {
-        assert_eq!(decide(&[]), Action::Window { page: None });
+        assert_eq!(
+            decide(&[]),
+            Action::Window {
+                page: None,
+                open: None
+            }
+        );
     }
 
     #[test]
@@ -166,7 +182,43 @@ mod tests {
         assert_eq!(
             decide(&args(&["--page", "speech"])),
             Action::Window {
-                page: Some("speech".into())
+                page: Some("speech".into()),
+                open: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_bundle_from_the_file_manager_opens_it() {
+        assert_eq!(
+            decide(&args(&["/t/2026-10-27-140512.vwsession"])),
+            Action::Window {
+                page: None,
+                open: Some("/t/2026-10-27-140512.vwsession".into())
+            }
+        );
+    }
+
+    #[test]
+    fn open_names_a_session_with_or_without_the_page() {
+        let wanted = Action::Window {
+            page: Some("sessions".into()),
+            open: Some("/t/a.vwsession#transcript@03:10".into()),
+        };
+        assert_eq!(
+            decide(&args(&[
+                "--page",
+                "sessions",
+                "--open",
+                "/t/a.vwsession#transcript@03:10"
+            ])),
+            wanted
+        );
+        assert_eq!(
+            decide(&args(&["--open", "/t/a.vwsession#summary"])),
+            Action::Window {
+                page: None,
+                open: Some("/t/a.vwsession#summary".into())
             }
         );
     }

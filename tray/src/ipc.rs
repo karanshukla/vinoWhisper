@@ -23,11 +23,13 @@ pub enum Request {
     /// What the desktop bound, as JSON, for the settings window.
     Shortcuts,
     ConfigureShortcut,
+    /// The server finished summaries; their list is in $XDG_RUNTIME_DIR.
+    SummariesReady,
     Ping,
 }
 
 impl Request {
-    const ALL: [Request; 11] = [
+    const ALL: [Request; 12] = [
         Request::Show,
         Request::Hide,
         Request::Toggle,
@@ -38,6 +40,7 @@ impl Request {
         Request::Reload,
         Request::Shortcuts,
         Request::ConfigureShortcut,
+        Request::SummariesReady,
         Request::Ping,
     ];
 
@@ -53,6 +56,7 @@ impl Request {
             Request::Reload => "reload",
             Request::Shortcuts => "shortcuts",
             Request::ConfigureShortcut => "configure-shortcut",
+            Request::SummariesReady => "summaries-ready",
             Request::Ping => "ping",
         }
     }

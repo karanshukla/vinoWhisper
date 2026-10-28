@@ -1,7 +1,9 @@
+import argparse
 import contextlib
 import fcntl
 import json
 import os
+import sys
 import time
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -189,3 +191,166 @@ def read_audio(directory: Path) -> np.ndarray:
             raise ValueError(f"expected {config.SAMPLE_RATE_HZ}Hz, got {handle.getframerate()}Hz")
         raw = handle.readframes(handle.getnframes())
     return np.frombuffer(raw, dtype="<i2").astype(np.float32) / _PCM_SCALE
+
+
+def _describe(path: Path, state: dict) -> dict:
+    from . import summary
+
+    entry: dict = {"path": str(path), "name": path.name}
+    try:
+        read = bundle.read(path)
+    except bundle.BundleError as exc:
+        return {**entry, "error": str(exc)}
+    files = read.attestation.get("files", {})
+    return {
+        **entry,
+        **{
+            key: read.session.get(key)
+            for key in ("started", "duration_s", "source", "language", "task")
+        },
+        "summary": read.summary is not None,
+        "title": read.summary_title,
+        "summary_made_by": files.get(bundle.SUMMARY, {}).get("made_by"),
+        "declined": path.name in state["declined"],
+        "failed": state["failures"].get(path.name, 0) >= summary.MAX_FAILURES,
+        "verified": not bundle.verify(read),
+    }
+
+
+def _bundle_arg(raw: str) -> Path:
+    path = Path(raw).expanduser().resolve()
+    if path.suffix != bundle.SUFFIX:
+        raise argparse.ArgumentTypeError(f"{raw} is not a {bundle.SUFFIX} file")
+    return path
+
+
+def _kick(paths: list[Path] | None = None) -> str | None:
+    import requests
+
+    from .client import TranscriptionClient
+
+    try:
+        TranscriptionClient().summarise(paths)
+    except requests.RequestException as exc:
+        return f"the server is not reachable ({exc}); summaries run when it next starts"
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    from . import llm, summary
+
+    parser = argparse.ArgumentParser(
+        prog="vinowhisper-session",
+        description="Saved caption sessions (.vwsession bundles) and their summaries.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    listing = commands.add_parser("list", help="every saved session, newest first")
+    listing.add_argument(
+        "--json", action="store_true", help="one JSON object for the settings window"
+    )
+    show = commands.add_parser("show", help="print a session's transcript or summary")
+    show.add_argument("bundle", type=_bundle_arg)
+    show.add_argument(
+        "--part", choices=("transcript", "summary", "attestation"), default="transcript"
+    )
+    for name, text in (
+        ("summarise", "summarise (again) in the background, now"),
+        ("delete-summary", "remove the summary and don't make it again"),
+        ("delete", "delete the whole session"),
+        ("verify", "check each file against the attestation's sha256"),
+    ):
+        commands.add_parser(name, help=text).add_argument("bundles", type=_bundle_arg, nargs="+")
+    commands.add_parser(
+        "backfill", help="bundle transcripts saved before summaries, and summarise them"
+    )
+    args = parser.parse_args(argv)
+
+    if args.command == "list":
+        state = summary.load_state()
+        sessions = [_describe(path, state) for path in bundle.listing()]
+        loose = [p for p in summary.loose_transcripts() if p.stat().st_mtime < state["since"]]
+        pin = llm.pinned()
+        report = {
+            "directory": str(config.TRANSCRIPT_DIR),
+            "auto": summary.auto_enabled(),
+            "model_ready": pin is not None and llm.is_present(pin),
+            "backfill": len(loose),
+            "sessions": sessions,
+        }
+        if args.json:
+            print(json.dumps(report))
+            return 0
+        for entry in sessions:
+            mark = "summary" if entry.get("summary") else "no summary"
+            print(f"{entry['name']}  {entry.get('title') or ''}  ({mark})")
+        if loose:
+            print(f"{len(loose)} older transcripts can be bundled: vinowhisper-session backfill")
+        return 0
+
+    if args.command == "show":
+        try:
+            read = bundle.read(args.bundle)
+        except bundle.BundleError as exc:
+            print(f"[vinowhisper] {exc}", file=sys.stderr)
+            return 1
+        if args.part == "summary" and read.summary is None:
+            print(f"[vinowhisper] {args.bundle.name} has no summary yet", file=sys.stderr)
+            return 1
+        text = {
+            "transcript": read.transcript,
+            "summary": read.summary or "",
+            "attestation": json.dumps(read.attestation, indent=2, ensure_ascii=False) + "\n",
+        }[args.part]
+        sys.stdout.write(text)
+        return 0
+
+    if args.command == "backfill":
+        made = summary.backfill()
+        print(f"[vinowhisper] bundled {len(made)} transcripts", file=sys.stderr)
+        if made and summary.auto_enabled():
+            problem = _kick()
+            if problem:
+                print(f"[vinowhisper] {problem}", file=sys.stderr)
+        return 0
+
+    status = 0
+    for path in args.bundles:
+        try:
+            status |= _bundle_command(args.command, path)
+        except (OSError, bundle.BundleError) as exc:
+            print(f"[vinowhisper] {path.name}: {exc}", file=sys.stderr)
+            status = 1
+    if args.command == "summarise" and status == 0:
+        problem = _kick(args.bundles)
+        if problem:
+            print(f"[vinowhisper] {problem}", file=sys.stderr)
+            return 1
+    return status
+
+
+def _bundle_command(command: str, path: Path) -> int:
+    from . import summary
+
+    if command == "summarise":
+        bundle.read(path)
+        return 0
+    if command == "verify":
+        bad = bundle.verify(bundle.read(path))
+        print(f"{path.name}: {'ok' if not bad else 'changed since attested: ' + ', '.join(bad)}")
+        return 1 if bad else 0
+    state = summary.load_state()
+    if command == "delete-summary":
+        bundle.drop_summary(bundle.read(path))
+        if path.name not in state["declined"]:
+            state["declined"].append(path.name)
+    elif command == "delete":
+        path.unlink()
+        state["failures"].pop(path.name, None)
+        if path.name in state["declined"]:
+            state["declined"].remove(path.name)
+    summary.save_state(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

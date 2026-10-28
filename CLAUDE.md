@@ -351,9 +351,30 @@ would otherwise be re-learned:
 - No repetition penalty for cleanup (the answer copies the input, and a penalty makes it
   reword, which the check refuses); 1.1 is what summaries will need, since greedy
   decoding looped on a long one.
-- Summaries of saved sessions (#82) are the next user: same model, same server, run in
-  the background after a session, chunked at the `[MM:SS]` paragraphs, written next to
-  the transcript for vinosearch to index. Not built.
+- Summaries of saved sessions are built (#123, 2026-10-28): see "Saved sessions" below.
+
+## Saved sessions (#123), added 2026-10-28
+
+A saved caption session becomes one `.vwsession` zip (mimetype, transcript.txt,
+summary.md, attestation.json) when it ends, and the server summarises it in the
+background with SmolLM3. Full write-up in `docs/sessions.md`. The traps:
+
+- **The format is a contract with vinoSearch** (karanshukla/vinoSearch#145 reads it).
+  `tests/test_bundle.py` pins the layout, the mimetype bytes at offset 38 and the
+  `format` string; `tests/fixtures/session_v1*.vwsession` are copied byte for byte
+  into vinoSearch. Change the layout only with `vinowhisper-session/2`.
+- **Summaries yield the NPU.** The server tracks caption and dictation requests apart
+  from the rest (`_mark_npu_use`); a summary starts after 20 s of quiet and is
+  cancelled at the next token when one arrives (`llm.Preempted`), then retried.
+- **Live transcripts hold an `flock`**, which is how the server's start-up recovery
+  tells a crashed session from a running one. Transcripts older than the first
+  summariser run are backfill, never auto-bundled (`sessions.json` `since`).
+- `vinowhisper-session` (in `session.py`) is what the settings window's Sessions page
+  runs; the tray learns a summary finished through `summaries-ready` on its socket
+  plus `$XDG_RUNTIME_DIR/vinowhisper/summaries-ready.json`.
+- **The bundled Inter has no arrows** ("←" panicked egui in a test). Check glyphs
+  before putting symbols in the settings window.
+- Nothing of this has run on the NPU yet: the checklist is at the end of `docs/sessions.md`.
 
 ## Architecture
 
@@ -383,7 +404,9 @@ vinowhisper/
   llm.py          the local cleanup model: pins, download, LLMPipeline in the server
   ui.py           RichRenderer, the pinned status bar
   paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
-  session.py      --record writer, --transcript writer (TranscriptWriter), reading a session back
+  session.py      --record writer, --transcript writer (TranscriptWriter), vinowhisper-session
+  bundle.py       the .vwsession zip: read, atomic write, attestation, verify
+  summary.py      chunked summaries, the server's background Summariser, crash recovery
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install

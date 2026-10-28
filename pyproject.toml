@@ -55,6 +55,7 @@ vinowhisper-replay = "vinowhisper.replay:main"
 vinowhisper-doctor = "vinowhisper.doctor:main"
 vinowhisper-setup = "vinowhisper.wizard:main"
 vinowhisper-cleanup = "vinowhisper.cleanup:main"
+vinowhisper-session = "vinowhisper.session:main"
 
 [build-system]
 requires = ["setuptools>=77"]  # PEP 639 license expressions

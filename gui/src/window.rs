@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -7,9 +8,10 @@ use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke
 
 use crate::forward::{self, Shortcuts};
 use crate::model::{self, Line, ModelState, Status};
+use crate::sessions::{self, Listing, Part, Piece, Target};
 use crate::theme;
 use vinowhisper_settings::{
-    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Task, TextSize,
+    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Summaries, Task, TextSize,
     multilingual_installed,
 };
 
@@ -19,10 +21,17 @@ enum Page {
     Captions,
     Speech,
     Cleanup,
+    Sessions,
 }
 
 impl Page {
-    const ALL: [Page; 4] = [Page::Shortcuts, Page::Captions, Page::Speech, Page::Cleanup];
+    const ALL: [Page; 5] = [
+        Page::Shortcuts,
+        Page::Captions,
+        Page::Speech,
+        Page::Cleanup,
+        Page::Sessions,
+    ];
 
     fn parse(name: &str) -> Option<Page> {
         Page::ALL
@@ -40,6 +49,7 @@ impl Page {
             Page::Captions => "Captions",
             Page::Speech => "Speech",
             Page::Cleanup => "Cleanup",
+            Page::Sessions => "Sessions",
         }
     }
 }
@@ -81,6 +91,22 @@ fn language_label(language: Language) -> &'static str {
         Language::Es => "Spanish",
         Language::Auto => "Detect automatically",
     }
+}
+
+#[derive(Clone, Default)]
+struct Viewer {
+    target: Option<Target>,
+    text: Option<Result<String, String>>,
+    // Scrolled to target.at_s already; only the first frame after loading jumps.
+    scrolled: bool,
+}
+
+#[derive(Clone, Default)]
+struct SessionsState {
+    listing: Option<Result<Listing, String>>,
+    viewer: Viewer,
+    busy: bool,
+    error: String,
 }
 
 const COMBO_WIDTH: f32 = 240.0;
@@ -158,11 +184,16 @@ struct SettingsWindow {
     shown: Option<Page>,
     refused: Arc<Mutex<Option<String>>>,
     notice: Option<String>,
+    summaries: Summaries,
+    summaries_dirty: bool,
+    sessions: Arc<Mutex<SessionsState>>,
+    confirm_delete_session: Option<PathBuf>,
 }
 
 impl SettingsWindow {
     fn new(page: Option<Page>) -> Self {
         let mut window = Self::with(page, Settings::load(), Speech::load(), Cleanup::load());
+        window.summaries = Summaries::load();
         window.multilingual = multilingual_installed();
         window.kde_header = theme::kde_header();
         window
@@ -192,6 +223,10 @@ impl SettingsWindow {
             shown: None,
             refused: Arc::new(Mutex::new(None)),
             notice: None,
+            summaries: Summaries::default(),
+            summaries_dirty: false,
+            sessions: Arc::new(Mutex::new(SessionsState::default())),
+            confirm_delete_session: None,
         }
     }
 
@@ -610,6 +645,403 @@ impl SettingsWindow {
         );
     }
 
+    fn refresh_sessions(&self, ctx: &egui::Context) {
+        let state = Arc::clone(&self.sessions);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let listing = sessions::list();
+            state.lock().unwrap().listing = Some(listing);
+            ctx.request_repaint();
+        });
+    }
+
+    fn open_session(&self, ctx: &egui::Context, target: Target) {
+        let state = Arc::clone(&self.sessions);
+        let ctx = ctx.clone();
+        state.lock().unwrap().viewer = Viewer {
+            target: Some(target.clone()),
+            text: None,
+            scrolled: false,
+        };
+        std::thread::spawn(move || {
+            let text = sessions::show(&target.path, target.part);
+            let mut state = state.lock().unwrap();
+            // Only if it is still the one asked for: a quick second click wins.
+            if state.viewer.target.as_ref() == Some(&target) {
+                state.viewer.text = Some(text);
+            }
+            drop(state);
+            ctx.request_repaint();
+        });
+    }
+
+    fn session_action(&self, ctx: &egui::Context, action: &'static str, path: Option<PathBuf>) {
+        let state = Arc::clone(&self.sessions);
+        let ctx = ctx.clone();
+        {
+            let mut state = state.lock().unwrap();
+            state.busy = true;
+            state.error.clear();
+        }
+        std::thread::spawn(move || {
+            let result = sessions::act(action, path.as_deref());
+            let listing = sessions::list();
+            let mut locked = state.lock().unwrap();
+            locked.busy = false;
+            locked.error = result.err().unwrap_or_default();
+            locked.listing = Some(listing);
+            if action == "delete" && locked.viewer.target.as_ref().map(|t| &t.path) == path.as_ref()
+            {
+                locked.viewer = Viewer::default();
+            }
+            drop(locked);
+            ctx.request_repaint();
+        });
+    }
+
+    fn sessions(&mut self, ui: &mut egui::Ui) {
+        let state = self.sessions.lock().unwrap().clone();
+        if state.viewer.target.is_some() {
+            self.session_viewer(ui, &state);
+            return;
+        }
+        let p = theme::palette(ui.ctx());
+        let listing = match &state.listing {
+            Some(Ok(listing)) => Some(listing.clone()),
+            _ => None,
+        };
+        section(ui, "Summaries");
+        row(
+            ui,
+            "Summarise:",
+            "After each saved session ends, a small language model on this machine writes a \
+             short summary with time stamps back into the transcript. It waits until captions \
+             and dictation are idle, and nothing leaves the machine.",
+            |ui, _| {
+                self.summaries_dirty |= ui
+                    .checkbox(
+                        &mut self.summaries.auto,
+                        "Summarise saved sessions automatically",
+                    )
+                    .changed();
+                if listing.as_ref().is_some_and(|l| !l.model_ready) {
+                    live(
+                        &ui.label(
+                            RichText::new(
+                                "The model isn't downloaded yet; get it on the Cleanup page.",
+                            )
+                            .color(ui.visuals().warn_fg_color),
+                        ),
+                    );
+                    if ui.button("Go to Cleanup").clicked() {
+                        self.page = Page::Cleanup;
+                    }
+                }
+            },
+        );
+        if !self.settings.save_transcripts {
+            row(ui, "", "", |ui, _| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Saving transcripts is off (Captions page), so new sessions aren't kept.",
+                        )
+                        .color(p.muted),
+                    )
+                    .wrap(),
+                );
+            });
+        }
+        if let Some(listing) = listing.as_ref().filter(|l| l.backfill > 0) {
+            let count = listing.backfill;
+            row(
+                ui,
+                "Older transcripts:",
+                "Saved before summaries existed, as plain text. Bundling keeps their text as it is.",
+                |ui, _| {
+                    let label = format!(
+                        "Bundle and summarise {count} transcript{}",
+                        if count == 1 { "" } else { "s" }
+                    );
+                    if ui
+                        .add_enabled(!state.busy, egui::Button::new(label))
+                        .clicked()
+                    {
+                        self.session_action(ui.ctx(), "backfill", None);
+                    }
+                },
+            );
+        }
+
+        section(ui, "Saved sessions");
+        if !state.error.is_empty() {
+            live(
+                &ui.label(
+                    RichText::new(format!("That didn't work: {}", state.error))
+                        .color(ui.visuals().error_fg_color),
+                ),
+            );
+        }
+        match &state.listing {
+            None => {
+                live(&ui.label(RichText::new("Reading…").color(p.muted)));
+            }
+            Some(Err(why)) => {
+                live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+            }
+            Some(Ok(listing)) if listing.sessions.is_empty() => {
+                ui.label(RichText::new("No saved sessions yet.").color(p.muted));
+            }
+            Some(Ok(listing)) => {
+                for entry in &listing.sessions {
+                    self.session_card(ui, entry, state.busy);
+                    ui.add_space(8.0);
+                }
+            }
+        }
+    }
+
+    fn session_card(&mut self, ui: &mut egui::Ui, entry: &sessions::Entry, busy: bool) {
+        let p = theme::palette(ui.ctx());
+        egui::Frame::NONE
+            .stroke(Stroke::new(1.0_f32, p.rule))
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let mut facts = vec![entry.when()];
+                facts.extend(entry.length());
+                facts.extend(entry.source.clone());
+                ui.label(RichText::new(facts.join(" · ")).family(theme::bold()));
+                let status = match (&entry.title, &entry.error) {
+                    (_, Some(error)) => error.clone(),
+                    (Some(title), None) => title.clone(),
+                    (None, None) => entry.status().to_owned(),
+                };
+                ui.add(egui::Label::new(RichText::new(status).color(p.muted)).wrap());
+                if !entry.verified && entry.error.is_none() {
+                    ui.label(
+                        RichText::new("Changed since it was written (the hashes don't match).")
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                }
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    let readable = entry.error.is_none();
+                    let path = entry.path.clone();
+                    if ui
+                        .add_enabled(readable, egui::Button::new("Transcript"))
+                        .clicked()
+                    {
+                        self.open_session(
+                            ui.ctx(),
+                            Target {
+                                path: path.clone(),
+                                part: Part::Transcript,
+                                at_s: None,
+                            },
+                        );
+                    }
+                    if ui
+                        .add_enabled(readable && entry.summary, egui::Button::new("Summary"))
+                        .clicked()
+                    {
+                        self.open_session(
+                            ui.ctx(),
+                            Target {
+                                path: path.clone(),
+                                part: Part::Summary,
+                                at_s: None,
+                            },
+                        );
+                    }
+                    let again = if entry.summary {
+                        "Summarise again"
+                    } else {
+                        "Summarise"
+                    };
+                    if ui
+                        .add_enabled(readable && !busy, egui::Button::new(again))
+                        .clicked()
+                    {
+                        self.session_action(ui.ctx(), "summarise", Some(path.clone()));
+                    }
+                    if entry.summary
+                        && ui
+                            .add_enabled(!busy, egui::Button::new("Delete summary"))
+                            .clicked()
+                    {
+                        self.session_action(ui.ctx(), "delete-summary", Some(path.clone()));
+                    }
+                    if ui.button("Show in folder").clicked() {
+                        sessions::show_in_folder(&path);
+                    }
+                    if self.confirm_delete_session.as_ref() == Some(&path) {
+                        if ui.button("Cancel").clicked() {
+                            self.confirm_delete_session = None;
+                        }
+                        if ui.button("Delete the session").clicked() {
+                            self.confirm_delete_session = None;
+                            self.session_action(ui.ctx(), "delete", Some(path.clone()));
+                        }
+                    } else if ui
+                        .add_enabled(!busy, egui::Button::new("Delete…"))
+                        .clicked()
+                    {
+                        self.confirm_delete_session = Some(path);
+                    }
+                });
+            });
+    }
+
+    fn session_viewer(&mut self, ui: &mut egui::Ui, state: &SessionsState) {
+        let p = theme::palette(ui.ctx());
+        let Some(target) = state.viewer.target.clone() else {
+            return;
+        };
+        ui.add_space(10.0);
+        if ui.button("All sessions").clicked() {
+            self.sessions.lock().unwrap().viewer = Viewer::default();
+            self.refresh_sessions(ui.ctx());
+            return;
+        }
+        let entry = match &state.listing {
+            Some(Ok(listing)) => listing
+                .sessions
+                .iter()
+                .find(|e| e.path == target.path)
+                .cloned(),
+            _ => None,
+        };
+        let name = entry.as_ref().map_or_else(
+            || {
+                target
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            },
+            sessions::Entry::when,
+        );
+        section(ui, &name);
+        ui.horizontal(|ui| {
+            for part in [Part::Transcript, Part::Summary] {
+                let label = if part == Part::Transcript {
+                    "Transcript"
+                } else {
+                    "Summary"
+                };
+                let enabled = part == Part::Transcript || entry.as_ref().is_none_or(|e| e.summary);
+                if ui
+                    .add_enabled(
+                        enabled,
+                        egui::Button::selectable(target.part == part, label),
+                    )
+                    .clicked()
+                    && target.part != part
+                {
+                    self.open_session(
+                        ui.ctx(),
+                        Target {
+                            path: target.path.clone(),
+                            part,
+                            at_s: None,
+                        },
+                    );
+                }
+            }
+        });
+        ui.add_space(8.0);
+        let text = match &state.viewer.text {
+            None => {
+                live(&ui.label(RichText::new("Reading…").color(p.muted)));
+                return;
+            }
+            Some(Err(why)) => {
+                live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+                return;
+            }
+            Some(Ok(text)) => text.clone(),
+        };
+        match target.part {
+            Part::Summary => {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Written by a language model on this machine. It can get details \
+                             wrong; the time stamps open the transcript where each point comes from.",
+                        )
+                        .size(12.5)
+                        .color(p.muted),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                for line in text.lines() {
+                    if let Some(title) = line.strip_prefix("# ") {
+                        heading(
+                            &ui.label(RichText::new(title).family(theme::bold()).size(16.0)),
+                            title,
+                            3,
+                        );
+                        continue;
+                    }
+                    if line.trim().is_empty() {
+                        ui.add_space(6.0);
+                        continue;
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for piece in sessions::pieces(line) {
+                            match piece {
+                                Piece::Text(text) => {
+                                    ui.label(text.trim_matches('_'));
+                                }
+                                Piece::Stamp(seconds) => {
+                                    let stamp = sessions::stamp(seconds);
+                                    if ui.link(format!("[{stamp}]")).clicked() {
+                                        self.open_session(
+                                            ui.ctx(),
+                                            Target {
+                                                path: target.path.clone(),
+                                                part: Part::Transcript,
+                                                at_s: Some(seconds),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+            Part::Transcript => {
+                let paragraphs = sessions::paragraphs(&text);
+                let wanted = target
+                    .at_s
+                    .and_then(|at| sessions::paragraph_at(&paragraphs, at));
+                for (index, (_, paragraph)) in paragraphs.iter().enumerate() {
+                    let marked = Some(index) == wanted;
+                    let shown = egui::Frame::NONE
+                        .fill(if marked {
+                            theme::selected_fill(p)
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(paragraph.as_str()).wrap());
+                        });
+                    if marked && !state.viewer.scrolled {
+                        shown.response.scroll_to_me(Some(Align::TOP));
+                        self.sessions.lock().unwrap().viewer.scrolled = true;
+                    }
+                }
+            }
+        }
+    }
+
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         if let Some(notice) = &self.notice {
@@ -875,6 +1307,9 @@ impl eframe::App for SettingsWindow {
         if self.cleanup_dirty {
             self.cleanup.save();
         }
+        if self.summaries_dirty {
+            self.summaries.save();
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -894,6 +1329,9 @@ impl eframe::App for SettingsWindow {
         if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
             self.refresh_model(ctx);
         }
+        if self.page == Page::Sessions && (regained || self.shown != Some(Page::Sessions)) {
+            self.refresh_sessions(ctx);
+        }
         self.shown = Some(self.page);
         if let Some(reason) = self.refused.lock().unwrap().take() {
             // The tray put the file back; show what is really in use.
@@ -905,6 +1343,10 @@ impl eframe::App for SettingsWindow {
         if self.cleanup_dirty {
             self.cleanup_dirty = false;
             self.cleanup.save();
+        }
+        if self.summaries_dirty {
+            self.summaries_dirty = false;
+            self.summaries.save();
         }
         if saved_settings {
             self.settings.save();
@@ -1011,6 +1453,7 @@ impl SettingsWindow {
                             Page::Captions => saved_settings = self.captions(ui),
                             Page::Speech => saved_speech = self.speech(ui),
                             Page::Cleanup => self.cleanup(ui),
+                            Page::Sessions => self.sessions(ui),
                         }
                         ui.add_space(12.0);
                     });
@@ -1027,8 +1470,13 @@ impl SettingsWindow {
 
 const TITLE: &str = "vinoWhisper settings";
 
-pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
-    let page = page.and_then(Page::parse);
+pub fn run(app_id: &str, page: Option<&str>, open: Option<&str>) -> ExitCode {
+    let open = open.map(Target::parse);
+    let page = if open.is_some() {
+        Some(Page::Sessions)
+    } else {
+        page.and_then(Page::parse)
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
@@ -1050,6 +1498,9 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
             let mut window = SettingsWindow::new(page);
+            if let Some(target) = open {
+                window.open_session(&cc.egui_ctx, target);
+            }
             // Before the first frame, not at first focus: a window opened in the background
             // would otherwise draw its first frames small.
             window.follow_text_scale(&cc.egui_ctx, theme::desktop_text_scale());
@@ -1481,5 +1932,95 @@ mod tests {
         harness.get_by_role_and_label(Role::Tab, "Cleanup (beta)");
         harness.get_by_role_and_label(Role::ComboBox, "Position:");
         harness.get_by_role_and_label(Role::CheckBox, "Save transcripts");
+    }
+
+    fn listing() -> Listing {
+        sessions::parse_listing(
+            r#"{"directory": "/t", "auto": true, "model_ready": false, "backfill": 3,
+               "sessions": [
+                 {"path": "/t/b.vwsession", "name": "b.vwsession", "started": "2026-10-27T14:05:12-04:00",
+                  "duration_s": 2530, "source": "system audio", "summary": true, "title": "Local captions talk",
+                  "verified": true},
+                 {"path": "/t/a.vwsession", "name": "a.vwsession", "started": "2026-10-26T09:00:00-04:00",
+                  "duration_s": 40, "source": "microphone", "summary": false, "verified": true}]}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_sessions_page_lists_each_session_with_what_it_can_do() {
+        let mut harness = harness(Page::Sessions, WIDE);
+        harness.state_mut().window.sessions.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        harness.get_by_role_and_label(Role::CheckBox, "Summarise saved sessions automatically");
+        harness.get_by_label("The model isn't downloaded yet; get it on the Cleanup page.");
+        harness.get_by_role_and_label(Role::Button, "Bundle and summarise 3 transcripts");
+        harness.get_by_label("2026-10-27 14:05 · 42 min · system audio");
+        harness.get_by_label("Local captions talk");
+        harness.get_by_label("Waiting for a summary");
+        assert_eq!(
+            harness
+                .query_all_by_role_and_label(Role::Button, "Summary")
+                .count(),
+            2
+        );
+        harness.get_by_role_and_label(Role::Button, "Summarise again");
+        harness.get_by_role_and_label(Role::Button, "Summarise");
+        harness.get_by_role_and_label(Role::Button, "Delete summary");
+        harness.get_by_label(
+            "Saving transcripts is off (Captions page), so new sessions aren't kept.",
+        );
+    }
+
+    #[test]
+    fn a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it() {
+        let mut harness = harness(Page::Sessions, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            let mut state = window.sessions.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            state.viewer = Viewer {
+                target: Some(Target::parse("/t/b.vwsession#summary")),
+                text: Some(Ok(
+                    "# Local captions talk\n\nAn overview.\n\n- Runs locally [03:10]\n".into(),
+                )),
+                scrolled: false,
+            };
+        }
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "All sessions");
+        harness.get_by_label("Local captions talk");
+        harness.get_by_role_and_label(Role::Link, "[03:10]");
+        harness.get_by_label(
+            "Written by a language model on this machine. It can get details wrong; the time stamps open the transcript where each point comes from.",
+        );
+    }
+
+    #[test]
+    fn a_transcript_opened_at_a_stamp_marks_that_paragraph() {
+        let mut harness = harness(Page::Sessions, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            let mut state = window.sessions.lock().unwrap();
+            state.viewer = Viewer {
+                target: Some(Target::parse("/t/b.vwsession#transcript@01:30")),
+                text: Some(Ok(
+                    "vinoWhisper transcript, x\n\n[00:00] One.\n\n[01:10] Two.\n".into(),
+                )),
+                scrolled: false,
+            };
+        }
+        harness.run();
+        harness.get_by_label("[01:10] Two.");
+        assert!(
+            harness
+                .state()
+                .window
+                .sessions
+                .lock()
+                .unwrap()
+                .viewer
+                .scrolled
+        );
     }
 }

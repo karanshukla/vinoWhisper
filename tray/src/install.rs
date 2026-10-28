@@ -63,6 +63,49 @@ fn settings_entry_in(data: &Path) -> PathBuf {
     ))
 }
 
+pub const SESSION_MIME: &str = "application/vnd.vinowhisper.session+zip";
+
+fn mime_package_in(data: &Path) -> PathBuf {
+    data.join(format!("mime/packages/{APP_ID}-session.xml"))
+}
+
+// The bundle's own type (#123): its icon in file managers, and opening one goes to Sessions.
+// The magic is the zip's first entry, "mimetype", stored at offset 30 with its value at 38.
+fn mime_package() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="{SESSION_MIME}">
+    <comment>vinoWhisper session</comment>
+    <sub-class-of type="application/zip"/>
+    <icon name="{APP_ID}"/>
+    <generic-icon name="text-x-generic"/>
+    <glob pattern="*.vwsession"/>
+    <magic priority="70">
+      <match type="string" offset="30" value="mimetype">
+        <match type="string" offset="38" value="{SESSION_MIME}"/>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>
+"#
+    )
+}
+
+fn refresh_databases(data: &Path) {
+    for (tool, dir) in [
+        ("update-mime-database", data.join("mime")),
+        ("update-desktop-database", data.join("applications")),
+    ] {
+        let _ = std::process::Command::new(tool)
+            .arg(dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 fn settings_command(exe: &Path) -> PathBuf {
     exe.with_file_name(SETTINGS_COMMAND)
 }
@@ -128,6 +171,7 @@ pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {
         &settings_entry_in(data_dir),
         &settings_desktop_entry(Path::new(SETTINGS_COMMAND)),
     )?);
+    written.push(write(&mime_package_in(data_dir), &mime_package())?);
     written.extend(write_icons(data_dir)?);
     Ok(written)
 }
@@ -147,8 +191,18 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
         }
     }
     let settings_entry = settings_desktop_entry(&settings_command(exe));
+    let mut changed = false;
     if std::fs::read_to_string(dirs.settings_entry()).ok() != Some(settings_entry.clone()) {
         write(&dirs.settings_entry(), &settings_entry)?;
+        changed = true;
+    }
+    let mime = mime_package_in(&dirs.data);
+    if std::fs::read_to_string(&mime).ok() != Some(mime_package()) {
+        write(&mime, &mime_package())?;
+        changed = true;
+    }
+    if changed {
+        refresh_databases(&dirs.data);
     }
     migrate_legacy_command(&dirs.launcher())?;
     migrate_legacy_command(&dirs.autostart())?;
@@ -218,8 +272,10 @@ fn install_into(
         &dirs.settings_entry(),
         &settings_desktop_entry(&settings_command(exe)),
     )?);
+    written.push(write(&mime_package_in(&dirs.data), &mime_package())?);
     written.extend(write_icons(&dirs.data)?);
     written.extend(set_autostart_in(dirs, exe, autostart, caption)?);
+    refresh_databases(&dirs.data);
     Ok(written)
 }
 
@@ -247,10 +303,14 @@ fn autostart_into(dirs: &Dirs, exe: &Path, caption: Option<&Path>) -> io::Result
 
 fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
-    let paths = [dirs.launcher(), dirs.settings_entry()]
-        .into_iter()
-        .chain(dirs.icons().map(|(path, _)| path))
-        .chain([dirs.autostart()]);
+    let paths = [
+        dirs.launcher(),
+        dirs.settings_entry(),
+        mime_package_in(&dirs.data),
+    ]
+    .into_iter()
+    .chain(dirs.icons().map(|(path, _)| path))
+    .chain([dirs.autostart()]);
     for path in paths {
         match std::fs::remove_file(&path) {
             Ok(()) => removed.push(path),
@@ -258,6 +318,7 @@ fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
             Err(err) => return Err(err),
         }
     }
+    refresh_databases(&dirs.data);
     Ok(removed)
 }
 
@@ -312,9 +373,10 @@ Type=Application
 Name=vinoWhisper Settings
 GenericName=Captions and Dictation Settings
 Comment=Caption position and size, audio source, language, and shortcuts
-Exec={}
+Exec={} %f
 Icon={APP_ID}
 Terminal=false
+MimeType={SESSION_MIME};
 Categories=Settings;Utility;Accessibility;
 Keywords=captions;subtitles;dictation;whisper;shortcut;language;preferences;
 StartupNotify=false
@@ -417,11 +479,11 @@ mod tests {
     fn install_then_uninstall_leaves_nothing_behind() {
         let dirs = scratch("round-trip");
         let written = install_into(&dirs, Path::new("/bin/vinowhisper-tray"), true, None).unwrap();
-        assert_eq!(written.len(), 5);
+        assert_eq!(written.len(), 6);
         assert!(written.iter().all(|path| path.exists()));
 
         let removed = uninstall_from(&dirs).unwrap();
-        assert_eq!(removed.len(), 5);
+        assert_eq!(removed.len(), 6);
         assert!(written.iter().all(|path| !path.exists()));
     }
 
@@ -448,7 +510,7 @@ mod tests {
         let entry = std::fs::read_to_string(dirs.settings_entry()).unwrap();
         assert_eq!(
             exec_line(&entry),
-            "Exec=/home/me/.local/bin/vinowhisper-gui"
+            "Exec=/home/me/.local/bin/vinowhisper-gui %f"
         );
         assert!(entry.contains(&format!("Icon={APP_ID}")));
         assert!(!entry.contains("NoDisplay"));
@@ -476,12 +538,20 @@ mod tests {
         let icons = dirs.icons().map(|(path, _)| path);
         assert_eq!(
             written,
-            [vec![dirs.launcher(), dirs.settings_entry()], icons.to_vec()].concat()
+            [
+                vec![
+                    dirs.launcher(),
+                    dirs.settings_entry(),
+                    mime_package_in(&dirs.data)
+                ],
+                icons.to_vec()
+            ]
+            .concat()
         );
         let entry = std::fs::read_to_string(dirs.launcher()).unwrap();
         assert_eq!(exec_line(&entry), "Exec=vinowhisper-tray");
         let settings = std::fs::read_to_string(dirs.settings_entry()).unwrap();
-        assert_eq!(exec_line(&settings), "Exec=vinowhisper-gui");
+        assert_eq!(exec_line(&settings), "Exec=vinowhisper-gui %f");
     }
 
     #[test]
@@ -577,5 +647,19 @@ mod tests {
         set_autostart_in(&dirs, exe, false, None).unwrap();
         assert!(!dirs.autostart().exists());
         assert!(!dirs.launcher().exists());
+    }
+
+    #[test]
+    fn a_session_bundle_opens_in_the_settings_window_by_type() {
+        let dirs = scratch("mime");
+        ensure_launcher_in(&dirs, Path::new("/home/me/.local/bin/vinowhisper-tray")).unwrap();
+        let settings = std::fs::read_to_string(dirs.settings_entry()).unwrap();
+        assert!(settings.contains("MimeType=application/vnd.vinowhisper.session+zip;\n"));
+        let xml = std::fs::read_to_string(mime_package_in(&dirs.data)).unwrap();
+        assert!(xml.contains(r#"<glob pattern="*.vwsession"/>"#));
+        assert!(xml.contains(r#"<icon name="io.github.karanshukla.vinowhisper"/>"#));
+        assert!(xml.contains(r#"offset="38" value="application/vnd.vinowhisper.session+zip""#));
+        uninstall_from(&dirs).unwrap();
+        assert!(!mime_package_in(&dirs.data).exists());
     }
 }
