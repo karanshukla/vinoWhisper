@@ -5,7 +5,6 @@ mod forward;
 mod model;
 mod sessions;
 mod sessions_window;
-mod theme;
 mod window;
 
 use std::process::ExitCode;
