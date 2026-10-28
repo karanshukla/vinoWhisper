@@ -1,3 +1,5 @@
+import contextlib
+import fcntl
 import json
 import os
 import time
@@ -8,7 +10,7 @@ from typing import IO
 
 import numpy as np
 
-from . import config, events
+from . import bundle, config, events
 from .paragraphs import ParagraphBreaker
 
 AUDIO_NAME = "audio.wav"
@@ -74,6 +76,9 @@ class TranscriptWriter:
         self._started_at = clock()
         self._started = now()
         self._device = "?"
+        self._language = ""
+        self._task = ""
+        self._bundle_on_close = False
         self._breaker = ParagraphBreaker()
         self._file: IO | None = None
         self._first = True
@@ -84,6 +89,7 @@ class TranscriptWriter:
             return
         if isinstance(event, events.Ready):
             self._device = event.device
+            self._language, self._task = event.language, event.task
             self._started_at = self._clock()
             self._started = self._now()
         elif isinstance(event, events.Cycle):
@@ -99,12 +105,32 @@ class TranscriptWriter:
             return
         self._closed = True
         file, self._file = self._file, None
-        if file is not None:
-            try:
-                file.write("\n")
-                file.close()
-            except OSError:
-                pass
+        if file is None:
+            return
+        try:
+            file.write("\n")
+            file.close()
+        except OSError:
+            return
+        if self._bundle_on_close and self.path is not None:
+            self._bundle(self.path)
+
+    def _bundle(self, transcript: Path) -> None:
+        language = self._language or None
+        task = self._task or None
+        # On failure the .txt stays, and the server's next start bundles it (summary.recover).
+        with contextlib.suppress(OSError, bundle.BundleError):
+            self.path = bundle.bundle_transcript(
+                transcript,
+                started=self._started.astimezone(),
+                duration_s=int(self._clock() - self._started_at),
+                language=language,
+                task=task,
+                device=None if self._device == "?" else self._device,
+                model_id=config.model_id(
+                    config.is_multilingual(language or "en", task or config.DEFAULT_TASK)
+                ),
+            )
 
     def _words(self, words: list[str]) -> None:
         if not words:
@@ -129,10 +155,13 @@ class TranscriptWriter:
         if target.is_dir() or (not target.exists() and not target.suffix):
             target.mkdir(mode=0o700, parents=True, exist_ok=True)
             target = target / self._started.strftime("%Y-%m-%d-%H%M%S.txt")
+            self._bundle_on_close = not bundle.bundle_path_for(target).exists()
         else:
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = target
         self._file = _open_private(target, "a")
+        # Held until close, so recovery can tell a live session from a crashed one.
+        fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.fstat(self._file.fileno()).st_size:
             self._file.write("\n")
         stamp = f"{self._started:%Y-%m-%d %H:%M}"

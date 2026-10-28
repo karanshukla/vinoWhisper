@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -9,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from . import __version__, audio, capture, config, events, session, style
+from . import __version__, audio, bundle, capture, config, events, session, style, summary
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
@@ -394,7 +395,17 @@ def main() -> int:
             transcript.close()
             if transcript.path is not None:
                 print(f"\n[vinowhisper] transcript saved to {transcript.path}", file=sys.stderr)
+                if transcript.path.suffix == bundle.SUFFIX:
+                    _queue_summary()
     return 0
+
+
+def _queue_summary() -> None:
+    if not summary.auto_enabled():
+        return
+    # Unreachable is fine: the server picks up unsummarised sessions when it next starts.
+    with contextlib.suppress(requests.RequestException):
+        TranscriptionClient().summarise()
 
 
 if __name__ == "__main__":

@@ -37,6 +37,21 @@ def no_real_cleanup_settings(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_real_sessions(monkeypatch, tmp_path_factory):
+    """Saved sessions, summary settings and the summariser's state are the user's; never touch them.
+
+    Automatic summaries start off here, so a caption test never posts to a real server.
+    """
+    # Its own directory: plenty of tests assert that tmp_path is left empty.
+    home = tmp_path_factory.mktemp("sessions")
+    settings = home / "no-summaries.json"
+    settings.write_text('{"auto": false}', encoding="utf-8")
+    monkeypatch.setattr(config, "SUMMARIES_FILE", settings)
+    monkeypatch.setattr(config, "SESSIONS_STATE_FILE", home / "no-sessions-state.json")
+    monkeypatch.setattr(config, "TRANSCRIPT_DIR", home / "no-transcripts")
+
+
+@pytest.fixture(autouse=True)
 def no_dictation_preview(monkeypatch):
     monkeypatch.setattr(config, "PREVIEW_EVERY_S", 1e9)
 

@@ -14,7 +14,7 @@ import pytest
 import requests
 
 from tests import pcm
-from vinowhisper import caption, config, events
+from vinowhisper import bundle, caption, config, events
 
 _EVERY_EVENT = [
     events.Ready(device="CPU", device_full="Intel(R) Core(TM)", degraded=True, warnings=["no NPU"]),
@@ -318,7 +318,8 @@ def _scripted(monkeypatch, tmp_path, *flags):
 def test_transcript_flag_writes_beside_the_json_renderer(monkeypatch, tmp_path, capsys):
     assert _scripted(monkeypatch, tmp_path, "--transcript", str(tmp_path / "t")) == 0
     [saved] = (tmp_path / "t").iterdir()
-    assert "[00:00] hello world" in saved.read_text(encoding="utf-8")
+    assert saved.suffix == ".vwsession"
+    assert "[00:00] hello world" in bundle.read(saved).transcript
     assert '"event": "Cycle"' in capsys.readouterr().out
 
 

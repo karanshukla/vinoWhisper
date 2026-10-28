@@ -106,6 +106,15 @@ class TranscriptionClient:
             timeout=(config.CONNECT_TIMEOUT_S, config.MODEL_LOAD_TIMEOUT_S),
         ).raise_for_status()
 
+    def summarise(self, paths: list[Path] | None = None) -> dict:
+        response = self._session.post(
+            f"{BASE_URL}/summaries",
+            json={"paths": [str(path) for path in paths or []]},
+            timeout=(config.CONNECT_TIMEOUT_S, config.CONNECT_TIMEOUT_S),
+        )
+        response.raise_for_status()
+        return response.json()
+
     def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
         started_at = time.monotonic()
         response = self._session.post(

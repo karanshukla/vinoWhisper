@@ -4,12 +4,13 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import __version__, audio, cleanup, config, devices, failures, listen, llm
+from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
 from .transcriber import WhisperTranscriber
 
 app = Flask(__name__)
@@ -23,6 +24,9 @@ cleaner = llm.CleanupModel()
 _activity_lock = threading.Lock()
 _last_request_at = time.monotonic()
 _in_flight = 0
+# Captions and dictation only: what a background summary gives way to.
+_last_npu_use_at = 0.0
+_npu_in_flight = 0
 
 
 def _mark_activity(delta: int = 0) -> None:
@@ -30,6 +34,21 @@ def _mark_activity(delta: int = 0) -> None:
     with _activity_lock:
         _last_request_at = time.monotonic()
         _in_flight += delta
+
+
+def _mark_npu_use(delta: int = 0) -> None:
+    global _last_npu_use_at, _npu_in_flight
+    with _activity_lock:
+        _last_npu_use_at = time.monotonic()
+        _npu_in_flight += delta
+
+
+def npu_busy() -> bool:
+    with _activity_lock:
+        return _npu_in_flight > 0 or time.monotonic() - _last_npu_use_at < summary.QUIET_S
+
+
+summariser = summary.Summariser(cleaner, npu_busy)
 
 
 @app.before_request
@@ -52,7 +71,7 @@ def transcribe() -> Response:
             "limit the streamer callback supports"
         )
 
-    stream = _track_in_flight(transcriber.transcribe_stream(samples))
+    stream = _track_in_flight(transcriber.transcribe_stream(samples), npu=True)
     return Response(stream_with_context(stream), mimetype="text/plain; charset=utf-8")
 
 
@@ -64,6 +83,7 @@ def health() -> Response:
             "version": __version__,
             **transcriber.describe(),
             "cleanup": cleaner.describe(),
+            "summaries": summariser.describe(),
         }
     )
 
@@ -81,6 +101,7 @@ def clean() -> Response:
     if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:
         budget_s = min(float(budget), budget_s)
     _mark_activity(+1)
+    _mark_npu_use(+1)
     try:
         answer, truncated = cleaner.generate(
             cleanup.PROMPT,
@@ -96,13 +117,34 @@ def clean() -> Response:
         return _error(f"cleanup failed: {exc}".splitlines()[0], 503)
     finally:
         _mark_activity(-1)
+        _mark_npu_use(-1)
     return jsonify({"text": answer, "truncated": truncated, "device": cleaner.device})
 
 
 @app.route("/cleanup/warm", methods=["POST"])
 def warm() -> Response:
+    # The dictation key is down: a summary mid-chunk would hold the model.
+    _mark_npu_use()
     cleaner.warm()
     response = jsonify(cleaner.describe())
+    response.status_code = 202
+    return response
+
+
+@app.route("/summaries", methods=["POST"])
+def summaries() -> Response:
+    body = request.get_json(silent=True)
+    paths: list[Path] = []
+    if isinstance(body, dict) and isinstance(body.get("paths"), list):
+        for raw in body["paths"]:
+            if not isinstance(raw, str):
+                return _error("'paths' must be a list of strings")
+            path = Path(raw).resolve()
+            if not bundle.is_bundle_name(path) or not path.is_file():
+                return _error(f"{raw} is not a .vwsession file")
+            paths.append(path)
+    summariser.kick(paths)
+    response = jsonify(summariser.describe())
     response.status_code = 202
     return response
 
@@ -113,12 +155,16 @@ def _error(message: str, status: int = 400) -> Response:
     return response
 
 
-def _track_in_flight(stream: Iterator[str]) -> Iterator[str]:
+def _track_in_flight(stream: Iterator[str], npu: bool = False) -> Iterator[str]:
     _mark_activity(+1)
+    if npu:
+        _mark_npu_use(+1)
     try:
         yield from stream
     finally:
         _mark_activity(-1)
+        if npu:
+            _mark_npu_use(-1)
 
 
 def _idle_watchdog(timeout_s: float) -> None:
@@ -126,11 +172,27 @@ def _idle_watchdog(timeout_s: float) -> None:
         time.sleep(config.IDLE_CHECK_INTERVAL_S)
         with _activity_lock:
             idle_for = time.monotonic() - _last_request_at
-            busy = _in_flight > 0
+            busy = _in_flight > 0 or summariser.active
         cleaner.unload_if_idle(config.CLEANUP_IDLE_UNLOAD_S)
         if not busy and idle_for >= timeout_s:
             # _exit(0): a clean exit tells systemd this was an idle unload, not a crash.
             os._exit(0)
+
+
+def _resume_summaries() -> None:
+    # A session that crashed before it was bundled, then anything left unsummarised.
+    try:
+        recovered = summary.recover()
+    except OSError as exc:
+        print(f"[vinowhisper-server] could not recover transcripts: {exc}", file=sys.stderr)
+        recovered = []
+    for path in recovered:
+        print(
+            f"[vinowhisper-server] bundled {path.name}, left by a session that did not end",
+            file=sys.stderr,
+        )
+    if summary.auto_enabled() and summary.pending():
+        summariser.kick()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -179,9 +241,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
         return 1
 
-    global transcriber, cleaner
+    global transcriber, cleaner, summariser
     transcriber = WhisperTranscriber(device=args.device, language=args.language, task=args.task)
     cleaner = llm.CleanupModel(device=args.device)
+    summariser = summary.Summariser(cleaner, npu_busy)
 
     try:
         selection = transcriber.select_device()
@@ -206,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
         return 1
+
+    _resume_summaries()
 
     threading.Thread(
         target=_idle_watchdog,
