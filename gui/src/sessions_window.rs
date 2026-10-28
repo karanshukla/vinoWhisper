@@ -3,13 +3,14 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use eframe::egui::accesskit::Role;
-use eframe::egui::{self, Align, Color32, RichText, Stroke};
+use eframe::egui::{self, Align, Color32, Layout, RichText};
+use vino_ui::a11y;
+use vino_ui::icons::{self, Icon};
+use vino_ui::theme;
+use vino_ui::widgets::{self, Button, ButtonKind, ChipKind, Tone};
 
 use crate::forward;
 use crate::sessions::{self, Listing, Part, Piece, SummaryLine, Target};
-use crate::theme;
-use crate::window::{heading, live, section, text_tab};
 use vinowhisper_settings::Settings;
 
 #[derive(Clone, Default)]
@@ -33,9 +34,9 @@ struct SessionsState {
 
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
-// Wider than the settings form: this is for reading.
-const READING_MAX_WIDTH: f32 = 760.0;
-const SCROLL_GAP: f32 = 24.0;
+const LIST_MAX_WIDTH: f32 = 760.0;
+// Narrower than the list: this is for reading.
+const READING_MAX_WIDTH: f32 = 640.0;
 
 struct SessionsWindow {
     state: Arc<Mutex<SessionsState>>,
@@ -156,77 +157,80 @@ impl SessionsWindow {
             _ => None,
         };
         if listing.as_ref().is_some_and(|l| !l.model_ready) {
-            ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                live(
-                    &ui.label(
-                        RichText::new(
-                            "The summary model isn't downloaded yet; get it on the Cleanup page of the settings.",
-                        )
-                        .color(ui.visuals().warn_fg_color),
-                    ),
-                );
-                if ui.button("Open settings").clicked() {
-                    forward::open_settings("cleanup");
-                }
-            });
+            ui.add_space(12.0);
+            widgets::banner(
+                ui,
+                Tone::Warn,
+                "The summary model isn't downloaded yet; get it on the Cleanup page of the settings.",
+                |ui| {
+                    if ui.add(Button::secondary("Open settings").small()).clicked() {
+                        forward::open_settings("cleanup");
+                    }
+                },
+            );
         }
         if !self.save_transcripts {
-            ui.add_space(10.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(
-                        "Saving transcripts is off (settings, Captions page), so new sessions aren't kept.",
-                    )
-                    .color(p.muted),
-                )
-                .wrap(),
+            ui.add_space(12.0);
+            widgets::banner(
+                ui,
+                Tone::Info,
+                "Saving transcripts is off (settings, Captions page), so new sessions aren't kept.",
+                |_| {},
             );
         }
         if let Some(listing) = listing.as_ref().filter(|l| l.backfill > 0) {
             let count = listing.backfill;
-            section(ui, "Older transcripts");
-            ui.add(
-                egui::Label::new(
-                    RichText::new(
-                        "Saved before summaries existed, as plain text. Bundling keeps their text as it is.",
-                    )
-                    .size(12.5)
-                    .color(p.muted),
-                )
-                .wrap(),
-            );
-            ui.add_space(4.0);
-            let label = format!(
-                "Bundle and summarise {count} transcript{}",
-                if count == 1 { "" } else { "s" }
-            );
-            if ui
-                .add_enabled(!state.busy, egui::Button::new(label))
-                .clicked()
-            {
-                self.act(ui.ctx(), "backfill", None);
-            }
+            ui.add_space(12.0);
+            let what = format!("{count} transcript{}", if count == 1 { "" } else { "s" });
+            egui::Frame::new()
+                .fill(p.field)
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(14, 12))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        icons::icon(ui, Icon::Archive, 16.0, p.muted);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let button = ui.add_enabled(
+                                !state.busy,
+                                Button::secondary("Bundle and summarise"),
+                            );
+                            if a11y::for_what(button, &what).clicked() {
+                                self.act(ui.ctx(), "backfill", None);
+                            }
+                            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.label(
+                                    RichText::new(format!("{what} from before summaries"))
+                                        .family(theme::semibold()),
+                                );
+                                widgets::small(ui, "Plain text. Bundling keeps the text as it is.");
+                            });
+                        });
+                    });
+                });
         }
 
-        section(ui, "Sessions");
+        let n = listing.as_ref().map_or(0, |l| l.sessions.len());
+        section(ui, "Sessions", n);
         if !state.error.is_empty() {
-            live(
-                &ui.label(
-                    RichText::new(format!("That didn't work: {}", state.error))
-                        .color(ui.visuals().error_fg_color),
-                ),
+            widgets::notice(
+                ui,
+                Tone::Error,
+                &format!("That didn't work: {}", state.error),
             );
+            ui.add_space(8.0);
         }
         match &state.listing {
             None => {
-                live(&ui.label(RichText::new("Reading…").color(p.muted)));
+                a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Reading…"));
             }
             Some(Err(why)) => {
-                live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+                widgets::banner(ui, Tone::Error, why, |_| {});
             }
             Some(Ok(listing)) if listing.sessions.is_empty() => {
-                ui.label(RichText::new("No saved sessions yet.").color(p.muted));
+                widgets::muted(ui, "No saved sessions yet.");
             }
             Some(Ok(listing)) => {
                 for entry in &listing.sessions {
@@ -239,10 +243,18 @@ impl SessionsWindow {
 
     fn card(&mut self, ui: &mut egui::Ui, entry: &sessions::Entry, listing: &Listing, busy: bool) {
         let p = theme::palette(ui.ctx());
-        egui::Frame::NONE
-            .stroke(Stroke::new(1.0_f32, p.rule))
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::symmetric(12, 10))
+        let path = entry.path.clone();
+        let deleting = self.confirm_delete.as_ref() == Some(&path);
+        let (fill, stroke) = if deleting {
+            (p.error_tint, egui::Stroke::NONE)
+        } else {
+            (p.surface, egui::Stroke::new(1.0_f32, p.rule))
+        };
+        egui::Frame::new()
+            .fill(fill)
+            .stroke(stroke)
+            .corner_radius(12.0)
+            .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let working = listing.current.as_ref() == Some(&entry.path);
@@ -250,123 +262,168 @@ impl SessionsWindow {
                 // The title leads once there is one; until then the date stands in for it.
                 let title = entry.title.clone().filter(|_| entry.error.is_none());
                 let name = title.clone().unwrap_or_else(|| entry.when());
-                heading(
-                    &ui.label(RichText::new(&name).family(theme::bold())),
-                    &name,
-                    3,
-                );
                 let mut facts = Vec::new();
                 if title.is_some() {
                     facts.push(entry.when());
                 }
                 facts.extend(entry.length());
                 facts.extend(entry.source.clone());
-                ui.label(RichText::new(facts.join(" · ")).color(p.muted));
-                let status = match &entry.error {
-                    Some(error) => Some((error.clone(), ui.visuals().error_fg_color)),
-                    None if waiting || !entry.summary => {
-                        Some((listing.status(entry).to_owned(), p.muted))
-                    }
-                    None => None,
-                };
-                if let Some((status, color)) = status {
-                    ui.horizontal_wrapped(|ui| {
-                        if working {
-                            ui.add(egui::Spinner::new());
-                        }
-                        live(&ui.add(egui::Label::new(RichText::new(status).color(color)).wrap()));
-                    });
-                }
-                if !entry.verified && entry.error.is_none() {
-                    ui.label(
-                        RichText::new("Changed since it was written (the hashes don't match).")
-                            .color(ui.visuals().warn_fg_color),
-                    );
-                }
-                ui.add_space(6.0);
-                let path = entry.path.clone();
-                if self.confirm_delete.as_ref() == Some(&path) {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("Delete this session, transcript and summary?");
-                        if ui.button("Delete the session").clicked() {
-                            self.confirm_delete = None;
-                            self.act(ui.ctx(), "delete", Some(path.clone()));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.confirm_delete = None;
-                        }
-                    });
-                    return;
-                }
-                ui.horizontal_wrapped(|ui| {
-                    let readable = entry.error.is_none();
-                    let open = |part| Target {
-                        path: path.clone(),
-                        part,
-                        at_s: None,
-                    };
-                    if ui
-                        .add_enabled(readable, egui::Button::new("Transcript"))
-                        .clicked()
-                    {
-                        self.open(ui.ctx(), open(Part::Transcript));
-                    }
-                    if entry.summary {
-                        if ui
-                            .add_enabled(readable, egui::Button::new("Summary"))
-                            .clicked()
-                        {
-                            self.open(ui.ctx(), open(Part::Summary));
-                        }
-                    } else if ui
-                        .add_enabled(
-                            readable && !busy && !waiting,
-                            egui::Button::new("Summarise"),
-                        )
-                        .clicked()
-                    {
-                        self.act(ui.ctx(), "summarise", Some(path.clone()));
-                    }
-                    ui.menu_button("More", |ui| {
-                        if entry.summary
-                            && ui
-                                .add_enabled(
-                                    readable && !busy && !waiting,
-                                    egui::Button::new("Summarise again"),
-                                )
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if deleting {
+                            if ui
+                                .add(Button::destructive("Delete the session").small())
                                 .clicked()
-                        {
-                            self.act(ui.ctx(), "summarise", Some(path.clone()));
+                            {
+                                self.confirm_delete = None;
+                                self.act(ui.ctx(), "delete", Some(path.clone()));
+                            }
+                            if ui.add(Button::ghost("Cancel").small()).clicked() {
+                                self.confirm_delete = None;
+                            }
+                        } else {
+                            self.card_actions(ui, entry, listing, busy, waiting, working);
                         }
-                        if entry.summary
-                            && ui
-                                .add_enabled(!busy, egui::Button::new("Delete summary"))
-                                .clicked()
-                        {
-                            self.act(ui.ctx(), "delete-summary", Some(path.clone()));
-                        }
-                        if ui.button("Show in folder").clicked() {
-                            sessions::show_in_folder(&path);
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(!busy, egui::Button::new("Delete…"))
-                            .clicked()
-                        {
-                            self.confirm_delete = Some(path.clone());
-                        }
+                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            let shown = ui.add(
+                                egui::Label::new(RichText::new(&name).family(theme::semibold()))
+                                    .truncate(),
+                            );
+                            a11y::heading(&shown, &name, 3);
+                            if deleting {
+                                ui.label(
+                                    RichText::new("Delete this session, transcript and summary?")
+                                        .size(12.5)
+                                        .color(p.error),
+                                );
+                            } else {
+                                widgets::small(ui, facts.join(" · "));
+                                if let Some(error) = &entry.error {
+                                    a11y::live(
+                                        &ui.add(
+                                            egui::Label::new(
+                                                RichText::new(error).size(12.5).color(p.error),
+                                            )
+                                            .wrap(),
+                                        ),
+                                    );
+                                }
+                                if !entry.verified && entry.error.is_none() {
+                                    ui.label(
+                                        RichText::new("Changed since it was written.")
+                                            .size(12.5)
+                                            .color(p.warn),
+                                    );
+                                }
+                            }
+                        });
                     });
                 });
             });
     }
 
-    fn viewer(&mut self, ui: &mut egui::Ui, state: &SessionsState) {
+    // Right to left: the More menu, Summary or Summarise, Transcript, then the status chip.
+    fn card_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        entry: &sessions::Entry,
+        listing: &Listing,
+        busy: bool,
+        waiting: bool,
+        working: bool,
+    ) {
+        let path = entry.path.clone();
+        let readable = entry.error.is_none();
+        let open = |part| Target {
+            path: path.clone(),
+            part,
+            at_s: None,
+        };
+        let more = widgets::icon_button(ui, ButtonKind::Secondary, Icon::More, "More");
+        egui::Popup::menu(&more).show(|ui| {
+            ui.set_min_width(200.0);
+            if entry.summary
+                && ui
+                    .add_enabled(
+                        readable && !busy && !waiting,
+                        egui::Button::new("Summarise again"),
+                    )
+                    .clicked()
+            {
+                self.act(ui.ctx(), "summarise", Some(path.clone()));
+                ui.close();
+            }
+            if entry.summary
+                && ui
+                    .add_enabled(!busy, egui::Button::new("Delete summary"))
+                    .clicked()
+            {
+                self.act(ui.ctx(), "delete-summary", Some(path.clone()));
+                ui.close();
+            }
+            if ui.button("Show in folder").clicked() {
+                sessions::show_in_folder(&path);
+                ui.close();
+            }
+            ui.separator();
+            let p = theme::palette(ui.ctx());
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(RichText::new("Delete…").color(p.error)),
+                )
+                .clicked()
+            {
+                self.confirm_delete = Some(path.clone());
+                ui.close();
+            }
+        });
+        if entry.summary {
+            if ui
+                .add_enabled(readable, Button::primary("Summary").small())
+                .clicked()
+            {
+                self.open(ui.ctx(), open(Part::Summary));
+            }
+        } else if ui
+            .add_enabled(
+                readable && !busy && !waiting,
+                Button::secondary("Summarise").small(),
+            )
+            .clicked()
+        {
+            self.act(ui.ctx(), "summarise", Some(path.clone()));
+        }
+        if ui
+            .add_enabled(readable, Button::secondary("Transcript").small())
+            .clicked()
+        {
+            self.open(ui.ctx(), open(Part::Transcript));
+        }
+        if entry.error.is_none() && (waiting || !entry.summary) {
+            let text = listing.status(entry);
+            let shown = if working {
+                widgets::chip_busy(ui, ChipKind::Ok, text)
+            } else {
+                widgets::chip(ui, ChipKind::Neutral, text)
+            };
+            a11y::live(&shown);
+        }
+    }
+
+    // What the viewer puts in the header: the way back, the title and facts, Show in folder
+    // and the two tabs.
+    fn viewer_header(&mut self, ui: &mut egui::Ui, state: &SessionsState, header: theme::Header) {
         let p = theme::palette(ui.ctx());
         let Some(target) = state.viewer.target.clone() else {
             return;
         };
-        ui.add_space(10.0);
-        if ui.button("All sessions").clicked() {
+        if ui
+            .add(Button::ghost("All sessions").icon(Icon::ArrowLeft))
+            .clicked()
+        {
             self.state.lock().unwrap().viewer = Viewer::default();
             self.refresh(ui.ctx());
             return;
@@ -389,32 +446,50 @@ impl SessionsWindow {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         };
-        ui.add_space(14.0);
-        heading(
-            &ui.label(RichText::new(&name).family(theme::bold()).size(16.0)),
-            &name,
-            2,
-        );
-        if let Some(entry) = &entry {
-            let mut facts = Vec::new();
-            if title.is_some() {
-                facts.push(entry.when());
-            }
-            facts.extend(entry.length());
-            facts.extend(entry.source.clone());
-            ui.label(RichText::new(facts.join(" · ")).color(p.muted));
-        }
-        ui.add_space(10.0);
-        let colors = theme::Header {
-            bg: p.bg,
-            text: p.text,
-            muted: p.muted,
-        };
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add(Button::secondary("Show in folder").icon(Icon::Folder))
+                    .clicked()
+                {
+                    sessions::show_in_folder(&target.path);
+                }
+                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let shown = ui.add(
+                        egui::Label::new(
+                            RichText::new(&name)
+                                .size(22.0)
+                                .family(theme::bold())
+                                .color(header.text),
+                        )
+                        .truncate(),
+                    );
+                    a11y::heading(&shown, &name, 2);
+                    if let Some(entry) = &entry {
+                        let mut facts = Vec::new();
+                        if title.is_some() {
+                            facts.push(entry.when());
+                        }
+                        facts.extend(entry.length());
+                        facts.extend(entry.source.clone());
+                        ui.label(
+                            RichText::new(facts.join(" · "))
+                                .size(12.5)
+                                .color(header.muted),
+                        );
+                    }
+                });
+            });
+        });
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
+            a11y::tab_list(ui, "View");
             for (part, label) in [(Part::Transcript, "Transcript"), (Part::Summary, "Summary")] {
                 let enabled = part == Part::Transcript || entry.as_ref().is_none_or(|e| e.summary);
-                if text_tab(ui, label, target.part == part, enabled, colors).clicked()
+                if widgets::tab(ui, label, target.part == part, enabled, header).clicked()
                     && target.part != part
                 {
                     self.open(
@@ -428,14 +503,30 @@ impl SessionsWindow {
                 }
             }
         });
-        ui.add_space(12.0);
+        let _ = p;
+    }
+
+    fn viewer(&mut self, ui: &mut egui::Ui, state: &SessionsState) {
+        let Some(target) = state.viewer.target.clone() else {
+            return;
+        };
+        let entry = match &state.listing {
+            Some(Ok(listing)) => listing
+                .sessions
+                .iter()
+                .find(|e| e.path == target.path)
+                .cloned(),
+            _ => None,
+        };
+        let title = entry.as_ref().and_then(|e| e.title.clone());
+        ui.add_space(8.0);
         let text = match &state.viewer.text {
             None => {
-                live(&ui.label(RichText::new("Reading…").color(p.muted)));
+                a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Reading…"));
                 return;
             }
             Some(Err(why)) => {
-                live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+                widgets::banner(ui, Tone::Error, why, |_| {});
                 return;
             }
             Some(Ok(text)) => text.clone(),
@@ -446,7 +537,7 @@ impl SessionsWindow {
         }
     }
 
-    // A line with stamps in it, each a link into the transcript.
+    // A line with stamps in it, each a link into the transcript as a small tinted pill.
     // Returns the first piece drawn, for a heading to be marked on.
     fn stamped(
         &self,
@@ -456,9 +547,9 @@ impl SessionsWindow {
         bold: bool,
     ) -> egui::Response {
         let styled = |text: &str| {
-            let text = RichText::new(text);
+            let text = RichText::new(text).size(15.0);
             if bold {
-                text.family(theme::bold())
+                text.family(theme::semibold())
             } else {
                 text
             }
@@ -477,8 +568,8 @@ impl SessionsWindow {
                         first.get_or_insert(shown);
                     }
                     Piece::Stamp(seconds) => {
-                        let stamp = sessions::stamp(seconds);
-                        if ui.link(format!("[{stamp}]")).clicked() {
+                        ui.add_space(4.0);
+                        if stamp_pill(ui, seconds).clicked() {
                             self.open(
                                 ui.ctx(),
                                 Target {
@@ -488,6 +579,7 @@ impl SessionsWindow {
                                 },
                             );
                         }
+                        ui.add_space(4.0);
                     }
                 }
             }
@@ -499,10 +591,11 @@ impl SessionsWindow {
 
     fn summary(&self, ui: &mut egui::Ui, target: &Target, text: &str, title: Option<&str>) {
         let p = theme::palette(ui.ctx());
+        ui.spacing_mut().item_spacing.y = 6.0;
         let mut first_heading = true;
         for line in text.lines() {
             match sessions::summary_line(line) {
-                SummaryLine::Blank => ui.add_space(6.0),
+                SummaryLine::Blank => ui.add_space(4.0),
                 // The title is already the viewer's heading.
                 SummaryLine::Heading(heading_text)
                     if first_heading && Some(heading_text.as_str()) == title =>
@@ -511,14 +604,14 @@ impl SessionsWindow {
                 }
                 SummaryLine::Heading(heading_text) => {
                     first_heading = false;
-                    ui.add_space(4.0);
+                    ui.add_space(10.0);
                     let shown = self.stamped(ui, target, &heading_text, true);
-                    heading(&shown, &heading_text, 3);
+                    a11y::heading(&shown, &heading_text, 3);
                 }
                 SummaryLine::Bullet(item) => {
                     ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.label(RichText::new("•").color(p.muted));
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.label(RichText::new("•").size(15.0).color(p.accent));
                         ui.vertical(|ui| {
                             self.stamped(ui, target, &item, false);
                         });
@@ -526,7 +619,7 @@ impl SessionsWindow {
                 }
                 SummaryLine::Note(note) => {
                     ui.add_space(6.0);
-                    ui.add(egui::Label::new(RichText::new(note).size(12.5).color(p.muted)).wrap());
+                    widgets::small(ui, note);
                 }
                 SummaryLine::Text(line) => {
                     self.stamped(ui, target, &line, false);
@@ -537,6 +630,7 @@ impl SessionsWindow {
 
     fn transcript(&self, ui: &mut egui::Ui, state: &SessionsState, target: &Target, text: &str) {
         let p = theme::palette(ui.ctx());
+        ui.spacing_mut().item_spacing.y = 4.0;
         let paragraphs = sessions::paragraphs(text);
         let wanted = target
             .at_s
@@ -549,9 +643,11 @@ impl SessionsWindow {
             }
             let marked = Some(index) == wanted;
             let mut job = egui::text::LayoutJob::default();
+            job.wrap.max_width = ui.available_width() - 20.0;
             let body = egui::TextFormat {
-                font_id: egui::FontId::proportional(14.0),
+                font_id: egui::FontId::proportional(15.0),
                 color: p.text,
+                line_height: Some(24.0),
                 ..Default::default()
             };
             let (stamp, words) = match at {
@@ -565,6 +661,7 @@ impl SessionsWindow {
                     &format!("{stamp}] "),
                     0.0,
                     egui::TextFormat {
+                        font_id: egui::FontId::monospace(12.5),
                         color: p.muted,
                         ..body.clone()
                     },
@@ -574,16 +671,12 @@ impl SessionsWindow {
                 job.append(words, 0.0, body);
             }
             let shown = egui::Frame::NONE
-                .fill(if marked {
-                    theme::selected_fill(p)
-                } else {
-                    Color32::TRANSPARENT
-                })
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(6, 4))
+                .fill(if marked { p.tint } else { Color32::TRANSPARENT })
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(10, 6))
                 // Out by the padding, so the text lines up with the heading above it.
                 .outer_margin(egui::Margin {
-                    left: -6,
+                    left: -10,
                     right: 0,
                     top: 0,
                     bottom: 0,
@@ -605,25 +698,29 @@ impl SessionsWindow {
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
         let state = self.state.lock().unwrap().clone();
+        let viewing = state.viewer.target.is_some();
 
         egui::Panel::top("header")
-            .frame(
-                egui::Frame::NONE
-                    .fill(header.bg)
-                    .inner_margin(egui::Margin::symmetric(16, 10)),
-            )
+            .show_separator_line(false)
+            .frame(widgets::header_frame(header, p))
             .show(ui, |ui| {
-                // As the settings window's, so the two headers are one height.
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(8.0);
-                    let title = ui.label(
-                        RichText::new("Saved sessions")
-                            .family(theme::bold())
-                            .size(16.0)
-                            .color(header.text),
-                    );
-                    heading(&title, "Saved sessions", 1);
-                });
+                if viewing {
+                    self.viewer_header(ui, &state, header);
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        vino_ui::logo::whisper(ui, 24.0);
+                        widgets::window_title(ui, "Saved sessions", header.text);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add(Button::ghost("Settings").icon(Icon::Settings))
+                                .clicked()
+                            {
+                                forward::open_settings("sessions");
+                            }
+                        });
+                    });
+                }
             });
 
         egui::CentralPanel::default()
@@ -632,39 +729,84 @@ impl SessionsWindow {
                     .fill(p.bg)
                     // No right margin: the scroll bar belongs on the window's edge.
                     .inner_margin(egui::Margin {
-                        left: 24,
+                        left: 20,
                         right: 0,
                         top: 4,
-                        bottom: 4,
+                        bottom: 0,
                     }),
             )
             .show(ui, |ui| {
-                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                let scrolled = egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                    .scroll_source(egui::scroll_area::ScrollSource {
-                        drag: egui::scroll_area::DragScroll::Never,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        ui.set_max_width(
-                            (ui.available_width() - SCROLL_GAP).min(READING_MAX_WIDTH),
-                        );
-                        if state.viewer.target.is_some() {
-                            self.viewer(ui, &state);
-                        } else {
-                            self.list(ui, &state);
-                        }
-                        ui.add_space(12.0);
-                    });
-                ctx.accesskit_node_builder(scrolled.id.with(1usize), |node| {
-                    node.set_role(Role::ScrollBar);
-                    node.set_label("Scroll saved sessions");
-                    node.set_orientation(egui::accesskit::Orientation::Vertical);
+                let (what, width) = if viewing {
+                    ("the session", READING_MAX_WIDTH)
+                } else {
+                    ("saved sessions", LIST_MAX_WIDTH)
+                };
+                widgets::page_scroll(ui, what, width, |ui| {
+                    if viewing {
+                        self.viewer(ui, &state);
+                    } else {
+                        self.list(ui, &state);
+                    }
                 });
             });
     }
+}
+
+// A time stamp as a small tinted pill, a link into the transcript.
+fn stamp_pill(ui: &mut egui::Ui, seconds: u64) -> egui::Response {
+    let p = theme::palette(ui.ctx());
+    let text = format!("[{}]", sessions::stamp(seconds));
+    let galley = ui.painter().layout_no_wrap(
+        text.clone(),
+        egui::FontId::monospace(11.5),
+        Color32::PLACEHOLDER,
+    );
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + egui::vec2(12.0, 4.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &text));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let fill = if response.hovered() {
+            p.accent.gamma_multiply(0.3)
+        } else {
+            p.tint
+        };
+        painter.rect_filled(rect, 6.0, fill);
+        painter.galley(rect.center() - galley.size() / 2.0, galley, p.accent);
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect.expand(2.0),
+                8.0,
+                egui::Stroke::new(2.0_f32, p.accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+// A section's label: small caps with the count after it, read as "Sessions (12)".
+fn section(ui: &mut egui::Ui, title: &str, n: usize) {
+    let p = theme::palette(ui.ctx());
+    ui.add_space(14.0);
+    let name = format!("{title} ({n})");
+    let shown = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let caps = ui.label(
+                RichText::new(title.to_uppercase())
+                    .size(12.0)
+                    .family(theme::semibold())
+                    .extra_letter_spacing(0.7)
+                    .color(p.muted),
+            );
+            a11y::decorative(ui, caps.id);
+            let count = ui.label(RichText::new(n.to_string()).size(12.0).color(p.muted));
+            a11y::decorative(ui, count.id);
+        })
+        .response;
+    a11y::heading(&shown, &name, 2);
+    ui.add_space(6.0);
 }
 
 impl eframe::App for SessionsWindow {
@@ -696,7 +838,7 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_app_id(app_id)
-            .with_inner_size([820.0, 760.0])
+            .with_inner_size([820.0, 796.0])
             .with_min_inner_size([340.0, 320.0]),
         // See window::run: vsync stalls a window KWin considers hidden.
         glow_options: eframe::egui_glow::GlowConfiguration {
@@ -731,6 +873,7 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -746,7 +889,7 @@ mod tests {
             |ui, under: &mut Under| {
                 let ctx = &ui.ctx().clone();
                 if !under.styled {
-                    theme::apply_for_tests(ctx);
+                    theme::apply(ctx);
                     under.styled = true;
                     ctx.request_repaint();
                     return;
@@ -782,6 +925,7 @@ mod tests {
             harness.root().accesskit_node().label().as_deref(),
             Some(TITLE)
         );
+        harness.get_by_role_and_label(Role::Button, "Settings");
     }
 
     #[test]
@@ -794,6 +938,7 @@ mod tests {
         );
         harness.get_by_role_and_label(Role::Button, "Open settings");
         harness.get_by_role_and_label(Role::Button, "Bundle and summarise 3 transcripts");
+        harness.get_by_role_and_label(Role::Heading, "Sessions (2)");
         harness.get_by_role_and_label(Role::Heading, "Local captions talk");
         harness.get_by_label("2026-10-27 14:05 · 42 min · system audio");
         harness.get_by_role_and_label(Role::Heading, "2026-10-26 09:00");
@@ -821,6 +966,26 @@ mod tests {
     }
 
     #[test]
+    fn deleting_asks_in_the_card_and_cancel_backs_out() {
+        let mut harness = harness(true);
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.state_mut().window.confirm_delete = Some("/t/b.vwsession".into());
+        harness.run();
+        harness.get_by_label("Delete this session, transcript and summary?");
+        harness.get_by_role_and_label(Role::Button, "Delete the session");
+        harness
+            .get_by_role_and_label(Role::Button, "Cancel")
+            .click();
+        harness.run();
+        assert!(harness.state().window.confirm_delete.is_none());
+        assert!(
+            harness
+                .query_by_label("Delete this session, transcript and summary?")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it() {
         let mut harness = harness(true);
         {
@@ -836,6 +1001,7 @@ mod tests {
         }
         harness.run();
         harness.get_by_role_and_label(Role::Button, "All sessions");
+        harness.get_by_role_and_label(Role::Button, "Show in folder");
         // Once, as the viewer's heading, not again from the summary's own title.
         assert_eq!(
             harness

@@ -152,7 +152,7 @@ empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
 - section titles are headings, and the model's download status and the reload
   refusal are polite live regions;
 - the theme clears WCAG 2.2 contrast in both schemes: 4.5:1 for text, 3:1 for
-  field edges, focus and the current-page bar (`theme.rs`, computed, not eyed);
+  field edges, focus and the current-page tint (the shared `vino-ui` crate's theme test, computed, not eyed);
 - at double zoom (Ctrl++) the sidebar folds into tabs and every control stays;
   at 1.5x and 3x no control runs past the window's edge;
 - the desktop's text size sets the zoom (#99): GNOME's `text-scaling-factor`

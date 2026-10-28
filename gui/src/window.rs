@@ -2,13 +2,15 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use eframe::egui::accesskit::{Live, Role};
-use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Sense, Stroke};
+use eframe::egui::{self, Align, Layout, RichText};
+use vino_ui::a11y;
+use vino_ui::icons::Icon;
+use vino_ui::theme;
+use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
 
 use crate::forward::{self, Shortcuts};
 use crate::model::{self, Line, ModelState, Status};
 use crate::sessions;
-use crate::theme;
 use vinowhisper_settings::{
     Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Summaries, Task, TextSize,
     multilingual_installed,
@@ -51,19 +53,29 @@ impl Page {
             Page::Sessions => "Sessions",
         }
     }
+
+    fn icon(self) -> Icon {
+        match self {
+            Page::Shortcuts => Icon::Keyboard,
+            Page::Captions => Icon::Captions,
+            Page::Speech => Icon::Mic,
+            Page::Cleanup => Icon::Cleanup,
+            Page::Sessions => Icon::Sessions,
+        }
+    }
 }
 
 fn source_label(source: Source) -> &'static str {
     match source {
-        Source::Output => "What is playing (speakers)",
+        Source::Output => "What is playing",
         Source::Mic => "Microphone",
     }
 }
 
 fn position_label(position: Position) -> &'static str {
     match position {
-        Position::Bottom => "Bottom of the screen",
-        Position::Top => "Top of the screen",
+        Position::Bottom => "Bottom",
+        Position::Top => "Top",
     }
 }
 
@@ -94,59 +106,50 @@ fn language_label(language: Language) -> &'static str {
 
 const COMBO_WIDTH: f32 = 240.0;
 
-fn labelled(response: egui::Response, label: Option<egui::Id>) -> egui::Response {
-    match label {
-        Some(id) => response.labelled_by(id),
-        None => response,
-    }
-}
-
 fn combo<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     id: &str,
-    name: Option<egui::Id>,
+    named: &dyn Fn(egui::Response) -> egui::Response,
     value: &mut T,
     all: &[T],
     label: fn(T) -> &'static str,
 ) -> bool {
     let before = *value;
-    let shown = egui::ComboBox::from_id_salt(id)
-        // Never past the edge: at the largest text the form column is narrower than this,
-        // and an unwrapped choice pushed the whole column out with it.
-        .width(COMBO_WIDTH.min(ui.available_width()))
-        .wrap()
-        .selected_text(label(*value))
-        .show_ui(ui, |ui| {
-            for &option in all {
-                ui.selectable_value(value, option, label(option));
-            }
-        });
-    labelled(shown.response, name);
+    let shown = widgets::combo(ui, id, label(*value).to_owned(), COMBO_WIDTH).show_ui(ui, |ui| {
+        for &option in all {
+            ui.selectable_value(value, option, label(option));
+        }
+    });
+    named(shown.response);
     *value != before
+}
+
+fn segmented<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    name: &str,
+    value: &mut T,
+    all: &[T],
+    label: fn(T) -> &'static str,
+) -> bool {
+    let options: Vec<(T, &str)> = all.iter().map(|&option| (option, label(option))).collect();
+    widgets::segmented(ui, name, value, &options)
 }
 
 fn number<N: egui::emath::Numeric>(
     ui: &mut egui::Ui,
-    name: Option<egui::Id>,
+    named: &dyn Fn(egui::Response) -> egui::Response,
     value: &mut N,
     range: std::ops::RangeInclusive<N>,
-    suffix: &str,
+    unit: &str,
 ) -> bool {
-    let response = ui.add(egui::DragValue::new(value).range(range).suffix(suffix));
-    labelled(response, name)
+    // Right to left: the unit after the box.
+    widgets::small(ui, unit);
+    let response = ui.add(egui::DragValue::new(value).range(range));
+    named(response)
         // DragValue's own hover cursor is a horizontal resize arrow, which reads as a splitter here.
         .on_hover_cursor(egui::CursorIcon::Text)
         .changed()
 }
-
-// Below this the sidebar folds into tabs in the header, and form labels go above their control.
-const SIDEBAR_FROM: f32 = 620.0;
-const SIDEBAR_WIDTH: f32 = 180.0;
-const LABEL_WIDTH: f32 = 150.0;
-const FORM_MAX_WIDTH: f32 = 620.0;
-// Between the form and the scroll bar, which sits on the window's right edge.
-const SCROLL_GAP: f32 = 24.0;
-const TWO_COLUMNS_FROM: f32 = 440.0;
 
 struct SettingsWindow {
     page: Page,
@@ -224,13 +227,12 @@ impl SettingsWindow {
     }
 
     fn shortcuts(&mut self, ui: &mut egui::Ui) {
-        let p = theme::palette(ui.ctx());
         let state = self.shortcuts.lock().unwrap().clone();
-        section(ui, "Global shortcuts");
-        match state {
+        widgets::group_label(ui, "Global shortcuts");
+        widgets::group(ui, |ui| match state {
             Shortcuts::Asking | Shortcuts::Pending => {
-                row(ui, "", "", |ui, _| {
-                    ui.label("Asking the desktop…");
+                Row::new("Asking the desktop…").show(ui, |ui, _| {
+                    widgets::spinner(ui);
                 });
             }
             Shortcuts::Bound {
@@ -238,165 +240,148 @@ impl SettingsWindow {
                 dictate,
                 configurable,
             } => {
-                row(
-                    ui,
-                    "Captions:",
-                    "Shows or hides the floating captions.",
-                    |ui, _| keys(ui, &captions),
-                );
-                row(
-                    ui,
-                    "Dictation:",
-                    "Hold to talk and release to type, or tap to start and tap again to finish.",
-                    |ui, _| keys(ui, &dictate),
-                );
+                Row::new("Captions")
+                    .help("Shows or hides the floating captions.")
+                    .show(ui, |ui, _| keys(ui, &captions));
+                Row::new("Dictation")
+                    .help("Hold to talk and release to type, or tap to start and tap to finish.")
+                    .show(ui, |ui, _| keys(ui, &dictate));
                 if configurable {
-                    row(
-                        ui,
-                        "",
-                        "Opens your desktop's shortcut settings.",
-                        |ui, _| {
-                            if ui.button("Change…").clicked() {
+                    Row::new("Change them")
+                        .help("Opens your desktop's shortcut settings.")
+                        .show(ui, |ui, _| {
+                            if ui
+                                .add(Button::secondary("Change…").icon(Icon::Settings))
+                                .clicked()
+                            {
                                 forward::run_tray(&["configure-shortcut"]);
                             }
-                        },
-                    );
+                        });
                 } else {
-                    row(
-                        ui,
-                        "",
-                        "Change them in your desktop's shortcut settings, where they are listed under vinoWhisper.",
-                        |_, _| {},
-                    );
+                    Row::new("Change them")
+                        .help(
+                            "In your desktop's shortcut settings, where they are listed under \
+                             vinoWhisper.",
+                        )
+                        .show(ui, |_, _| {});
                 }
             }
             Shortcuts::Stopped => {
-                row(
-                    ui,
-                    "",
-                    "vinoWhisper is not running, so no shortcut is active.",
-                    |ui, _| {
-                        if ui.button("Start vinoWhisper").clicked() {
+                Row::new("Not running")
+                    .help("vinoWhisper is not running, so no shortcut is active.")
+                    .tone(Tone::Warn)
+                    .show(ui, |ui, _| {
+                        if ui.add(Button::primary("Start vinoWhisper")).clicked() {
                             forward::run_tray(&["--hidden"]);
                             // The portal takes a moment to answer a fresh tray.
                             self.ask_shortcuts(ui.ctx(), Duration::from_millis(1500));
                         }
-                    },
-                );
+                    });
             }
             Shortcuts::Unavailable => {
-                ui.label(
-                    RichText::new(
-                        "This desktop has no global shortcuts portal. Bind these commands to keys in its keyboard settings instead:",
+                Row::new("No shortcuts portal")
+                    .help(
+                        "This desktop has none. Bind these commands to keys in its keyboard \
+                         settings instead.",
                     )
-                    .color(p.muted),
-                );
-                ui.add_space(6.0);
-                row(ui, "Captions:", "", |ui, _| {
-                    command(ui, "vinowhisper-tray toggle");
+                    .show(ui, |_, _| {});
+                Row::new("Captions").show(ui, |ui, _| {
+                    widgets::mono(ui, "vinowhisper-tray toggle");
                 });
-                row(
-                    ui,
-                    "Dictation:",
-                    "On the key's press and release, for hold to talk. Or vinowhisper-tray dictate on one key, to tap.",
-                    |ui, _| {
-                        command(ui, "vinowhisper-tray dictate-press");
-                        command(ui, "vinowhisper-tray dictate-release");
-                    },
-                );
+                Row::new("Dictation")
+                    .help(
+                        "On the key's press and release, for hold to talk. Or vinowhisper-tray \
+                         dictate on one key, to tap.",
+                    )
+                    .show(ui, |ui, _| {
+                        ui.with_layout(Layout::top_down(Align::Max), |ui| {
+                            widgets::mono(ui, "vinowhisper-tray dictate-press");
+                            widgets::mono(ui, "vinowhisper-tray dictate-release");
+                        });
+                    });
             }
             Shortcuts::Unknown(reason) => {
-                row(ui, "", "", |ui, _| {
-                    ui.label(RichText::new(reason).color(p.muted));
-                });
+                Row::new("Unknown").help(&reason).show(ui, |_, _| {});
             }
-        }
+        });
     }
 
     fn captions(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
-        section(ui, "Overlay");
-        row(
-            ui,
-            "Position:",
-            "Where the caption box sits, above other windows.",
-            |ui, label| {
-                changed |= combo(
+        widgets::group_label(ui, "Overlay");
+        widgets::group(ui, |ui| {
+            widgets::group_section(ui, |ui| {
+                caption_preview(ui, self.settings.position, self.settings.size);
+                widgets::small(ui, "Preview");
+            });
+            Row::new("Position").show(ui, |ui, _| {
+                changed |= segmented(
                     ui,
-                    "position",
-                    label,
+                    "Position",
                     &mut self.settings.position,
                     &Position::ALL,
                     position_label,
                 );
-            },
-        );
-        row(ui, "Text size:", "", |ui, label| {
-            changed |= combo(
-                ui,
-                "size",
-                label,
-                &mut self.settings.size,
-                &TextSize::ALL,
-                size_label,
-            );
+            });
+            Row::new("Text size").show(ui, |ui, _| {
+                changed |= segmented(
+                    ui,
+                    "Text size",
+                    &mut self.settings.size,
+                    &TextSize::ALL,
+                    size_label,
+                );
+            });
         });
-        section(ui, "Listening");
-        row(
-            ui,
-            "Listen to:",
-            "What the captions follow.",
-            |ui, label| {
-                changed |= combo(
-                    ui,
-                    "source",
-                    label,
-                    &mut self.settings.source,
-                    &Source::ALL,
-                    source_label,
-                );
-            },
-        );
-        row(
-            ui,
-            "Hide after silence:",
-            "Seconds with no audio before the captions count down and hide. 0 keeps them up.",
-            |ui, label| {
-                changed |= number(
-                    ui,
-                    label,
-                    &mut self.settings.hide_after_silence_s,
-                    0..=3600,
-                    " s",
-                );
-            },
-        );
-        row(
-            ui,
-            "Transcripts:",
-            "Write each session to a file you can read back later.",
-            |ui, _| {
-                changed |= ui
-                    .checkbox(&mut self.settings.save_transcripts, "Save transcripts")
+        widgets::group_label(ui, "Listening");
+        widgets::group(ui, |ui| {
+            Row::new("Listen to")
+                .help("What the captions follow.")
+                .show(ui, |ui, _| {
+                    changed |= segmented(
+                        ui,
+                        "Listen to",
+                        &mut self.settings.source,
+                        &Source::ALL,
+                        source_label,
+                    );
+                });
+            Row::new("Hide after silence")
+                .help("0 keeps them up.")
+                .show(ui, |ui, named| {
+                    changed |= number(
+                        ui,
+                        named,
+                        &mut self.settings.hide_after_silence_s,
+                        0..=3600,
+                        "s",
+                    );
+                });
+            Row::new("Save transcripts")
+                .help("Keep each session to read later.")
+                .show(ui, |ui, _| {
+                    changed |= widgets::switch(
+                        ui,
+                        &mut self.settings.save_transcripts,
+                        "Save transcripts",
+                    )
                     .changed();
-            },
-        );
-        section(ui, "Tray");
-        row(
-            ui,
-            "Hide icon after:",
-            "Minutes without captions or dictation before the tray icon moves in with the \
-             panel's hidden icons. 0 keeps it in view.",
-            |ui, label| {
-                changed |= number(
-                    ui,
-                    label,
-                    &mut self.settings.tray_idle_minutes,
-                    0..=1440,
-                    " min",
-                );
-            },
-        );
+                });
+        });
+        widgets::group_label(ui, "Tray");
+        widgets::group(ui, |ui| {
+            Row::new("Hide icon after")
+                .help("Moves to hidden icons when idle. 0 keeps it in view.")
+                .show(ui, |ui, named| {
+                    changed |= number(
+                        ui,
+                        named,
+                        &mut self.settings.tray_idle_minutes,
+                        0..=1440,
+                        "min",
+                    );
+                });
+        });
         changed
     }
 
@@ -440,104 +425,89 @@ impl SettingsWindow {
     }
 
     fn cleanup(&mut self, ui: &mut egui::Ui) {
-        let p = theme::palette(ui.ctx());
         let state = self.model.lock().unwrap().clone();
         let known = match &state.status {
             Some(Ok(status)) => Some(status.clone()),
             _ => None,
         };
-        ui.add_space(10.0);
-        egui::Frame::NONE
-            .fill(p.code_bg)
-            .stroke(Stroke::new(1.0_f32, p.rule))
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.label(RichText::new("Beta").family(theme::bold()));
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(
-                            "New, and tuned on one microphone. It may skip a quiet word, or leave \
-                             text as you said it when the model's answer does not check out. Tell us \
-                             what it gets wrong.",
-                        )
-                        .size(12.5)
-                        .color(p.muted),
-                    )
-                    .wrap(),
-                );
-            });
-        section(ui, "Dictation cleanup");
-        row(
+        ui.add_space(12.0);
+        widgets::banner(
             ui,
-            "Clean up:",
-            "Runs a small language model on this machine, on the NPU when there is one, to drop \
-             ums, apply corrections and act on \"scratch that\" before the text is typed. Nothing \
-             leaves the machine. It only ever deletes words, and any other answer is thrown away \
-             and the raw text is typed. Off by default.",
-            |ui, _| {
-                self.cleanup_dirty |= ui
-                    .checkbox(&mut self.cleanup.enabled, "Clean up dictation")
-                    .changed();
-                if self.cleanup.enabled && known.as_ref().is_some_and(|s| !s.present) {
-                    live(
-                        &ui.label(
-                            RichText::new(
-                                "Download the model below first; until then the raw text is typed.",
-                            )
-                            .color(p.muted),
-                        ),
-                    );
-                }
-            },
+            Tone::Warn,
+            "New and tuned on one microphone. It may miss a quiet word, or leave text as you \
+             said it when the model's answer does not check out.",
+            |_| {},
         );
-        let off = !self.cleanup.enabled;
-        ui.add_enabled_ui(!off, |ui| {
-            row(
-                ui,
-                "Run:",
-                "Each cleanup takes about two seconds. Smart skips it for text with no filler, correction or spoken edit in it, which is most of what you say.",
-                |ui, label| {
-                    self.cleanup_dirty |= combo(
-                        ui,
-                        "cleanup-mode",
-                        label,
-                        &mut self.cleanup.mode,
-                        &CleanupMode::ALL,
-                        mode_label,
-                    );
-                },
-            );
-            row(
-                ui,
-                "Time limit:",
-                "Seconds to wait before typing the raw text instead. The first cleanup after a while also loads the model.",
-                |ui, label| {
-                    let slider = ui.add(
-                        egui::DragValue::new(&mut self.cleanup.budget_s)
-                            .range(0.5..=30.0)
-                            .speed(0.1)
-                            .fixed_decimals(1)
-                            .suffix(" s"),
-                    );
-                    self.cleanup_dirty |= labelled(slider, label)
-                        .on_hover_cursor(egui::CursorIcon::Text)
-                        .changed();
-                },
-            );
+        widgets::group_label(ui, "Dictation cleanup");
+        widgets::group(ui, |ui| {
+            let missing = self.cleanup.enabled && known.as_ref().is_some_and(|s| !s.present);
+            let (help, tone) = if missing {
+                (
+                    "Download the model below first; until then the raw text is typed.",
+                    Tone::Warn,
+                )
+            } else {
+                (
+                    "Drops ums and acts on “scratch that”, on this machine. It only ever \
+                     deletes words.",
+                    Tone::Neutral,
+                )
+            };
+            Row::new("Clean up dictation")
+                .help(help)
+                .tone(tone)
+                .show(ui, |ui, _| {
+                    self.cleanup_dirty |=
+                        widgets::switch(ui, &mut self.cleanup.enabled, "Clean up dictation")
+                            .changed();
+                });
+            let off = !self.cleanup.enabled;
+            ui.add_enabled_ui(!off, |ui| {
+                Row::new("Run")
+                    .help("About two seconds each. Smart skips text with nothing to fix.")
+                    .show(ui, |ui, named| {
+                        self.cleanup_dirty |= combo(
+                            ui,
+                            "cleanup-mode",
+                            named,
+                            &mut self.cleanup.mode,
+                            &CleanupMode::ALL,
+                            mode_label,
+                        );
+                    });
+                Row::new("Time limit")
+                    .help("Then the raw text is typed. The first run also loads the model.")
+                    .show(ui, |ui, named| {
+                        widgets::small(ui, "s");
+                        let slider = ui.add(
+                            egui::DragValue::new(&mut self.cleanup.budget_s)
+                                .range(0.5..=30.0)
+                                .speed(0.1)
+                                .fixed_decimals(1),
+                        );
+                        self.cleanup_dirty |= named(slider)
+                            .on_hover_cursor(egui::CursorIcon::Text)
+                            .changed();
+                    });
+            });
         });
 
         match &state.status {
             None => {
-                section(ui, "Model");
-                row(ui, "", "", |ui, _| {
-                    live(&ui.label(RichText::new("Checking…").color(p.muted)));
+                widgets::group_label(ui, "Model");
+                widgets::group(ui, |ui| {
+                    Row::new("Download").show(ui, |ui, _| {
+                        a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Checking…"));
+                    });
                 });
             }
             Some(Err(why)) => {
-                section(ui, "Model");
-                row(ui, "", "", |ui, _| {
-                    live(&ui.label(RichText::new(why).color(ui.visuals().error_fg_color)));
+                widgets::group_label(ui, "Model");
+                widgets::group(ui, |ui| {
+                    Row::new("Download")
+                        .help(why)
+                        .tone(Tone::Error)
+                        .show(ui, |_, _| {});
                 });
             }
             Some(Ok(status)) => self.model_rows(ui, status, &state),
@@ -546,86 +516,84 @@ impl SettingsWindow {
 
     fn model_rows(&mut self, ui: &mut egui::Ui, status: &Status, state: &ModelState) {
         let p = theme::palette(ui.ctx());
-        section(ui, &status.label);
-        row(
-            ui,
-            "Download:",
-            "Needed for cleanup. Checked file by file against pinned sha256s.",
-            |ui, _| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.set_min_height(ui.spacing().interact_size.y);
-                    if let Some((done, total)) = state.fetching {
-                        let fraction = done as f32 / total.max(1) as f32;
-                        let text = if total == 0 {
-                            "Starting…".to_owned()
-                        } else {
-                            format!("{} of {}", model::size(done), model::size(total))
-                        };
-                        live(
-                            &ui.add(
-                                egui::ProgressBar::new(fraction)
-                                    .text(text)
-                                    .desired_width(220.0),
-                            ),
-                        );
-                    } else if state.busy {
-                        live(&ui.label(RichText::new("Deleting…").color(p.muted)));
-                    } else if status.present {
-                        live(&ui.label(format!("Downloaded, {}", model::size(status.bytes))));
-                    } else {
-                        let color = ui.visuals().warn_fg_color;
-                        live(
-                            &ui.label(
-                                RichText::new(format!(
-                                    "Not downloaded ({})",
-                                    model::size(status.download_bytes)
-                                ))
-                                .color(color),
-                            ),
-                        );
-                    }
-                    let label = if status.present { "Verify" } else { "Download" };
+        widgets::group_label(ui, &status.label);
+        widgets::group(ui, |ui| {
+            let row = Row::new("Download").help("Checked against pinned sha256s.");
+            let row = if self.confirm_delete {
+                row.tint(p.error_tint)
+            } else {
+                row
+            };
+            row.show(ui, |ui, _| {
+                if self.confirm_delete {
                     if ui
-                        .add_enabled(!state.busy, egui::Button::new(label))
+                        .add(Button::destructive("Delete the model").small())
                         .clicked()
                     {
                         self.confirm_delete = false;
-                        self.run_model(ui.ctx(), "fetch");
+                        self.run_model(ui.ctx(), "delete");
                     }
-                    let deletable = status.present && !state.busy;
-                    if self.confirm_delete {
-                        if ui.button("Cancel").clicked() {
-                            self.confirm_delete = false;
-                        }
-                        if ui.button("Delete the model").clicked() {
-                            self.confirm_delete = false;
-                            self.run_model(ui.ctx(), "delete");
-                        }
-                    } else if ui
-                        .add_enabled(deletable, egui::Button::new("Delete…"))
-                        .clicked()
-                    {
-                        self.confirm_delete = true;
+                    if ui.add(Button::ghost("Cancel").small()).clicked() {
+                        self.confirm_delete = false;
                     }
-                });
-                if !state.error.is_empty() {
-                    live(
-                        &ui.label(
-                            RichText::new(format!("The last attempt failed: {}", state.error))
-                                .color(ui.visuals().error_fg_color),
-                        ),
-                    );
+                    return;
                 }
-            },
-        );
-        row(
-            ui,
-            "Compiled cache:",
-            "What the NPU compiled from the model on its first load. Deleting the model clears it too.",
-            |ui, _| {
-                ui.label(model::size(status.cache_bytes));
-            },
-        );
+                let deletable = status.present && !state.busy;
+                if ui
+                    .add_enabled(deletable, Button::secondary("Delete…"))
+                    .clicked()
+                {
+                    self.confirm_delete = true;
+                }
+                let label = if status.present { "Verify" } else { "Download" };
+                let button = if status.present {
+                    Button::secondary(label)
+                } else {
+                    Button::primary(label).icon(Icon::Download)
+                };
+                if ui.add_enabled(!state.busy, button).clicked() {
+                    self.confirm_delete = false;
+                    self.run_model(ui.ctx(), "fetch");
+                }
+                let shown = if let Some((done, total)) = state.fetching {
+                    let fraction = done as f32 / total.max(1) as f32;
+                    let text = if total == 0 {
+                        "Starting…".to_owned()
+                    } else {
+                        format!("{} of {}", model::size(done), model::size(total))
+                    };
+                    let shown = widgets::small(ui, text);
+                    widgets::progress(ui, fraction, 120.0);
+                    shown
+                } else if state.busy {
+                    widgets::chip_busy(ui, ChipKind::Neutral, "Deleting…")
+                } else if status.present {
+                    widgets::chip(
+                        ui,
+                        ChipKind::Ok,
+                        &format!("Downloaded, {}", model::size(status.bytes)),
+                    )
+                } else {
+                    widgets::chip(
+                        ui,
+                        ChipKind::Warn,
+                        &format!("Not downloaded ({})", model::size(status.download_bytes)),
+                    )
+                };
+                a11y::live(&shown);
+            });
+            if !state.error.is_empty() {
+                Row::new("Last attempt")
+                    .help(&format!("The last attempt failed: {}", state.error))
+                    .tone(Tone::Error)
+                    .show(ui, |_, _| {});
+            }
+            Row::new("Compiled cache")
+                .help("Built on first load. Deleting the model clears it too.")
+                .show(ui, |ui, _| {
+                    ui.label(model::size(status.cache_bytes));
+                });
+        });
     }
 
     fn refresh_model_ready(&self, ctx: &egui::Context) {
@@ -639,206 +607,188 @@ impl SettingsWindow {
     }
 
     fn sessions(&mut self, ui: &mut egui::Ui) {
-        let p = theme::palette(ui.ctx());
         let model_ready = *self.model_ready.lock().unwrap();
-        section(ui, "Summaries");
-        row(
-            ui,
-            "Summarise:",
-            "After each saved session ends, a small language model on this machine writes a \
-             short summary with time stamps back into the transcript. It waits until captions \
-             and dictation are idle, and nothing leaves the machine.",
-            |ui, _| {
-                self.summaries_dirty |= ui
-                    .checkbox(
+        widgets::group_label(ui, "Summaries");
+        widgets::group(ui, |ui| {
+            let (help, tone) = if model_ready == Some(false) {
+                (
+                    "The model isn't downloaded yet; get it on the Cleanup page.",
+                    Tone::Warn,
+                )
+            } else {
+                (
+                    "After each saved session, a small model on this machine writes a short \
+                     summary with time stamps. Nothing leaves the machine.",
+                    Tone::Neutral,
+                )
+            };
+            Row::new("Summarise automatically")
+                .help(help)
+                .tone(tone)
+                .show(ui, |ui, _| {
+                    self.summaries_dirty |= widgets::switch(
+                        ui,
                         &mut self.summaries.auto,
                         "Summarise saved sessions automatically",
                     )
                     .changed();
-                if model_ready == Some(false) {
-                    live(
-                        &ui.label(
-                            RichText::new(
-                                "The model isn't downloaded yet; get it on the Cleanup page.",
-                            )
-                            .color(ui.visuals().warn_fg_color),
-                        ),
-                    );
-                    if ui.button("Go to Cleanup").clicked() {
+                    if model_ready == Some(false)
+                        && ui.add(Button::secondary("Go to Cleanup").small()).clicked()
+                    {
                         self.page = Page::Cleanup;
                     }
-                }
-            },
-        );
-        section(ui, "Saved sessions");
-        row(
-            ui,
-            "",
-            "Transcripts and summaries open in a window of their own.",
-            |ui, _| {
-                if ui.button("Open saved sessions").clicked() {
-                    forward::open_sessions();
-                }
-                if !self.settings.save_transcripts {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(
-                                "Saving transcripts is off (Captions page), so new sessions aren't kept.",
-                            )
-                            .color(p.muted),
-                        )
-                        .wrap(),
-                    );
-                }
-            },
-        );
+                });
+        });
+        widgets::group_label(ui, "Saved sessions");
+        widgets::group(ui, |ui| {
+            let (help, tone) = if self.settings.save_transcripts {
+                (
+                    "Transcripts and summaries open in a window of their own.",
+                    Tone::Neutral,
+                )
+            } else {
+                (
+                    "Saving transcripts is off (Captions page), so new sessions aren't kept.",
+                    Tone::Warn,
+                )
+            };
+            Row::new("Sessions window")
+                .help(help)
+                .tone(tone)
+                .show(ui, |ui, _| {
+                    if ui
+                        .add(Button::secondary("Open saved sessions").icon(Icon::Sessions))
+                        .clicked()
+                    {
+                        forward::open_sessions();
+                    }
+                });
+        });
     }
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
-        if let Some(notice) = &self.notice {
-            ui.add_space(10.0);
-            live(&ui.label(RichText::new(notice).color(ui.visuals().error_fg_color)));
+        if let Some(notice) = self.notice.clone() {
+            ui.add_space(12.0);
+            if widgets::notice(ui, Tone::Error, &notice) {
+                self.notice = None;
+            }
         }
-        section(ui, "Recognition");
+        widgets::group_label(ui, "Recognition");
         let multilingual = self.multilingual;
-        row(
-            ui,
-            "Language:",
-            if multilingual {
-                "Detect automatically picks per sentence. Switching reloads the model, which takes a moment."
-            } else {
-                "Only English is installed. Run vinowhisper-setup --language auto to add the others."
-            },
-            |ui, label| {
-                ui.add_enabled_ui(multilingual, |ui| {
-                    if combo(
-                        ui,
-                        "language",
-                        label,
-                        &mut self.speech.language,
-                        &Language::ALL,
-                        language_label,
-                    ) {
-                        self.speech = self.speech.normalised();
-                        changed = true;
-                    }
+        widgets::group(ui, |ui| {
+            Row::new("Language")
+                .help(if multilingual {
+                    "Detect automatically picks per sentence. Switching reloads the model."
+                } else {
+                    "Only English is installed. Run vinowhisper-setup --language auto to add \
+                     the others."
+                })
+                .show(ui, |ui, named| {
+                    ui.add_enabled_ui(multilingual, |ui| {
+                        if combo(
+                            ui,
+                            "language",
+                            named,
+                            &mut self.speech.language,
+                            &Language::ALL,
+                            language_label,
+                        ) {
+                            self.speech = self.speech.normalised();
+                            changed = true;
+                        }
+                    });
                 });
-            },
-        );
-        let foreign = multilingual && self.speech.language != Language::En;
-        row(
-            ui,
-            "Translation:",
-            "Captions arrive in English whatever was spoken.",
-            |ui, _| {
-                ui.add_enabled_ui(foreign, |ui| {
-                    let mut translate = self.speech.task == Task::Translate;
-                    if ui
-                        .checkbox(&mut translate, "Translate to English")
-                        .changed()
-                    {
-                        self.speech.task = if translate {
-                            Task::Translate
-                        } else {
-                            Task::Transcribe
-                        };
-                        changed = true;
-                    }
+            let foreign = multilingual && self.speech.language != Language::En;
+            Row::new("Translation")
+                .help("Captions arrive in English whatever was spoken.")
+                .show(ui, |ui, _| {
+                    ui.add_enabled_ui(foreign, |ui| {
+                        let mut translate = self.speech.task == Task::Translate;
+                        if widgets::switch(ui, &mut translate, "Translate to English").changed() {
+                            self.speech.task = if translate {
+                                Task::Translate
+                            } else {
+                                Task::Transcribe
+                            };
+                            changed = true;
+                        }
+                    });
                 });
-            },
-        );
+        });
         changed
     }
 }
 
-fn keys(ui: &mut egui::Ui, trigger: &str) {
+// The caption box as the overlay draws it, on a stand-in screen.
+fn caption_preview(ui: &mut egui::Ui, position: Position, size: TextSize) {
     let p = theme::palette(ui.ctx());
-    if trigger.is_empty() {
-        ui.label(RichText::new("Not bound").color(p.muted));
+    let height = 132.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    a11y::decorative(ui, response.id);
+    if !ui.is_rect_visible(rect) {
         return;
     }
-    egui::Frame::NONE
-        .fill(p.code_bg)
-        .stroke(Stroke::new(1.0_f32, p.rule))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.label(RichText::new(trigger).family(theme::bold()));
-        });
-}
-
-fn command(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).monospace());
-}
-
-pub(crate) fn heading(response: &egui::Response, title: &str, level: usize) {
-    response.ctx.accesskit_node_builder(response.id, |node| {
-        node.set_role(Role::Heading);
-        node.set_label(title);
-        node.set_level(level);
-    });
-}
-
-// A status line a screen reader should read out when it changes, without moving focus.
-pub(crate) fn live(response: &egui::Response) {
-    response
-        .ctx
-        .accesskit_node_builder(response.id, |node| node.set_live(Live::Polite));
-}
-
-pub(crate) fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(14.0);
-    heading(
-        &ui.label(RichText::new(title).family(theme::bold()).size(14.0)),
-        title,
-        2,
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        8.0,
+        p.field,
+        egui::Stroke::new(1.0_f32, p.rule),
+        egui::StrokeKind::Inside,
     );
-    ui.add_space(6.0);
+    for (y, w) in [(12.0, 120.0), (28.0, 200.0)] {
+        painter.rect_filled(
+            egui::Rect::from_min_size(rect.min + egui::vec2(14.0, y), egui::vec2(w, 8.0)),
+            4.0,
+            p.pressed,
+        );
+    }
+    let text_size = match size {
+        TextSize::Small => 12.0,
+        TextSize::Medium => 14.0,
+        TextSize::Large => 17.0,
+    };
+    let galley = painter.layout_no_wrap(
+        "…and that's why the release moved to Thursday.".to_owned(),
+        egui::FontId::proportional(text_size),
+        egui::Color32::PLACEHOLDER,
+    );
+    let box_w = (galley.size().x + 28.0).min(rect.width() * 0.72);
+    let box_h = galley.size().y + 16.0;
+    let y = match position {
+        Position::Bottom => rect.bottom() - 14.0 - box_h,
+        Position::Top => rect.top() + 14.0,
+    };
+    let caption = egui::Rect::from_min_size(
+        egui::pos2(rect.center().x - box_w / 2.0, y),
+        egui::vec2(box_w, box_h),
+    );
+    painter.rect_filled(
+        caption,
+        10.0,
+        egui::Color32::from_rgba_unmultiplied(14, 14, 16, 224),
+    );
+    let clipped = painter.with_clip_rect(caption.shrink2(egui::vec2(14.0, 0.0)));
+    clipped.galley(
+        egui::pos2(
+            caption.left() + 14.0,
+            caption.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        egui::Color32::from_rgb(0xfa, 0xfa, 0xfa),
+    );
 }
 
-// Like a Kirigami FormLayout: right-aligned labels beside their controls, or above them
-// when the window is too narrow for two columns.
-// The control is handed the label's id, for screen readers to name it by.
-fn row(
-    ui: &mut egui::Ui,
-    label: &str,
-    help: &str,
-    control: impl FnOnce(&mut egui::Ui, Option<egui::Id>),
-) {
-    let p = theme::palette(ui.ctx());
-    let help = |ui: &mut egui::Ui| {
-        if !help.is_empty() {
-            ui.add(egui::Label::new(RichText::new(help).size(12.5).color(p.muted)).wrap());
-        }
-    };
-    let width = ui.available_width();
-    if width >= TWO_COLUMNS_FROM {
-        let column = width - LABEL_WIDTH - ui.spacing().item_spacing.x;
-        ui.horizontal_top(|ui| {
-            let name = ui
-                .allocate_ui_with_layout(
-                    egui::vec2(LABEL_WIDTH, ui.spacing().interact_size.y),
-                    Layout::right_to_left(Align::Center),
-                    |ui| {
-                        ui.set_min_width(LABEL_WIDTH);
-                        (!label.is_empty()).then(|| ui.label(label).id)
-                    },
-                )
-                .inner;
-            ui.vertical(|ui| {
-                // A horizontal parent leaves its children unbounded; wrap at the window's edge.
-                ui.set_max_width(column);
-                control(ui, name);
-                help(ui);
-            });
-        });
-    } else {
-        let name = (!label.is_empty()).then(|| ui.label(label).id);
-        control(ui, name);
-        help(ui);
+fn keys(ui: &mut egui::Ui, trigger: &str) {
+    if trigger.is_empty() {
+        widgets::muted(ui, "Not bound");
+        return;
     }
-    ui.add_space(8.0);
+    widgets::keys(ui, trigger);
 }
 
 fn tab_name(page: Page) -> String {
@@ -847,137 +797,6 @@ fn tab_name(page: Page) -> String {
     } else {
         page.title().to_owned()
     }
-}
-
-// Painted by hand, so they say what they are themselves: a tab, its name, whether it is the
-// one shown. Enter and Space click a focused response, and the ring shows which has focus.
-pub(crate) fn mark_tab(ui: &egui::Ui, response: &egui::Response, name: &str, selected: bool) {
-    let enabled = response.enabled();
-    response.widget_info(|| egui::WidgetInfo::selected(Role::Tab, enabled, selected, name));
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_role(Role::Tab);
-        node.clear_toggled();
-        node.set_selected(selected);
-    });
-    if response.has_focus() {
-        ui.painter().rect_stroke(
-            response.rect,
-            4.0,
-            ui.visuals().selection.stroke,
-            egui::StrokeKind::Inside,
-        );
-    }
-}
-
-fn sidebar_item(ui: &mut egui::Ui, page: Page, current: &mut Page) {
-    let p = theme::palette(ui.ctx());
-    let selected = *current == page;
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), Sense::click());
-    let fill = if selected {
-        theme::selected_fill(p)
-    } else if response.hovered() {
-        p.code_bg
-    } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect, 4.0, fill);
-    // Bold and a bar as well as the tint, so the current page does not rest on colour alone.
-    if selected {
-        ui.painter().rect_filled(
-            egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())),
-            egui::CornerRadius {
-                nw: 4,
-                sw: 4,
-                ..Default::default()
-            },
-            p.link,
-        );
-    }
-    ui.painter().text(
-        rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        page.title(),
-        if selected {
-            FontId::new(14.0, theme::bold())
-        } else {
-            FontId::proportional(14.0)
-        },
-        p.text,
-    );
-    if page.beta() {
-        ui.painter().text(
-            rect.right_center() - egui::vec2(10.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            "beta",
-            FontId::proportional(11.5),
-            p.muted,
-        );
-    }
-    mark_tab(ui, &response, &tab_name(page), selected);
-    if response.clicked() {
-        *current = page;
-    }
-}
-
-fn tab_item(ui: &mut egui::Ui, page: Page, current: &mut Page, header: theme::Header) {
-    if text_tab(ui, &tab_name(page), *current == page, true, header).clicked() {
-        *current = page;
-    }
-}
-
-// An underlined tab, as the settings window's pages are when the sidebar is folded away.
-pub(crate) fn text_tab(
-    ui: &mut egui::Ui,
-    name: &str,
-    active: bool,
-    enabled: bool,
-    colors: theme::Header,
-) -> egui::Response {
-    let galley = ui.painter().layout_no_wrap(
-        name.to_owned(),
-        if active {
-            FontId::new(14.0, theme::bold())
-        } else {
-            FontId::proportional(14.0)
-        },
-        // left for the paint call below, so hovering can change it
-        Color32::PLACEHOLDER,
-    );
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(galley.size() + egui::vec2(0.0, 6.0), sense);
-    let response = if enabled {
-        response
-    } else {
-        response.on_hover_cursor(egui::CursorIcon::NotAllowed)
-    };
-    let lit = enabled && (active || response.hovered());
-    let color = if lit {
-        colors.text
-    } else if enabled {
-        colors.muted
-    } else {
-        colors.muted.gamma_multiply(0.5)
-    };
-    ui.painter().galley(rect.left_top(), galley, color);
-    if active {
-        let p = theme::palette(ui.ctx());
-        ui.painter().hline(
-            rect.left()..=rect.right(),
-            rect.bottom(),
-            Stroke::new(2.0_f32, p.link),
-        );
-    }
-    let mut response = response;
-    if !enabled {
-        response.flags.remove(egui::response::Flags::ENABLED);
-    }
-    mark_tab(ui, &response, name, active);
-    response
 }
 
 impl eframe::App for SettingsWindow {
@@ -1001,7 +820,10 @@ impl eframe::App for SettingsWindow {
         }
         let regained = focused && !self.focused;
         self.focused = focused;
-        if self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)) {
+        // The tray's state names the chip in the sidebar, so it is asked on any first page.
+        if self.shown.is_none()
+            || (self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)))
+        {
             self.ask_shortcuts(ctx, Duration::ZERO);
         }
         if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
@@ -1051,51 +873,96 @@ impl SettingsWindow {
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
-        let wide = ctx.content_rect().width() >= SIDEBAR_FROM;
+        let wide = ctx.content_rect().width() >= widgets::SIDEBAR_FROM;
         let mut saved_settings = false;
         let mut saved_speech = false;
-
-        egui::Panel::top("header")
-            .frame(
-                egui::Frame::NONE
-                    .fill(header.bg)
-                    .inner_margin(egui::Margin::symmetric(16, 10)),
-            )
-            .show(ui, |ui| {
-                // Wrapped: at the desktop's largest text the four tabs don't fit on one line.
-                ui.horizontal_wrapped(|ui| {
-                    if wide {
-                        ui.add_space(SIDEBAR_WIDTH - 16.0 + 24.0);
-                        let title = ui.label(
-                            RichText::new(self.page.title())
-                                .family(theme::bold())
-                                .size(16.0)
-                                .color(header.text),
-                        );
-                        heading(&title, self.page.title(), 1);
-                    } else {
-                        ui.spacing_mut().item_spacing.x = 18.0;
-                        for page in Page::ALL {
-                            tab_item(ui, page, &mut self.page, header);
-                        }
-                    }
-                });
-            });
+        let tray = match &*self.shortcuts.lock().unwrap() {
+            Shortcuts::Stopped => Some((ChipKind::Warn, "Tray not running")),
+            Shortcuts::Bound { .. } | Shortcuts::Unavailable => {
+                Some((ChipKind::Neutral, "Running in the tray"))
+            }
+            Shortcuts::Asking | Shortcuts::Pending | Shortcuts::Unknown(_) => None,
+        };
 
         if wide {
             egui::Panel::left("pages")
                 .resizable(false)
-                .exact_size(SIDEBAR_WIDTH)
-                .frame(
-                    egui::Frame::NONE
-                        .fill(p.bg)
-                        .inner_margin(egui::Margin::same(8)),
-                )
+                .show_separator_line(false)
+                .exact_size(widgets::SIDEBAR_WIDTH)
+                .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        vino_ui::logo::whisper(ui, 28.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.label(
+                                RichText::new("vinoWhisper")
+                                    .size(15.0)
+                                    .family(theme::bold()),
+                            );
+                            widgets::small(ui, "Settings");
+                        });
+                    });
+                    ui.add_space(14.0);
+                    a11y::tab_list(ui, "Pages");
                     for page in Page::ALL {
-                        sidebar_item(ui, page, &mut self.page);
+                        if widgets::nav_item(
+                            ui,
+                            page.icon(),
+                            page.title(),
+                            &tab_name(page),
+                            self.page == page,
+                            page.beta().then_some("Beta"),
+                        )
+                        .clicked()
+                        {
+                            self.page = page;
+                        }
                     }
+                    if let Some((kind, text)) = tray {
+                        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(4.0);
+                                a11y::live(&widgets::chip(ui, kind, text));
+                            });
+                        });
+                    }
+                    widgets::panel_rule(ui, widgets::Edge::Left);
+                });
+        } else {
+            egui::Panel::top("header")
+                .show_separator_line(false)
+                .frame(widgets::header_frame(header, p).inner_margin(egui::Margin {
+                    left: 16,
+                    right: 16,
+                    top: 8,
+                    bottom: 0,
+                }))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        vino_ui::logo::whisper(ui, 22.0);
+                        ui.label(
+                            RichText::new("vinoWhisper")
+                                .size(15.0)
+                                .family(theme::bold())
+                                .color(header.text),
+                        );
+                    });
+                    // Wrapped: at the desktop's largest text the tabs don't fit on one line.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(18.0, 0.0);
+                        a11y::tab_list(ui, "Pages");
+                        for page in Page::ALL {
+                            if widgets::tab(ui, &tab_name(page), self.page == page, true, header)
+                                .clicked()
+                            {
+                                self.page = page;
+                            }
+                        }
+                    });
                 });
         }
 
@@ -1106,40 +973,29 @@ impl SettingsWindow {
                     // No right margin: the scroll bar belongs on the window's edge, and the
                     // content keeps its own gap from it below.
                     .inner_margin(egui::Margin {
-                        left: 24,
+                        left: if wide { 28 } else { 16 },
                         right: 0,
-                        top: 4,
-                        bottom: 4,
+                        top: if wide { 20 } else { 12 },
+                        bottom: 0,
                     }),
             )
             .show(ui, |ui| {
-                // A solid bar, always drawn: the floating one only shows on hover, so a page
-                // that runs past the window gave no sign there was more below.
-                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                let scrolled = egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                    // Drag-to-scroll is for touch, and its invisible page-sized area took a Tab stop.
-                    .scroll_source(egui::scroll_area::ScrollSource {
-                        drag: egui::scroll_area::DragScroll::Never,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        ui.set_max_width((ui.available_width() - SCROLL_GAP).min(FORM_MAX_WIDTH));
-                        match self.page {
-                            Page::Shortcuts => self.shortcuts(ui),
-                            Page::Captions => saved_settings = self.captions(ui),
-                            Page::Speech => saved_speech = self.speech(ui),
-                            Page::Cleanup => self.cleanup(ui),
-                            Page::Sessions => self.sessions(ui),
+                widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        widgets::title(ui, self.page.title());
+                        if self.page.beta() {
+                            let tag = widgets::tag(ui, Tone::Warn, "Beta");
+                            a11y::decorative(ui, tag.id);
                         }
-                        ui.add_space(12.0);
                     });
-                // egui's bar takes focus on Tab with no name; its id is the area's with axis 1.
-                ctx.accesskit_node_builder(scrolled.id.with(1usize), |node| {
-                    node.set_role(Role::ScrollBar);
-                    node.set_label(format!("Scroll {}", self.page.title()));
-                    node.set_orientation(egui::accesskit::Orientation::Vertical);
+                    match self.page {
+                        Page::Shortcuts => self.shortcuts(ui),
+                        Page::Captions => saved_settings = self.captions(ui),
+                        Page::Speech => saved_speech = self.speech(ui),
+                        Page::Cleanup => self.cleanup(ui),
+                        Page::Sessions => self.sessions(ui),
+                    }
                 });
             });
         (saved_settings, saved_speech)
@@ -1154,7 +1010,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_app_id(app_id)
-            .with_inner_size([820.0, 740.0])
+            .with_inner_size([820.0, 776.0])
             .with_min_inner_size([340.0, 320.0]),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.
@@ -1189,6 +1045,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::accesskit::{Live, Role, Toggled};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -1223,7 +1080,7 @@ mod tests {
                 let ctx = &ui.ctx().clone();
                 // Fonts only bind at the next pass, and the bold family is not stock.
                 if !under.styled {
-                    theme::apply_for_tests(ctx);
+                    theme::apply(ctx);
                     under.styled = true;
                     ctx.request_repaint();
                     return;
@@ -1306,13 +1163,13 @@ mod tests {
         for width in [WIDE, NARROW] {
             let mut harness = harness(Page::Captions, width);
             harness.run();
-            for label in ["Position:", "Text size:", "Listen to:"] {
-                harness.get_by_role_and_label(Role::ComboBox, label);
+            for label in ["Position", "Text size", "Listen to"] {
+                harness.get_by_role_and_label(Role::RadioGroup, label);
             }
-            for label in ["Hide after silence:", "Hide icon after:"] {
+            for label in ["Hide after silence", "Hide icon after"] {
                 harness.get_by_role_and_label(Role::SpinButton, label);
             }
-            harness.get_by_role_and_label(Role::CheckBox, "Save transcripts");
+            harness.get_by_role_and_label(Role::Switch, "Save transcripts");
             for title in ["Overlay", "Listening", "Tray"] {
                 harness.get_by_role_and_label(Role::Heading, title);
             }
@@ -1320,55 +1177,49 @@ mod tests {
     }
 
     #[test]
-    fn a_combo_box_can_be_changed_and_says_what_it_is_set_to() {
+    fn a_segmented_control_can_be_changed_and_says_what_it_is_set_to() {
         let mut harness = harness(Page::Captions, WIDE);
         harness.run();
-        let position = harness.get_by_role_and_label(Role::ComboBox, "Position:");
-        assert_eq!(position.value().as_deref(), Some("Bottom of the screen"));
-        position.click();
-        harness.run();
-        harness.get_by_label("Top of the screen").click();
+        let bottom = harness.get_by_role_and_label(Role::RadioButton, "Bottom");
+        assert_eq!(bottom.accesskit_node().toggled(), Some(Toggled::True));
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Top")
+            .click();
         harness.run();
         assert_eq!(harness.state().window.settings.position, Position::Top);
         assert!(harness.state().saved.0);
-        assert_eq!(
-            harness
-                .get_by_role_and_label(Role::ComboBox, "Position:")
-                .value()
-                .as_deref(),
-            Some("Top of the screen")
-        );
+        let top = harness.get_by_role_and_label(Role::RadioButton, "Top");
+        assert_eq!(top.accesskit_node().toggled(), Some(Toggled::True));
     }
 
     #[test]
     fn escape_closes_an_open_combo_box_without_changing_it() {
-        let mut harness = harness(Page::Captions, WIDE);
+        let mut harness = harness(Page::Cleanup, WIDE);
+        harness.state_mut().window.cleanup.enabled = true;
         harness.run();
-        harness
-            .get_by_role_and_label(Role::ComboBox, "Text size:")
-            .click();
+        harness.get_by_role_and_label(Role::ComboBox, "Run").click();
         harness.run();
-        assert!(harness.query_by_label("Large").is_some());
+        assert!(harness.query_by_label("Every dictation").is_some());
         harness.key_press(egui::Key::Escape);
         harness.run();
-        assert!(harness.query_by_label("Large").is_none());
-        assert!(!harness.state().saved.0);
+        assert!(harness.query_by_label("Every dictation").is_none());
+        assert_eq!(harness.state().window.cleanup.mode, CleanupMode::Smart);
     }
 
     #[test]
-    fn a_checkbox_reports_and_flips_its_state() {
+    fn a_switch_reports_and_flips_its_state() {
         let mut harness = harness(Page::Captions, WIDE);
         harness.run();
-        let check = harness.get_by_role_and_label(Role::CheckBox, "Save transcripts");
-        let before = check.accesskit_node().toggled();
-        check.focus();
+        let switch = harness.get_by_role_and_label(Role::Switch, "Save transcripts");
+        let before = switch.accesskit_node().toggled();
+        switch.focus();
         harness.run();
         harness.key_press(egui::Key::Space);
         harness.run();
         assert!(harness.state().window.settings.save_transcripts);
         assert!(harness.state().saved.0);
         let after = harness
-            .get_by_role_and_label(Role::CheckBox, "Save transcripts")
+            .get_by_role_and_label(Role::Switch, "Save transcripts")
             .accesskit_node()
             .toggled();
         assert_ne!(before, after);
@@ -1378,8 +1229,8 @@ mod tests {
     fn the_speech_page_names_its_controls() {
         let mut harness = harness(Page::Speech, WIDE);
         harness.run();
-        harness.get_by_role_and_label(Role::ComboBox, "Language:");
-        harness.get_by_role_and_label(Role::CheckBox, "Translate to English");
+        harness.get_by_role_and_label(Role::ComboBox, "Language");
+        harness.get_by_role_and_label(Role::Switch, "Translate to English");
     }
 
     #[test]
@@ -1387,10 +1238,10 @@ mod tests {
         let mut harness = harness(Page::Cleanup, WIDE);
         harness.state_mut().window.cleanup.enabled = true;
         harness.run();
-        harness.get_by_role_and_label(Role::CheckBox, "Clean up dictation");
-        harness.get_by_role_and_label(Role::ComboBox, "Run:");
-        harness.get_by_role_and_label(Role::SpinButton, "Time limit:");
-        for gone in ["Address:", "Model:"] {
+        harness.get_by_role_and_label(Role::Switch, "Clean up dictation");
+        harness.get_by_role_and_label(Role::ComboBox, "Run");
+        harness.get_by_role_and_label(Role::SpinButton, "Time limit");
+        for gone in ["Address", "Model"] {
             assert!(
                 harness
                     .query_by_role_and_label(Role::TextInput, gone)
@@ -1400,7 +1251,7 @@ mod tests {
         }
         assert!(
             harness
-                .query_by_role_and_label(Role::PasswordInput, "New key:")
+                .query_by_role_and_label(Role::PasswordInput, "New key")
                 .is_none()
         );
         harness.get_by_label("Not downloaded (1.7 GB)");
@@ -1408,6 +1259,7 @@ mod tests {
         let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
         assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
         harness.get_by_role_and_label(Role::Button, "Download");
+        harness.get_by_role_and_label(Role::Heading, "Cleanup");
     }
 
     #[test]
@@ -1495,7 +1347,7 @@ mod tests {
         let mut harness = harness(Page::Cleanup, WIDE);
         harness.run();
         assert!(!harness.state().window.cleanup.enabled);
-        let limit = harness.get_by_role_and_label(Role::SpinButton, "Time limit:");
+        let limit = harness.get_by_role_and_label(Role::SpinButton, "Time limit");
         assert!(limit.accesskit_node().is_disabled());
     }
 
@@ -1507,6 +1359,7 @@ mod tests {
         harness.get_by_label("Meta+H");
         harness.get_by_role_and_label(Role::Button, "Change…");
         harness.get_by_role_and_label(Role::Heading, "Shortcuts");
+        harness.get_by_label("Running in the tray");
     }
 
     #[test]
@@ -1547,8 +1400,9 @@ mod tests {
         let mut harness = harness(Page::Sessions, WIDE);
         *harness.state_mut().window.model_ready.lock().unwrap() = Some(false);
         harness.run();
-        harness.get_by_role_and_label(Role::CheckBox, "Summarise saved sessions automatically");
+        harness.get_by_role_and_label(Role::Switch, "Summarise saved sessions automatically");
         harness.get_by_label("The model isn't downloaded yet; get it on the Cleanup page.");
+        harness.get_by_role_and_label(Role::Button, "Go to Cleanup");
         harness.get_by_role_and_label(Role::Button, "Open saved sessions");
         harness.get_by_label(
             "Saving transcripts is off (Captions page), so new sessions aren't kept.",
@@ -1611,9 +1465,9 @@ mod tests {
         let mut harness = harness(Page::Captions, WIDE);
         harness.ctx.set_zoom_factor(2.0);
         harness.run();
-        assert!(harness.ctx.content_rect().width() < SIDEBAR_FROM);
+        assert!(harness.ctx.content_rect().width() < widgets::SIDEBAR_FROM);
         harness.get_by_role_and_label(Role::Tab, "Cleanup (beta)");
-        harness.get_by_role_and_label(Role::ComboBox, "Position:");
-        harness.get_by_role_and_label(Role::CheckBox, "Save transcripts");
+        harness.get_by_role_and_label(Role::RadioGroup, "Position");
+        harness.get_by_role_and_label(Role::Switch, "Save transcripts");
     }
 }

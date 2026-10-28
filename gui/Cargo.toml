@@ -16,6 +16,7 @@ eframe = { version = "0.37.0", default-features = false, features = ["accesskit"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 vinowhisper-settings = { path = "../settings" }
+vino-ui = { git = "https://github.com/karanshukla/vinoSearch", rev = "3cd124649cbd605b68d741bcda87bb2db197c1e8" }
 
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", default-features = false }
