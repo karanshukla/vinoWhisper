@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import json
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -317,6 +318,9 @@ def _list_targets() -> int:
 
 
 def main() -> int:
+    # SIGINT is how the tray stops us, and a parent started in the background passes it on
+    # ignored, which Python keeps; then the tray's SIGKILL loses the transcript's bundling.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     args = _parse_args()
     try:
         if args.list_targets:

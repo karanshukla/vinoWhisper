@@ -352,6 +352,26 @@ def announce(ready: list[dict], runtime_dir: str | None = None) -> None:
         _send_tray("summaries-ready")
 
 
+def _runtime_file(relpath: str, runtime_dir: str | None = None) -> Path | None:
+    runtime = runtime_dir or os.environ.get("XDG_RUNTIME_DIR")
+    return Path(runtime) / relpath if runtime else None
+
+
+def progress(runtime_dir: str | None = None) -> dict:
+    path = _runtime_file(config.SUMMARISING_RELPATH, runtime_dir)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path else {}
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    queued = raw.get("queued")
+    return {
+        "current": raw.get("current") if isinstance(raw.get("current"), str) else None,
+        "queued": [q for q in queued if isinstance(q, str)] if isinstance(queued, list) else [],
+    }
+
+
 class Summariser:
     def __init__(
         self,
@@ -362,6 +382,7 @@ class Summariser:
         settings_path: Path | None = None,
         notify: Callable[[list[dict]], None] = announce,
         sleep: Callable[[float], None] = time.sleep,
+        progress_path: Path | None = None,
     ) -> None:
         self._model = model
         self._npu_busy = npu_busy
@@ -370,6 +391,7 @@ class Summariser:
         self._settings_path = settings_path or config.SUMMARIES_FILE
         self._notify = notify
         self._sleep = sleep
+        self._progress_path = progress_path or _runtime_file(config.SUMMARISING_RELPATH)
         self._lock = threading.Lock()
         self._forced: list[Path] = []
         self._thread: threading.Thread | None = None
@@ -387,11 +409,31 @@ class Summariser:
             "error": self.error,
         }
 
+    def _publish(self, current: Path | None) -> None:
+        if self._progress_path is None:
+            return
+        with self._lock:
+            queued = [str(path) for path in self._forced]
+        with contextlib.suppress(OSError):
+            if current is None and not queued:
+                self._progress_path.unlink(missing_ok=True)
+            else:
+                _write_json(
+                    self._progress_path,
+                    {"current": str(current) if current else None, "queued": queued},
+                )
+
     def kick(self, paths: list[Path] | None = None) -> None:
         with self._lock:
             for path in paths or []:
                 if path not in self._forced:
                     self._forced.append(path)
+            alive = self.active
+        if paths:
+            self._publish(self.current)
+        if alive:
+            return
+        with self._lock:
             if self.active:
                 return
             self._thread = threading.Thread(target=self.run, name="summariser", daemon=True)
@@ -419,6 +461,7 @@ class Summariser:
                 path, forced = self._next(state, skip)
                 if path is None:
                     break
+                self._publish(path)
                 while self._npu_busy():
                     self._sleep(POLL_S)
                 outcome = self._one(path, state)
@@ -434,6 +477,7 @@ class Summariser:
                     ready.append(outcome)
         finally:
             self.current = None
+            self._publish(None)
             with contextlib.suppress(Exception):
                 self._model.unload()
             if ready:
@@ -441,6 +485,9 @@ class Summariser:
 
     def _one(self, path: Path, state: dict) -> dict | str | None:
         self.current = path
+        if not path.is_file():
+            # Deleted while it waited; nothing to summarise or to count as a failure.
+            return None
         try:
             session = bundle.read(path)
         except bundle.BundleError as exc:
@@ -485,7 +532,7 @@ class Summariser:
             return None
         try:
             fresh = bundle.read(path)
-        except bundle.BundleError:
+        except (OSError, bundle.BundleError):
             return None
         bundle.set_summary(fresh, text, self._model.device)
         self.error = None

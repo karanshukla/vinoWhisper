@@ -122,11 +122,30 @@ impl Entry {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
 pub struct Listing {
+    /// The session the server is summarising now, and those asked for after it.
+    pub current: Option<PathBuf>,
+    pub queued: Vec<PathBuf>,
     pub directory: PathBuf,
     pub auto: bool,
     pub model_ready: bool,
     pub backfill: u64,
     pub sessions: Vec<Entry>,
+}
+
+impl Listing {
+    pub fn working(&self) -> bool {
+        self.current.is_some() || !self.queued.is_empty()
+    }
+
+    pub fn status(&self, entry: &Entry) -> &'static str {
+        if self.current.as_ref() == Some(&entry.path) {
+            "Summarising…"
+        } else if self.queued.contains(&entry.path) {
+            "Queued for a summary"
+        } else {
+            entry.status()
+        }
+    }
 }
 
 pub fn parse_listing(text: &str) -> Result<Listing, String> {
@@ -348,10 +367,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(listing.backfill, 2);
+        assert!(!listing.working());
         let entry = &listing.sessions[0];
         assert_eq!(entry.when(), "2026-10-27 14:05");
         assert_eq!(entry.length().unwrap(), "1 h 01 min");
         assert_eq!(entry.status(), "Summarised");
         assert!(parse_listing("Traceback").is_err());
+    }
+
+    #[test]
+    fn the_session_being_summarised_says_so_and_the_rest_are_queued() {
+        let listing = parse_listing(
+            r#"{"current": "/t/b.vwsession", "queued": ["/t/a.vwsession"],
+               "sessions": [{"path": "/t/b.vwsession", "summary": true, "title": "Old"},
+                            {"path": "/t/a.vwsession"}, {"path": "/t/c.vwsession"}]}"#,
+        )
+        .unwrap();
+        assert!(listing.working());
+        let status: Vec<&str> = listing.sessions.iter().map(|e| listing.status(e)).collect();
+        assert_eq!(
+            status,
+            [
+                "Summarising…",
+                "Queued for a summary",
+                "Waiting for a summary"
+            ]
+        );
     }
 }

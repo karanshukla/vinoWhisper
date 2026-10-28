@@ -104,10 +104,15 @@ struct Viewer {
 #[derive(Clone, Default)]
 struct SessionsState {
     listing: Option<Result<Listing, String>>,
+    // While the server is summarising, the list is read again every REFRESH_EVERY.
+    listed_at: Option<std::time::Instant>,
+    refreshing: bool,
     viewer: Viewer,
     busy: bool,
     error: String,
 }
+
+const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
 const COMBO_WIDTH: f32 = 240.0;
 
@@ -647,12 +652,39 @@ impl SettingsWindow {
 
     fn refresh_sessions(&self, ctx: &egui::Context) {
         let state = Arc::clone(&self.sessions);
+        {
+            let mut state = state.lock().unwrap();
+            if state.refreshing {
+                return;
+            }
+            state.refreshing = true;
+        }
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let listing = sessions::list();
-            state.lock().unwrap().listing = Some(listing);
+            let mut state = state.lock().unwrap();
+            state.listing = Some(listing);
+            state.listed_at = Some(std::time::Instant::now());
+            state.refreshing = false;
+            drop(state);
             ctx.request_repaint();
         });
+    }
+
+    fn follow_summaries(&self, ctx: &egui::Context) {
+        let state = self.sessions.lock().unwrap();
+        let working = matches!(&state.listing, Some(Ok(listing)) if listing.working());
+        if !working {
+            return;
+        }
+        let due = state
+            .listed_at
+            .is_none_or(|at| at.elapsed() >= REFRESH_EVERY);
+        drop(state);
+        if due {
+            self.refresh_sessions(ctx);
+        }
+        ctx.request_repaint_after(REFRESH_EVERY);
     }
 
     fn open_session(&self, ctx: &egui::Context, target: Target) {
@@ -690,6 +722,7 @@ impl SettingsWindow {
             locked.busy = false;
             locked.error = result.err().unwrap_or_default();
             locked.listing = Some(listing);
+            locked.listed_at = Some(std::time::Instant::now());
             if action == "delete" && locked.viewer.target.as_ref().map(|t| &t.path) == path.as_ref()
             {
                 locked.viewer = Viewer::default();
@@ -794,14 +827,20 @@ impl SettingsWindow {
             }
             Some(Ok(listing)) => {
                 for entry in &listing.sessions {
-                    self.session_card(ui, entry, state.busy);
+                    self.session_card(ui, entry, listing, state.busy);
                     ui.add_space(8.0);
                 }
             }
         }
     }
 
-    fn session_card(&mut self, ui: &mut egui::Ui, entry: &sessions::Entry, busy: bool) {
+    fn session_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        entry: &sessions::Entry,
+        listing: &Listing,
+        busy: bool,
+    ) {
         let p = theme::palette(ui.ctx());
         egui::Frame::NONE
             .stroke(Stroke::new(1.0_f32, p.rule))
@@ -813,12 +852,19 @@ impl SettingsWindow {
                 facts.extend(entry.length());
                 facts.extend(entry.source.clone());
                 ui.label(RichText::new(facts.join(" · ")).family(theme::bold()));
+                let working = listing.current.as_ref() == Some(&entry.path);
+                let waiting = working || listing.queued.contains(&entry.path);
                 let status = match (&entry.title, &entry.error) {
                     (_, Some(error)) => error.clone(),
-                    (Some(title), None) => title.clone(),
-                    (None, None) => entry.status().to_owned(),
+                    (Some(title), None) if !waiting => title.clone(),
+                    _ => listing.status(entry).to_owned(),
                 };
-                ui.add(egui::Label::new(RichText::new(status).color(p.muted)).wrap());
+                ui.horizontal_wrapped(|ui| {
+                    if working {
+                        ui.add(egui::Spinner::new());
+                    }
+                    live(&ui.add(egui::Label::new(RichText::new(status).color(p.muted)).wrap()));
+                });
                 if !entry.verified && entry.error.is_none() {
                     ui.label(
                         RichText::new("Changed since it was written (the hashes don't match).")
@@ -861,7 +907,7 @@ impl SettingsWindow {
                         "Summarise"
                     };
                     if ui
-                        .add_enabled(readable && !busy, egui::Button::new(again))
+                        .add_enabled(readable && !busy && !waiting, egui::Button::new(again))
                         .clicked()
                     {
                         self.session_action(ui.ctx(), "summarise", Some(path.clone()));
@@ -1331,6 +1377,9 @@ impl eframe::App for SettingsWindow {
         }
         if self.page == Page::Sessions && (regained || self.shown != Some(Page::Sessions)) {
             self.refresh_sessions(ctx);
+        }
+        if self.page == Page::Sessions {
+            self.follow_summaries(ctx);
         }
         self.shown = Some(self.page);
         if let Some(reason) = self.refused.lock().unwrap().take() {
@@ -2022,5 +2071,21 @@ mod tests {
                 .viewer
                 .scrolled
         );
+    }
+
+    #[test]
+    fn a_session_being_summarised_shows_a_spinner_and_cannot_be_asked_again() {
+        let mut harness = harness(Page::Sessions, WIDE);
+        let mut working = listing();
+        working.current = Some("/t/a.vwsession".into());
+        working.queued = vec!["/t/b.vwsession".into()];
+        harness.state_mut().window.sessions.lock().unwrap().listing = Some(Ok(working));
+        harness.run_steps(2);
+        harness.get_by_label("Summarising…");
+        harness.get_by_label("Queued for a summary");
+        for name in ["Summarise", "Summarise again"] {
+            let button = harness.get_by_role_and_label(Role::Button, name);
+            assert!(button.accesskit_node().is_disabled(), "{name}");
+        }
     }
 }

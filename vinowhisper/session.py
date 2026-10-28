@@ -271,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         loose = [p for p in summary.loose_transcripts() if p.stat().st_mtime < state["since"]]
         pin = llm.pinned()
         report = {
+            **summary.progress(),
             "directory": str(config.TRANSCRIPT_DIR),
             "auto": summary.auto_enabled(),
             "model_ready": pin is not None and llm.is_present(pin),
@@ -280,8 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(report))
             return 0
+        busy = summary.progress()["current"]
         for entry in sessions:
             mark = "summary" if entry.get("summary") else "no summary"
+            if entry["path"] == busy:
+                mark = "summarising now"
             print(f"{entry['name']}  {entry.get('title') or ''}  ({mark})")
         if loose:
             print(f"{len(loose)} older transcripts can be bundled: vinowhisper-session backfill")

@@ -63,6 +63,7 @@ def _summariser(tmp_path, model, busy=lambda: False, auto=True, notified=None):
     return summary.Summariser(
         model,
         busy,
+        progress_path=tmp_path / "summarising.json",
         directory=tmp_path,
         state_path=tmp_path / "state.json",
         settings_path=settings,
@@ -280,3 +281,28 @@ def test_the_session_command_lists_shows_and_declines(tmp_path, monkeypatch, cap
     assert session.main(["delete", str(path)]) == 0
     assert not path.exists()
     assert summary.load_state()["declined"] == []
+
+
+def test_progress_names_the_session_being_summarised_then_clears(tmp_path):
+    path = _bundle(tmp_path)
+    seen = []
+
+    def answer(system, user):
+        seen.append(summary.progress(runtime_dir=str(tmp_path))["current"])
+        return "# T\n\nO."
+
+    worker = _summariser(tmp_path, FakeModel(answer=answer))
+    worker._progress_path = tmp_path / "vinowhisper" / "summarising.json"
+    worker.run()
+    assert seen == [str(path)]
+    assert summary.progress(runtime_dir=str(tmp_path)) == {"current": None, "queued": []}
+
+
+def test_a_session_deleted_while_queued_is_skipped_not_failed(tmp_path):
+    path = _bundle(tmp_path)
+    worker = _summariser(tmp_path, FakeModel())
+    worker._forced.append(path)
+    path.unlink()
+    worker.run()
+    assert worker.error is None
+    assert summary.load_state(tmp_path / "state.json")["failures"] == {}

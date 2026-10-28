@@ -27,6 +27,8 @@ SUMMARIES_FILE = _config_home() / "vinowhisper/summaries.json"
 SESSIONS_STATE_FILE = _state_home() / "vinowhisper/sessions.json"
 # Finished summaries the tray has not announced yet; relative to $XDG_RUNTIME_DIR.
 SUMMARIES_READY_RELPATH = "vinowhisper/summaries-ready.json"
+# What the summariser is on right now, for the Sessions page; gone when it is idle.
+SUMMARISING_RELPATH = "vinowhisper/summarising.json"
 
 MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"
