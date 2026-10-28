@@ -85,7 +85,8 @@ esac
 
 # optimum writes a full-size intermediate model to $TMPDIR; on tmpfs /tmp that is RAM.
 TMP_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/vinowhisper/export-tmp"
-mkdir -p -m 700 "$TMP_ROOT"
+mkdir -p "$TMP_ROOT"
+chmod 700 "$TMP_ROOT"
 EXPORT_TMP="$(mktemp -d "$TMP_ROOT/XXXXXXXX")"
 trap 'rm -rf "$EXPORT_TMP"' EXIT
 EXPORT_ENV+=(TMPDIR="$EXPORT_TMP")
