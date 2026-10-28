@@ -340,7 +340,8 @@ would otherwise be re-learned:
 - **optimum writes its fp16 intermediate to `$TMPDIR`**, 6 GB for a 3B model, and
   `/tmp` is tmpfs here: an uncapped export global-OOM'd the laptop. Export LLMs with
   `TMPDIR` on disk and under `systemd-run --user --scope -p MemoryMax=...`.
-  `convert_model.sh` does not set `TMPDIR`; fine for Whisper, not for an LLM.
+  `convert_model.sh` and the wizard do this themselves since #124 (`~/.cache/vinowhisper/export-tmp`,
+  90%-of-available cap).
 - **It runs in the server** (`/cleanup`, `/cleanup/warm`), warmed at the key press,
   unloaded after `CLEANUP_IDLE_UNLOAD_S` (measured: NPU memory 2,078 MB to 8 MB), and
   cancelled server-side at the time limit so a runaway answer does not hold the lock.

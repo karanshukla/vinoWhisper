@@ -229,6 +229,8 @@ IDLE_CHECK_INTERVAL_S = 30.0
 
 
 CONVERT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "convert_model.sh"
+# optimum writes a full-size intermediate to $TMPDIR, and /tmp is often tmpfs (RAM).
+EXPORT_TMP_ROOT = _cache_home() / "vinowhisper/export-tmp"
 
 
 def export_command(variant: str, multilingual: bool = False) -> str:
