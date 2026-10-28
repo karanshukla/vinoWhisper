@@ -600,6 +600,18 @@ already exits when idle, and dictation already talks to it. `POST /cleanup` take
   check refuses.
 - **NPU window:** `MAX_PROMPT_LEN=3072`, `MIN_RESPONSE_LEN=1024`, enough for the prompt
   plus five minutes of dictation and its edited copy.
+- **No request holds the model longer than 10s** (`CLEANUP_MAX_BUDGET_S`). A request
+  that names no `budget_s`, or a longer one, gets that ceiling, so nothing else on the
+  socket can tie the model up and stall every dictation behind it. Before this, a
+  request without a budget could run to 1,024 tokens, about 50s.
+- **The files are re-hashed when they change.** The download checks every sha256; after
+  that, each load compares each file's size, mtime and inode with what they were when
+  the files last hashed clean (`.vinowhisper-verified`), and re-hashes everything if any
+  moved. A mismatch refuses the load and marks the model as not downloaded, so the
+  Cleanup page offers the download again. Measured 2026-10-27: 1.27s to re-hash the
+  1.7 GB model (warm page cache), 0.00s when nothing changed. This catches corruption
+  and careless edits; a program running as you could rewrite the stamp as well, which
+  is the same-user boundary `SECURITY.md` describes.
 
 The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `budget_s`, `mode`),
 which `vinowhisper-dictate` re-reads at each key press, so no restart is needed. Files

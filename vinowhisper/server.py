@@ -77,7 +77,9 @@ def clean() -> Response:
     if not isinstance(text, str) or not text.strip():
         return _error("body must be JSON with a non-empty 'text'")
     budget = body.get("budget_s")
-    budget_s = float(budget) if isinstance(budget, int | float) and budget > 0 else None
+    budget_s = config.CLEANUP_MAX_BUDGET_S
+    if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:
+        budget_s = min(float(budget), budget_s)
     _mark_activity(+1)
     try:
         answer, truncated = cleaner.generate(

@@ -301,3 +301,55 @@ def test_load_falls_through_the_devices_in_order(genai, monkeypatch, tmp_path):
     model.load()
     assert tried == ["NPU", "GPU"]
     assert model.device == "GPU"
+
+
+def test_a_fresh_download_is_not_hashed_again_at_load(tmp_path, monkeypatch):
+    pin = _pin()
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    monkeypatch.setattr(llm, "sha256_file", lambda path: pytest.fail("re-hashed"))
+    assert llm.verify(pin, tmp_path) == []
+
+
+def test_a_changed_file_is_hashed_and_a_same_size_corruption_is_caught(tmp_path):
+    pin = _pin()
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    (tmp_path / "openvino_model.bin").write_bytes(b"\x09" * 5000)
+    assert llm.is_present(pin, tmp_path), "sizes alone cannot see this"
+    assert llm.verify(pin, tmp_path) == ["openvino_model.bin"]
+    assert not llm.is_present(pin, tmp_path)
+    assert not (tmp_path / llm.VERIFIED_STAMP).exists()
+
+
+def test_a_touched_but_intact_file_is_hashed_once_then_trusted(tmp_path, monkeypatch):
+    import os
+
+    pin = _pin()
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    os.utime(tmp_path / "openvino_model.xml", ns=(1, 1))
+    hashed = []
+    real = llm.sha256_file
+    monkeypatch.setattr(llm, "sha256_file", lambda path: hashed.append(path.name) or real(path))
+    assert llm.verify(pin, tmp_path) == []
+    assert hashed
+    hashed.clear()
+    assert llm.verify(pin, tmp_path) == []
+    assert hashed == []
+
+
+def test_a_verify_after_corruption_restores_it(tmp_path):
+    pin = _pin()
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    (tmp_path / "openvino_model.bin").write_bytes(b"\x09" * 5000)
+    llm.verify(pin, tmp_path)
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    assert llm.is_present(pin, tmp_path) and llm.verify(pin, tmp_path) == []
+
+
+def test_load_refuses_a_model_that_no_longer_matches_its_pins(monkeypatch, tmp_path):
+    pin = _pin()
+    llm.fetch(pin=pin, directory=tmp_path, session=_Session(FILES))
+    (tmp_path / "openvino_model.bin").write_bytes(b"\x09" * 5000)
+    monkeypatch.setattr(llm, "pinned", lambda: pin)
+    monkeypatch.setattr(llm.CleanupModel, "_build", lambda self, device: pytest.fail("loaded"))
+    with pytest.raises(llm.ModelMissing, match="openvino_model.bin"):
+        llm.CleanupModel(directory=tmp_path).load()
