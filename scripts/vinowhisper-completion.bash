@@ -84,9 +84,15 @@ _vinowhisper() {
         vinowhisper-session)
             if ((COMP_CWORD == 1)); then
                 mapfile -t COMPREPLY < <(compgen -W "
-                    list show summarise delete-summary delete verify backfill --help" -- "$cur")
+                    list show export summarise delete-summary delete verify backfill --help" -- "$cur")
+            elif [[ $prev == --part && ${COMP_WORDS[1]} == export ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "both summary transcript" -- "$cur")
             elif [[ $prev == --part ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "transcript summary attestation" -- "$cur")
+            elif [[ $prev == --format ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "md txt odt" -- "$cur")
+            elif [[ $prev == -o || $prev == --output ]]; then
+                mapfile -t COMPREPLY < <(compgen -f -- "$cur")
             else
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.vwsession' -- "$cur")
             fi

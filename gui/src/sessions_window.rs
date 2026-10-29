@@ -10,7 +10,9 @@ use vino_ui::theme;
 use vino_ui::widgets::{self, Button, ButtonKind, ChipKind, Tone};
 
 use crate::forward;
-use crate::sessions::{self, Listing, Part, Piece, SummaryLine, Target};
+use crate::sessions::{
+    self, ExportRequest, Exported, Format, Listing, Part, Piece, Scope, SummaryLine, Target,
+};
 use vinowhisper_settings::Settings;
 
 #[derive(Clone, Default)]
@@ -19,6 +21,7 @@ struct Viewer {
     text: Option<Result<String, String>>,
     // Scrolled to target.at_s already; only the first frame after loading jumps.
     scrolled: bool,
+    copied: bool,
 }
 
 #[derive(Clone, Default)]
@@ -30,7 +33,20 @@ struct SessionsState {
     viewer: Viewer,
     busy: bool,
     error: String,
+    exporting: bool,
+    exported: Option<Result<Exported, String>>,
 }
+
+#[derive(Clone)]
+struct ExportDialog {
+    path: PathBuf,
+    scope: Scope,
+    format: Format,
+    has_summary: bool,
+}
+
+// Asks where (the save dialog) and writes; Ok(None) when the user cancelled. Tests swap it.
+type Exporter = Arc<dyn Fn(&ExportRequest) -> Result<Option<Exported>, String> + Send + Sync>;
 
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
@@ -46,6 +62,8 @@ struct SessionsWindow {
     listed_once: bool,
     kde_header: Option<theme::KdeHeader>,
     text_scale: Option<f32>,
+    export_dialog: Option<ExportDialog>,
+    exporter: Exporter,
 }
 
 impl SessionsWindow {
@@ -58,6 +76,8 @@ impl SessionsWindow {
             listed_once: false,
             kde_header: None,
             text_scale: None,
+            export_dialog: None,
+            exporter: Arc::new(sessions::export_with_dialog),
         }
     }
 
@@ -110,8 +130,7 @@ impl SessionsWindow {
         let ctx = ctx.clone();
         state.lock().unwrap().viewer = Viewer {
             target: Some(target.clone()),
-            text: None,
-            scrolled: false,
+            ..Viewer::default()
         };
         std::thread::spawn(move || {
             let text = sessions::show(&target.path, target.part);
@@ -150,12 +169,154 @@ impl SessionsWindow {
         });
     }
 
+    fn ask_export(&mut self, path: PathBuf, scope: Scope, has_summary: bool) {
+        self.export_dialog = Some(ExportDialog {
+            path,
+            scope: if has_summary {
+                scope
+            } else {
+                Scope::Transcript
+            },
+            format: Format::Markdown,
+            has_summary,
+        });
+    }
+
+    fn export(&self, ctx: &egui::Context, request: ExportRequest) {
+        let state = Arc::clone(&self.state);
+        let exporter = Arc::clone(&self.exporter);
+        let ctx = ctx.clone();
+        {
+            let mut state = state.lock().unwrap();
+            state.exporting = true;
+            state.exported = None;
+        }
+        std::thread::spawn(move || {
+            let result = exporter(&request);
+            let mut state = state.lock().unwrap();
+            state.exporting = false;
+            state.exported = result.transpose();
+            drop(state);
+            ctx.request_repaint();
+        });
+    }
+
+    // In place, like a confirmation, rather than a modal over a window that may be half a screen.
+    fn export_panel(&mut self, ui: &mut egui::Ui, path: &std::path::Path) {
+        let Some(dialog) = self.export_dialog.as_mut().filter(|d| d.path == path) else {
+            return;
+        };
+        let mut save = false;
+        let mut cancel = false;
+        widgets::group_label(ui, "Export");
+        ui.add_space(6.0);
+        widgets::group(ui, |ui| {
+            if dialog.has_summary {
+                widgets::Row::new("Part").show(ui, |ui, _| {
+                    widgets::segmented(
+                        ui,
+                        "Part",
+                        &mut dialog.scope,
+                        &[
+                            (Scope::Summary, "Summary"),
+                            (Scope::Transcript, "Transcript"),
+                            (Scope::Both, "Both"),
+                        ],
+                    );
+                });
+            } else {
+                widgets::Row::new("Part")
+                    .help("The transcript: this session has no summary yet.")
+                    .show(ui, |_, _| {});
+            }
+            let help = match dialog.format {
+                Format::Markdown => {
+                    "For notes apps like Obsidian. The session's details go in its frontmatter."
+                }
+                Format::Text => "No markup. Opens anywhere.",
+                Format::Odt => "For LibreOffice, Word and Google Docs.",
+            };
+            widgets::Row::new("Format").help(help).show(ui, |ui, _| {
+                widgets::segmented(
+                    ui,
+                    "Format",
+                    &mut dialog.format,
+                    &[
+                        (Format::Markdown, "Markdown"),
+                        (Format::Text, "Plain text"),
+                        (Format::Odt, "Document (.odt)"),
+                    ],
+                );
+            });
+            widgets::Row::new("Where")
+                .help("The desktop's save dialog asks next.")
+                .show(ui, |ui, _| {
+                    save = ui.add(Button::primary("Save…").small()).clicked();
+                    cancel = ui.add(Button::ghost("Cancel").small()).clicked();
+                });
+        });
+        if save {
+            let request = ExportRequest {
+                path: dialog.path.clone(),
+                scope: dialog.scope,
+                format: dialog.format,
+            };
+            self.export_dialog = None;
+            self.export(ui.ctx(), request);
+        } else if cancel {
+            self.export_dialog = None;
+        }
+    }
+
+    // Where an export went, or why it failed, until dismissed.
+    fn export_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
+        if state.exporting {
+            ui.add_space(12.0);
+            a11y::live(&widgets::small(ui, "Waiting for the save dialog."));
+            return;
+        }
+        let Some(result) = &state.exported else {
+            return;
+        };
+        ui.add_space(12.0);
+        let dismissed = match result {
+            Ok(exported) => {
+                let mut text = if exported.fallback {
+                    format!(
+                        "There's no save dialog on this desktop, so it's in {}.",
+                        exported.path.display()
+                    )
+                } else {
+                    format!("Exported to {}.", exported.path.display())
+                };
+                if exported.summary_missing {
+                    text.push_str(" The transcript only: there's no summary yet.");
+                }
+                widgets::banner(ui, Tone::Info, &text, |ui| {
+                    let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
+                    if ui
+                        .add(Button::secondary("Show in folder").small())
+                        .clicked()
+                    {
+                        sessions::show_in_folder(&exported.path);
+                    }
+                    dismissed
+                })
+            }
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Export didn't work: {why}")),
+        };
+        if dismissed {
+            self.state.lock().unwrap().exported = None;
+        }
+    }
+
     fn list(&mut self, ui: &mut egui::Ui, state: &SessionsState) {
         let p = theme::palette(ui.ctx());
         let listing = match &state.listing {
             Some(Ok(listing)) => Some(listing.clone()),
             _ => None,
         };
+        self.export_notice(ui, state);
         if listing.as_ref().is_some_and(|l| !l.model_ready) {
             ui.add_space(12.0);
             widgets::banner(
@@ -235,6 +396,7 @@ impl SessionsWindow {
             Some(Ok(listing)) => {
                 for entry in &listing.sessions {
                     self.card(ui, entry, listing, state.busy);
+                    self.export_panel(ui, &entry.path);
                     ui.add_space(8.0);
                 }
             }
@@ -367,6 +529,13 @@ impl SessionsWindow {
                 sessions::show_in_folder(&path);
                 ui.close();
             }
+            if ui
+                .add_enabled(readable, egui::Button::new("Export…"))
+                .clicked()
+            {
+                self.ask_export(path.clone(), Scope::Both, entry.summary);
+                ui.close();
+            }
             ui.separator();
             let p = theme::palette(ui.ctx());
             if ui
@@ -455,6 +624,10 @@ impl SessionsWindow {
                 {
                     sessions::show_in_folder(&target.path);
                 }
+                let has_summary = entry.as_ref().is_none_or(|e| e.summary);
+                if ui.add(Button::secondary("Export…")).clicked() {
+                    self.ask_export(target.path.clone(), target.part.into(), has_summary);
+                }
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     let shown = ui.add(
@@ -502,6 +675,25 @@ impl SessionsWindow {
                     );
                 }
             }
+            // Acts on the tab being read, so it sits with the tabs.
+            let text = match &state.viewer.text {
+                Some(Ok(text)) => Some(text.clone()),
+                _ => None,
+            };
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let label = if state.viewer.copied {
+                    "Copied"
+                } else {
+                    "Copy"
+                };
+                let copy = ui.add_enabled(text.is_some(), Button::ghost(label).small());
+                if let Some(text) = text
+                    && copy.clicked()
+                {
+                    ui.ctx().copy_text(text);
+                    self.state.lock().unwrap().viewer.copied = true;
+                }
+            });
         });
         let _ = p;
     }
@@ -519,6 +711,8 @@ impl SessionsWindow {
             _ => None,
         };
         let title = entry.as_ref().and_then(|e| e.title.clone());
+        self.export_notice(ui, state);
+        self.export_panel(ui, &target.path);
         ui.add_space(8.0);
         let text = match &state.viewer.text {
             None => {
@@ -996,7 +1190,7 @@ mod tests {
                 text: Some(Ok(
                     "# Local captions talk\n\nAn overview.\n\n#### Key point (0:02)\n- Runs locally [03:10]\n\n_Machine-written summary._\n".into(),
                 )),
-                scrolled: false,
+                ..Viewer::default()
             };
         }
         harness.run();
@@ -1025,7 +1219,7 @@ mod tests {
             text: Some(Ok(
                 "vinoWhisper transcript, x\n\n[00:00] One.\n\n[01:10] Two.\n".into(),
             )),
-            scrolled: false,
+            ..Viewer::default()
         };
         harness.run();
         harness.get_by_label("[01:10] Two.");
@@ -1049,5 +1243,266 @@ mod tests {
         harness.get_by_label("Queued for a summary");
         let button = harness.get_by_role_and_label(Role::Button, "Summarise");
         assert!(button.accesskit_node().is_disabled());
+    }
+
+    fn reading(fragment: &str, text: &str) -> Viewer {
+        Viewer {
+            target: Some(Target::parse(&format!("/t/b.vwsession#{fragment}"))),
+            text: Some(Ok(text.into())),
+            ..Viewer::default()
+        }
+    }
+
+    // The exporter runs on its own thread; step until its answer is in.
+    fn until_exported(harness: &mut Harness<'static, Under>) {
+        for _ in 0..500 {
+            harness.step();
+            if harness
+                .state()
+                .window
+                .state
+                .lock()
+                .unwrap()
+                .exported
+                .is_some()
+            {
+                harness.run();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the export never finished");
+    }
+
+    fn exporter_answering(
+        harness: &mut Harness<'static, Under>,
+        answer: Result<Option<Exported>, String>,
+    ) -> Arc<Mutex<Vec<ExportRequest>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&seen);
+        harness.state_mut().window.exporter = Arc::new(move |request| {
+            recorded.lock().unwrap().push(request.clone());
+            answer.clone()
+        });
+        seen
+    }
+
+    fn is_on(harness: &Harness<'static, Under>, label: &str) -> bool {
+        harness
+            .get_by_role_and_label(Role::RadioButton, label)
+            .accesskit_node()
+            .toggled()
+            == Some(egui::accesskit::Toggled::True)
+    }
+
+    #[test]
+    fn export_in_the_viewer_follows_the_tab_and_says_where_it_went() {
+        let mut harness = harness(true);
+        let seen = exporter_answering(
+            &mut harness,
+            Ok(Some(Exported {
+                path: "/d/2026-10-27 Local captions talk.odt".into(),
+                state: "written".into(),
+                ..Exported::default()
+            })),
+        );
+        {
+            let mut state = harness.state_mut().window.state.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            state.viewer = reading("summary", "# Local captions talk\n\nText.\n");
+        }
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Export…")
+            .click();
+        harness.run();
+        harness.get_by_role_and_label(Role::Heading, "Export");
+        assert!(is_on(&harness, "Summary"));
+        assert!(is_on(&harness, "Markdown"));
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Document (.odt)")
+            .click();
+        harness.run();
+        harness.get_by_label("For LibreOffice, Word and Google Docs.");
+        harness.get_by_role_and_label(Role::Button, "Save…").click();
+        until_exported(&mut harness);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [ExportRequest {
+                path: "/t/b.vwsession".into(),
+                scope: Scope::Summary,
+                format: Format::Odt,
+            }]
+        );
+        assert!(harness.state().window.export_dialog.is_none());
+        harness.get_by_label("Exported to /d/2026-10-27 Local captions talk.odt.");
+        // The header's and the notice's.
+        assert_eq!(
+            harness
+                .query_all_by_role_and_label(Role::Button, "Show in folder")
+                .count(),
+            2
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Dismiss")
+            .click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .window
+                .state
+                .lock()
+                .unwrap()
+                .exported
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn export_from_a_card_offers_only_the_transcript_without_a_summary_and_cancels() {
+        let mut harness = harness(true);
+        let seen = exporter_answering(&mut harness, Ok(None));
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        // The second card has no summary.
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Export…").click();
+        harness.run();
+        harness.get_by_label("The transcript: this session has no summary yet.");
+        assert!(
+            harness
+                .query_by_role_and_label(Role::RadioButton, "Summary")
+                .is_none()
+        );
+        let dialog = harness.state().window.export_dialog.clone().unwrap();
+        assert_eq!(dialog.path, PathBuf::from("/t/a.vwsession"));
+        assert_eq!(dialog.scope, Scope::Transcript);
+        harness
+            .get_by_role_and_label(Role::Button, "Cancel")
+            .click();
+        harness.run();
+        assert!(harness.state().window.export_dialog.is_none());
+        assert!(seen.lock().unwrap().is_empty());
+
+        // A card with a summary starts on both.
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Export…").click();
+        harness.run();
+        assert!(is_on(&harness, "Both"));
+    }
+
+    #[test]
+    fn without_a_save_dialog_the_notice_says_where_it_went_and_what_was_left_out() {
+        let mut harness = harness(true);
+        exporter_answering(
+            &mut harness,
+            Ok(Some(Exported {
+                path: "/home/me/Documents/vinoWhisper/2026-10-26 Transcript.md".into(),
+                summary_missing: true,
+                fallback: true,
+                ..Exported::default()
+            })),
+        );
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.state_mut().window.export_dialog = Some(ExportDialog {
+            path: "/t/a.vwsession".into(),
+            scope: Scope::Both,
+            format: Format::Markdown,
+            has_summary: true,
+        });
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Save…").click();
+        until_exported(&mut harness);
+        harness.get_by_label(
+            "There's no save dialog on this desktop, so it's in \
+             /home/me/Documents/vinoWhisper/2026-10-26 Transcript.md. \
+             The transcript only: there's no summary yet.",
+        );
+        harness.get_by_role_and_label(Role::Button, "Show in folder");
+    }
+
+    #[test]
+    fn a_failed_export_says_why_and_a_cancelled_one_says_nothing() {
+        let mut harness = harness(true);
+        exporter_answering(&mut harness, Err("/d/x.md already exists".into()));
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        let dialog = ExportDialog {
+            path: "/t/a.vwsession".into(),
+            scope: Scope::Transcript,
+            format: Format::Markdown,
+            has_summary: false,
+        };
+        harness.state_mut().window.export_dialog = Some(dialog.clone());
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Save…").click();
+        until_exported(&mut harness);
+        harness.get_by_label("Export didn't work: /d/x.md already exists");
+
+        exporter_answering(&mut harness, Ok(None));
+        harness.state_mut().window.export_dialog = Some(dialog);
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Save…").click();
+        for _ in 0..500 {
+            harness.step();
+            if !harness.state().window.state.lock().unwrap().exporting {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .window
+                .state
+                .lock()
+                .unwrap()
+                .exported
+                .is_none()
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Export didn't work")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn copy_puts_the_part_on_screen_on_the_clipboard() {
+        let text = "vinoWhisper transcript, x\n\n[00:00] One.\n";
+        let mut harness = harness(true);
+        harness.state_mut().window.state.lock().unwrap().viewer = reading("transcript", text);
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Copy").click();
+        harness.step();
+        assert!(
+            harness
+                .output()
+                .platform_output
+                .commands
+                .contains(&egui::OutputCommand::CopyText(text.into()))
+        );
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Copied");
+
+        // Nothing to copy until the text is in.
+        harness.state_mut().window.state.lock().unwrap().viewer = Viewer {
+            text: None,
+            ..reading("transcript", text)
+        };
+        harness.run();
+        let copy = harness.get_by_role_and_label(Role::Button, "Copy");
+        assert!(copy.accesskit_node().is_disabled());
     }
 }

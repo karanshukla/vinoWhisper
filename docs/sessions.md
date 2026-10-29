@@ -116,15 +116,60 @@ Saved sessions have a window of their own, `vinowhisper-gui --sessions`, the way
 vinoSearch's search window is its own (`vinosearch-settings --search`). The settings
 window's **Sessions** page keeps the summary setting and a button that opens it. It
 lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
-transcript), summarise again, delete the summary, delete the session, or show it in
-the file manager. It drives `vinowhisper-session`:
+transcript), summarise again, delete the summary, delete the session, show it in
+the file manager, export it, or copy the part on screen. It drives `vinowhisper-session`:
 
 ```
 vinowhisper-session list [--json]
 vinowhisper-session show BUNDLE [--part transcript|summary|attestation]
+vinowhisper-session export BUNDLE [--part both|summary|transcript] [--format md|txt|odt]
+                              [-o PATH] [--force] [--json] [--print-path]
 vinowhisper-session summarise|delete-summary|delete|verify BUNDLE...
 vinowhisper-session backfill
 ```
+
+### Export
+
+`export` writes the summary, the transcript or both (the default) to a file outside
+the bundle. The logic is in the CLI so the window stays thin and anything else can use it.
+
+| `--format` | What's in it |
+|---|---|
+| `md` (default) | YAML frontmatter from the attestation (`date`, `duration`, `source`, `language`, `model`, `summary_model`, `vinowhisper_session`, `tags`), a `# title`, then `## Summary` and `## Transcript` |
+| `txt` | The same text with no markup: a `Label: value` header block, then `SUMMARY` and `TRANSCRIPT` |
+| `odt` | An OpenDocument text file (headings, paragraphs, a bulleted list), written by hand with `zipfile` like the bundle; the facts are also in `meta.xml` as custom properties. Opens in LibreOffice, Word and Google Docs |
+
+Without `--format` the format comes from `-o`'s extension, else `md`.
+
+- **What leaves keeps its marks.** `[MM:SS]` stamps stay in every format, and the summary's
+  "Machine-written summary" line is always kept. The transcript's header line is dropped:
+  the frontmatter or header block says the same.
+- **`-o`** is a file, or a directory to name it in; without it, `$XDG_DOCUMENTS_DIR/vinoWhisper/`
+  (from `user-dirs.dirs`, `~/Documents` when that is unset or points at `$HOME`). The name is
+  `<YYYY-MM-DD> <summary title>.<ext>` for the summary, with ` (transcript)` or
+  ` (summary and transcript)` after it for the other parts, and `<YYYY-MM-DD> Transcript.<ext>`
+  without a summary. Characters a file system or a file manager could trip on (`/`, `\`, `:`,
+  `*`, `?`, `"`, `<`, `>`, `|`, control and bidi characters) become spaces, and it is capped at
+  200 bytes. `--print-path` prints where it would write and writes nothing.
+- **Nothing is replaced without `--force`.** Into a directory a taken name gets ` (2)`, ` (3)`;
+  a named file that exists is an error. The file is written to a temp file and renamed (a hard
+  link when not forcing, so two exports cannot race onto one name), mode 0644: it leaves the
+  private store on purpose.
+- `--part summary` on a session with no summary is an error; `--part both` exports the
+  transcript and says so (`"summary_missing": true` with `--json`).
+- **Export is read-only**: nothing is recorded in the bundle or `sessions.json`.
+- `--json` prints `{"path", "parts", "summary_missing", "state"}` for the sessions window.
+
+Not supported: SRT/VTT (the bundle has one start stamp per paragraph, no end or word times,
+so cues would be guesses; it needs segment times in a `vinowhisper-session/2`), DOCX (ODT
+opens in Word), and exporting many sessions at once.
+
+In the window, **Export…** is in each card's More menu and in the viewer's header. It asks
+for the part (in the viewer it starts on the tab you're reading) and the format, then
+opens the desktop's save dialog through the FileChooser portal. Without a portal it saves into
+`$XDG_DOCUMENTS_DIR/vinoWhisper/` and says where, with a Show in folder button. **Copy** in
+the viewer's header puts the part on screen on the clipboard, as `vinowhisper-session show`
+prints it.
 
 Opening a session from elsewhere (vinoSearch, a notification, a file manager):
 
