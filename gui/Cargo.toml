@@ -12,6 +12,9 @@ publish = false
 # Unlike the tray this is a glibc binary: winit dlopens libwayland and libEGL,
 # which a static musl build cannot do (docs/development.md).
 [dependencies]
+# The tray's version; file_chooser and open_uri are the save dialog and "Open in…".
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "file_chooser", "open_uri"] }
+async-io = "2.6.0"
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

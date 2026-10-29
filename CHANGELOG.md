@@ -20,6 +20,12 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   The key press warms it, the server unloads it after 5 idle minutes, and
   generation stops at the time limit (now 4s). `vinowhisper-cleanup model
   status|fetch|delete` is the same thing from a terminal.
+- **Export a session.** `vinowhisper-session export` writes a saved session's
+  summary, transcript or both to Markdown (with the attestation as frontmatter),
+  plain text or an `.odt` for LibreOffice, Word and Google Docs. Stamps and the
+  "machine-written" line are kept, nothing is overwritten without `--force`, and
+  the bundle is never touched. The sessions window has **Export…** (the desktop's
+  save dialog, or `~/Documents/vinoWhisper` without one) and **Copy**.
 
 ## [1.0.1] - 2026-10-23
 

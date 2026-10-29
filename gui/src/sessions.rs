@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -265,7 +266,7 @@ fn command() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("vinowhisper-session"))
 }
 
-fn run(args: &[&std::ffi::OsStr]) -> Result<String, String> {
+fn run(args: &[&OsStr]) -> Result<String, String> {
     let output = Command::new(command())
         .args(args)
         .stdin(Stdio::null())
@@ -299,7 +300,7 @@ pub fn show(path: &Path, part: Part) -> Result<String, String> {
 }
 
 pub fn act(action: &str, path: Option<&Path>) -> Result<(), String> {
-    let mut args: Vec<&std::ffi::OsStr> = vec![action.as_ref()];
+    let mut args: Vec<&OsStr> = vec![action.as_ref()];
     if let Some(path) = path {
         args.push(path.as_os_str());
     }
@@ -331,6 +332,198 @@ pub fn show_in_folder(path: &Path) {
             .stderr(Stdio::null())
             .spawn()
             .map(|mut child| std::thread::spawn(move || child.wait()));
+    }
+}
+
+// What `vinowhisper-session export --part` takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Both,
+    Summary,
+    Transcript,
+}
+
+impl Scope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scope::Both => "both",
+            Scope::Summary => "summary",
+            Scope::Transcript => "transcript",
+        }
+    }
+}
+
+impl From<Part> for Scope {
+    fn from(part: Part) -> Scope {
+        match part {
+            Part::Summary => Scope::Summary,
+            Part::Transcript => Scope::Transcript,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Markdown,
+    Text,
+    Odt,
+}
+
+impl Format {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Format::Markdown => "md",
+            Format::Text => "txt",
+            Format::Odt => "odt",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Format::Markdown => "Markdown",
+            Format::Text => "Plain text",
+            Format::Odt => "OpenDocument",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportRequest {
+    pub path: PathBuf,
+    pub scope: Scope,
+    pub format: Format,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
+pub struct Exported {
+    pub path: PathBuf,
+    pub parts: Vec<String>,
+    pub summary_missing: bool,
+    pub state: String,
+    // Saved to the documents folder because there was no save dialog to ask.
+    #[serde(skip)]
+    pub fallback: bool,
+}
+
+fn export_args<'a>(request: &'a ExportRequest, out: Option<&'a Path>) -> Vec<&'a OsStr> {
+    let mut args: Vec<&OsStr> = vec![
+        "export".as_ref(),
+        request.path.as_os_str(),
+        "--part".as_ref(),
+        request.scope.as_str().as_ref(),
+        "--format".as_ref(),
+        request.format.as_str().as_ref(),
+    ];
+    if let Some(out) = out {
+        args.extend(["-o".as_ref(), out.as_os_str()]);
+    }
+    args
+}
+
+pub fn export_path(request: &ExportRequest) -> Result<PathBuf, String> {
+    let mut args = export_args(request, None);
+    args.push("--print-path".as_ref());
+    Ok(PathBuf::from(run(&args)?.trim_end_matches('\n')))
+}
+
+pub fn export(
+    request: &ExportRequest,
+    out: Option<&Path>,
+    force: bool,
+) -> Result<Exported, String> {
+    let mut args = export_args(request, out);
+    args.push("--json".as_ref());
+    if force {
+        args.push("--force".as_ref());
+    }
+    serde_json::from_str(run(&args)?.trim()).map_err(|_| "unreadable export result".to_owned())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Chosen {
+    Path(PathBuf),
+    Cancelled,
+    // No FileChooser portal, or it failed: the reason, for the log.
+    NoPortal(String),
+}
+
+// "file:///home/me/My%20Notes.md" -> /home/me/My Notes.md; None for anything but a local file.
+pub fn file_uri_path(uri: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let rest = uri.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(PathBuf::from(std::ffi::OsString::from_vec(out)))
+}
+
+pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
+    use ashpd::desktop::ResponseError;
+    use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
+    let name = suggested
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // The portal opens a folder that exists; a first export has not made it yet.
+    let folder = suggested
+        .parent()
+        .filter(|dir| std::fs::create_dir_all(dir).is_ok());
+    let asked = async_io::block_on(async {
+        SelectedFiles::save_file()
+            .title("Export session")
+            .accept_label("Export")
+            .modal(true)
+            .current_name(name.as_str())
+            .current_folder::<&Path>(folder)?
+            .filter(FileFilter::new(format.label()).glob(&format!("*.{}", format.as_str())))
+            .send()
+            .await?
+            .response()
+    });
+    match asked {
+        Ok(files) => match files
+            .uris()
+            .first()
+            .and_then(|uri| file_uri_path(uri.as_str()))
+        {
+            Some(path) => Chosen::Path(path),
+            None => Chosen::NoPortal("the save dialog gave no local file".to_owned()),
+        },
+        Err(ashpd::Error::Response(ResponseError::Cancelled)) => Chosen::Cancelled,
+        Err(err) => Chosen::NoPortal(err.to_string()),
+    }
+}
+
+// Ok(None) when the user cancelled the save dialog.
+pub fn export_with_dialog(request: &ExportRequest) -> Result<Option<Exported>, String> {
+    let suggested = export_path(request)?;
+    match save_dialog(&suggested, request.format) {
+        // The dialog already asked about replacing a file.
+        Chosen::Path(path) => export(request, Some(&path), true).map(Some),
+        Chosen::Cancelled => Ok(None),
+        Chosen::NoPortal(why) => {
+            eprintln!(
+                "[vinowhisper-gui] no save dialog ({why}); exporting to the documents folder"
+            );
+            let mut exported = export(request, None, false)?;
+            exported.fallback = true;
+            Ok(Some(exported))
+        }
     }
 }
 
@@ -481,6 +674,54 @@ mod tests {
                 "Summarising…",
                 "Queued for a summary",
                 "Waiting for a summary"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_uri_from_the_portal_is_a_local_path() {
+        assert_eq!(
+            file_uri_path("file:///home/me/My%20Notes%20%28draft%29.md"),
+            Some(PathBuf::from("/home/me/My Notes (draft).md"))
+        );
+        assert_eq!(
+            file_uri_path("file://localhost/t/caf%C3%A9.odt"),
+            Some(PathBuf::from("/t/café.odt"))
+        );
+        assert_eq!(file_uri_path("file://host/share/a.md"), None);
+        assert_eq!(file_uri_path("https://example.com/a.md"), None);
+        assert_eq!(file_uri_path("file:///bad%zz"), None);
+    }
+
+    #[test]
+    fn an_export_reads_what_vinowhisper_session_prints() {
+        let exported: Exported = serde_json::from_str(
+            r#"{"path": "/d/2026-10-27 Transcript.md", "parts": ["transcript"],
+               "summary_missing": true, "state": "written"}"#,
+        )
+        .unwrap();
+        assert_eq!(exported.path, PathBuf::from("/d/2026-10-27 Transcript.md"));
+        assert!(exported.summary_missing && !exported.fallback);
+        let request = ExportRequest {
+            path: "/t/a.vwsession".into(),
+            scope: Scope::from(Part::Summary),
+            format: Format::Odt,
+        };
+        let args: Vec<_> = export_args(&request, Some(Path::new("/d/x.odt")))
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "export",
+                "/t/a.vwsession",
+                "--part",
+                "summary",
+                "--format",
+                "odt",
+                "-o",
+                "/d/x.odt"
             ]
         );
     }

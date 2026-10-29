@@ -12,7 +12,7 @@ from typing import IO
 
 import numpy as np
 
-from . import bundle, config, events
+from . import bundle, config, events, session_export
 from .paragraphs import ParagraphBreaker
 
 AUDIO_NAME = "audio.wav"
@@ -253,6 +253,27 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument(
         "--part", choices=("transcript", "summary", "attestation"), default="transcript"
     )
+    export = commands.add_parser(
+        "export", help="write the transcript or summary to a file outside the bundle"
+    )
+    export.add_argument("bundle", type=_bundle_arg)
+    export.add_argument("--part", choices=session_export.PARTS, default="both")
+    export.add_argument(
+        "--format",
+        choices=session_export.FORMATS,
+        help="default: from the output's extension, else md",
+    )
+    export.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="a file, or a directory to name it in (default: $XDG_DOCUMENTS_DIR/vinoWhisper/)",
+    )
+    export.add_argument("--force", action="store_true", help="replace an existing file")
+    export.add_argument("--json", action="store_true", help="one JSON object for the GUI")
+    export.add_argument(
+        "--print-path", action="store_true", help="print the path it would write, write nothing"
+    )
     for name, text in (
         ("summarise", "summarise (again) in the background, now"),
         ("delete-summary", "remove the summary and don't make it again"),
@@ -308,6 +329,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(text)
         return 0
 
+    if args.command == "export":
+        return _export(args)
+
     if args.command == "backfill":
         made = summary.backfill()
         print(f"[vinowhisper] bundled {len(made)} transcripts", file=sys.stderr)
@@ -330,6 +354,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[vinowhisper] {problem}", file=sys.stderr)
             return 1
     return status
+
+
+def _export(args: argparse.Namespace) -> int:
+    output = args.output.expanduser() if args.output is not None else None
+    fmt = session_export.format_for(output, args.format)
+    try:
+        read = bundle.read(args.bundle)
+        if args.print_path:
+            print(session_export.target(read, args.part, fmt, output))
+            return 0
+        done = session_export.export(read, args.part, fmt, output, force=args.force)
+    except (OSError, bundle.BundleError, session_export.ExportError) as exc:
+        print(f"[vinowhisper] {exc}", file=sys.stderr)
+        return 1
+    if done.summary_missing:
+        print(
+            f"[vinowhisper] {args.bundle.name} has no summary yet; exported the transcript only",
+            file=sys.stderr,
+        )
+    print(json.dumps(done.to_dict()) if args.json else done.path)
+    return 0
 
 
 def _bundle_command(command: str, path: Path) -> int:
