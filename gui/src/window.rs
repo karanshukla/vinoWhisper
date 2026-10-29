@@ -1010,7 +1010,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_app_id(app_id)
-            .with_inner_size([820.0, 776.0])
+            .with_inner_size([820.0, 680.0])
             .with_min_inner_size([340.0, 320.0]),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.
