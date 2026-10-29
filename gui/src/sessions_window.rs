@@ -838,7 +838,7 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_app_id(app_id)
-            .with_inner_size([820.0, 796.0])
+            .with_inner_size([820.0, 680.0])
             .with_min_inner_size([340.0, 320.0]),
         // See window::run: vsync stalls a window KWin considers hidden.
         glow_options: eframe::egui_glow::GlowConfiguration {
