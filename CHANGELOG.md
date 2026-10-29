@@ -26,6 +26,9 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
   "machine-written" line are kept, nothing is overwritten without `--force`, and
   the bundle is never touched. The sessions window has **Export…** (the desktop's
   save dialog, or `~/Documents/vinoWhisper` without one) and **Copy**.
+- **Read a session aloud.** With vinoSpeak installed, the sessions window has
+  **Read aloud** for the summary or transcript (`vinospeak --file BUNDLE
+  --part …`), which turns into **Stop** while it reads.
 
 ## [1.0.1] - 2026-10-23
 

@@ -2889,6 +2889,7 @@ dependencies = [
  "async-io",
  "eframe",
  "egui_kittest",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "vino-user-interface",
