@@ -384,7 +384,7 @@ impl SessionsWindow {
         }
         match &state.listing {
             None => {
-                a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Reading…"));
+                a11y::live(&widgets::chip(ui, ChipKind::Neutral, "Reading…"));
             }
             Some(Err(why)) => {
                 widgets::banner(ui, Tone::Error, why, |_| {});
@@ -573,7 +573,7 @@ impl SessionsWindow {
         if entry.error.is_none() && (waiting || !entry.summary) {
             let text = listing.status(entry);
             let shown = if working {
-                widgets::chip_busy(ui, ChipKind::Ok, text)
+                widgets::chip(ui, ChipKind::Ok, text)
             } else {
                 widgets::chip(ui, ChipKind::Neutral, text)
             };
@@ -712,7 +712,7 @@ impl SessionsWindow {
         ui.add_space(8.0);
         let text = match &state.viewer.text {
             None => {
-                a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Reading…"));
+                a11y::live(&widgets::chip(ui, ChipKind::Neutral, "Reading…"));
                 return;
             }
             Some(Err(why)) => {
@@ -1225,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_being_summarised_shows_a_spinner_and_cannot_be_asked_again() {
+    fn a_session_being_summarised_says_so_and_cannot_be_asked_again() {
         let mut harness = harness(true);
         let mut working = listing();
         working.current = Some("/t/a.vwsession".into());
