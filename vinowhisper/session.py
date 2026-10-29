@@ -270,6 +270,11 @@ def main(argv: list[str] | None = None) -> int:
         help="a file, or a directory to name it in (default: $XDG_DOCUMENTS_DIR/vinoWhisper/)",
     )
     export.add_argument("--force", action="store_true", help="replace an existing file")
+    export.add_argument(
+        "--reuse",
+        action="store_true",
+        help="into a directory: keep this session's earlier export, even if it was edited",
+    )
     export.add_argument("--json", action="store_true", help="one JSON object for the GUI")
     export.add_argument(
         "--print-path", action="store_true", help="print the path it would write, write nothing"
@@ -364,7 +369,11 @@ def _export(args: argparse.Namespace) -> int:
         if args.print_path:
             print(session_export.target(read, args.part, fmt, output))
             return 0
-        done = session_export.export(read, args.part, fmt, output, force=args.force)
+        if args.force and args.reuse:
+            raise session_export.ExportError("--force and --reuse pull opposite ways; pick one")
+        done = session_export.export(
+            read, args.part, fmt, output, force=args.force, reuse=args.reuse
+        )
     except (OSError, bundle.BundleError, session_export.ExportError) as exc:
         print(f"[vinowhisper] {exc}", file=sys.stderr)
         return 1

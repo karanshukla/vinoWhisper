@@ -425,12 +425,28 @@ def target(read: bundle.Bundle, part: str, fmt: str, out: Path | None) -> Path:
     return (out or default_dir()) / default_name(read, part, fmt)
 
 
+def _from_session(path: Path, read: bundle.Bundle, fmt: str) -> bool:
+    name = read.path.name
+    try:
+        if fmt == "odt":
+            with zipfile.ZipFile(path) as archive:
+                meta = archive.read("meta.xml").decode("utf-8", "replace")
+            return f'meta:name="vinowhisper_session">{_escape(name)}<' in meta
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    if fmt == "md":
+        return f"vinowhisper_session: {json.dumps(name, ensure_ascii=False)}" in text
+    return f"Session: {name}" in text
+
+
 def export(
     read: bundle.Bundle,
     part: str,
     fmt: str,
     out: Path | None,
     force: bool = False,
+    reuse: bool = False,
 ) -> Exported:
     document = build(read, part)
     data = render(document, fmt)
@@ -441,6 +457,13 @@ def export(
     # Into a directory nothing is replaced: a taken name gets " (2)", " (3)", ...
     for n in range(1, 100):
         candidate = _numbered(first, n)
+        if reuse and candidate.is_file():
+            if candidate.read_bytes() == data:
+                return Exported(candidate, document.parts, document.summary_missing, "unchanged")
+            # Edited since, or the summary changed: either way the file is the user's now.
+            if _from_session(candidate, read, fmt):
+                return Exported(candidate, document.parts, document.summary_missing, "edited")
+            continue
         try:
             _write(candidate, data, False)
         except ExportError:

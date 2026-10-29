@@ -262,6 +262,15 @@ pub fn multilingual_installed() -> bool {
         })
 }
 
+/// Where the sessions window's "Open in…" sends a session (#138): the last one picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenIn {
+    #[default]
+    WordProcessor,
+    TextEditor,
+}
+
 // The settings window's Wayland app id; the tray installs a desktop entry under it for the icon.
 pub const SETTINGS_APP_ID: &str = "io.github.karanshukla.vinowhisper.settings";
 
@@ -282,6 +291,7 @@ pub struct Settings {
     /// Seconds of silence before the captions hide themselves; 0 keeps them up.
     pub hide_after_silence_s: u64,
     pub save_transcripts: bool,
+    pub open_in: OpenIn,
 }
 
 impl Default for Settings {
@@ -294,6 +304,7 @@ impl Default for Settings {
             tray_idle_minutes: DEFAULT_TRAY_IDLE_MINUTES,
             hide_after_silence_s: DEFAULT_HIDE_AFTER_SILENCE_S,
             save_transcripts: false,
+            open_in: OpenIn::default(),
         }
     }
 }
@@ -419,6 +430,7 @@ mod tests {
             tray_idle_minutes: 5,
             hide_after_silence_s: 40,
             save_transcripts: true,
+            open_in: OpenIn::TextEditor,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -546,6 +558,15 @@ mod tests {
         assert_eq!(settings.tray_idle_minutes, DEFAULT_TRAY_IDLE_MINUTES);
         assert_eq!(settings.hide_after_silence_s, DEFAULT_HIDE_AFTER_SILENCE_S);
         assert!(!settings.save_transcripts);
+        assert_eq!(settings.open_in, OpenIn::WordProcessor);
+    }
+
+    #[test]
+    fn open_in_is_written_the_way_the_file_spells_it() {
+        let path = scratch("open-in");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"open_in": "text_editor"}"#).unwrap();
+        assert_eq!(Settings::load_from(&path).open_in, OpenIn::TextEditor);
     }
 
     #[test]
