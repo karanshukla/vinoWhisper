@@ -248,7 +248,7 @@ impl Captions {
         match &self.phase {
             Phase::Starting => Span::new(
                 format!(
-                    "Starting… {}s. A cold start loads the model onto the NPU, \
+                    "Starting, {}s. A cold start loads the model onto the NPU, \
                      which takes 10 to 30 seconds.",
                     self.started_at.elapsed().as_secs()
                 ),
@@ -258,7 +258,7 @@ impl Captions {
                 "Listening. Nothing audible on the capture target yet.",
                 Tone::Dim,
             ),
-            Phase::Live => Span::new("Listening…", Tone::Dim),
+            Phase::Live => Span::new("Listening.", Tone::Dim),
             Phase::Stopped => Span::new("Captions stopped.", Tone::Dim),
             Phase::Failed(message) => Span::new(message.clone(), Tone::Bad),
         }
@@ -274,7 +274,13 @@ impl Captions {
             (Phase::Failed(_), _) => (Tone::Bad, "stopped".to_owned()),
         };
 
-        let mut spans = vec![Span::new(label, Tone::Dim)];
+        // The words carry the state now that there is no dot: a fault is red, the rest dim.
+        let label_tone = if dot == Tone::Bad {
+            Tone::Bad
+        } else {
+            Tone::Dim
+        };
+        let mut spans = vec![Span::new(label, label_tone)];
         if let Some(device) = &self.device {
             spans.push(Span::new(" · ", Tone::Dim));
             let tone = if self.degraded { Tone::Warn } else { Tone::Dim };
@@ -556,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn sustained_silence_turns_the_dot_red_and_says_so() {
+    fn sustained_silence_turns_the_status_red_and_says_so() {
         let mut captions = Captions::new();
         captions.apply(Event::Ready {
             device: "NPU".into(),
@@ -571,6 +577,8 @@ mod tests {
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Bad);
         assert_eq!(status[0].text, "no signal 12s");
+        // With no dot, the words themselves turn red.
+        assert_eq!(status[0].tone, Tone::Bad);
     }
 
     fn status_text(captions: &Captions) -> String {

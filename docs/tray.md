@@ -277,7 +277,7 @@ silence rule stop it. Speech heard before that still counts.
 
 It asks the portal for **Meta+H**, which is what the dictation key on this
 laptop's F-row sends, after Windows' Win+H. A small pill shows what it is
-doing: a level meter while listening, then "Transcribing…", then the text it
+doing: a level meter while listening, then "Transcribing", then the text it
 typed. It sits above the caption box when that is showing, and works with the
 captions hidden. Without a shortcuts portal, bind `vinowhisper-tray dictate` to a
 key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-tray
@@ -334,7 +334,7 @@ without a cue word.
 by file), and can verify or delete it. It loads when you press the dictation key, so
 the load overlaps your speech: a few seconds the first time after a while, then about
 2 seconds per cleaned dictation. It unloads after 5 minutes unused. The pill says
-"Cleaning up with the model…" while it works.
+"Cleaning up with the model" while it works.
 
 To see what went in and what the model answered, run the tray with
 `VINOWHISPER_CLEANUP_DEBUG=1`. How it was chosen and measured is under
@@ -379,8 +379,8 @@ measured yet; that needs the NPU.
   words arrive, then the meter and the text on one line, cut to its last 64
   characters so the newest words stay in view. There is no "Listening…" text
   (removed 2026-10-07 at the user's request), so hold and hands-free look the
-  same. Anything that is not the user's words (Starting the microphone…,
-  Transcribing…, Heard nothing, errors) is drawn dim and italic, so it cannot
+  same. Anything that is not the user's words (Starting the microphone,
+  Transcribing, Heard nothing, errors) is drawn dim and italic, so it cannot
   be read as part of the text. Nothing is typed until release, and the target window is not touched.
   No `Partial` is sent once the key is released or after a cancel.
 - **Preview of the uncut tail.** Added 2026-10-07. A piece only finishes at a
@@ -652,7 +652,7 @@ variable beats the file:
   across languages because the language is `auto` here and a stray match only costs a
   request.
 - **Not streamed.** The text is pasted once, after the whole answer has been checked.
-- The pill says "Cleaning up with the model…" while the model runs, from the
+- The pill says "Cleaning up with the model" while the model runs, from the
   `Cleaning` event.
 - **It turns itself off on errors** (#87), because each failed request holds the
   typing back by up to the whole budget. A missing model (or an http 400) turns it off
@@ -802,7 +802,7 @@ vinowhisper-tray ──spawns──> vinowhisper-caption --json ──HTTP──
 - **Redraws follow what is on screen, not events.** The caption process sends
   an event every half second even in silence, and one that changes nothing
   visible draws nothing, since every frame also makes the compositor repaint.
-  The once-a-second timer runs only while "Starting… Ns" is showing, so a
+  The once-a-second timer runs only while "Starting, Ns" is showing, so a
   hidden overlay has no timer at all. The tray is updated only when its menu
   or tooltip actually changed, since each update is a D-Bus round trip.
 - **The tray decides nothing.** Each choice goes to the main loop as a command,

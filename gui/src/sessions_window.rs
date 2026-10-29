@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Align, Color32, Layout, RichText};
 use vino_ui::a11y;
-use vino_ui::icons::{self, Icon};
+use vino_ui::icons::Icon;
 use vino_ui::theme;
 use vino_ui::widgets::{self, Button, ButtonKind, ChipKind, Tone};
 
@@ -351,7 +351,6 @@ impl SessionsWindow {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
-                        icons::icon(ui, Icon::Archive, 16.0, p.muted);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let button = ui.add_enabled(
                                 !state.busy,
@@ -618,10 +617,7 @@ impl SessionsWindow {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add(Button::secondary("Show in folder").icon(Icon::Folder))
-                    .clicked()
-                {
+                if ui.add(Button::secondary("Show in folder")).clicked() {
                     sessions::show_in_folder(&target.path);
                 }
                 let has_summary = entry.as_ref().is_none_or(|e| e.summary);
@@ -805,7 +801,7 @@ impl SessionsWindow {
                 SummaryLine::Bullet(item) => {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
-                        ui.label(RichText::new("•").size(15.0).color(p.accent));
+                        ui.label(RichText::new("•").size(15.0).color(p.muted));
                         ui.vertical(|ui| {
                             self.stamped(ui, target, &item, false);
                         });
@@ -906,10 +902,7 @@ impl SessionsWindow {
                         vino_ui::logo::whisper(ui, 24.0);
                         widgets::window_title(ui, "Saved sessions", header.text);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add(Button::ghost("Settings").icon(Icon::Settings))
-                                .clicked()
-                            {
+                            if ui.add(Button::ghost("Settings")).clicked() {
                                 forward::open_settings("sessions");
                             }
                         });

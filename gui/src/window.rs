@@ -231,9 +231,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Global shortcuts");
         widgets::group(ui, |ui| match state {
             Shortcuts::Asking | Shortcuts::Pending => {
-                Row::new("Asking the desktop…").show(ui, |ui, _| {
-                    widgets::spinner(ui);
-                });
+                Row::new("Asking the desktop which keys are bound.").show(ui, |_, _| {});
             }
             Shortcuts::Bound {
                 captions,
@@ -250,10 +248,7 @@ impl SettingsWindow {
                     Row::new("Change them")
                         .help("Opens your desktop's shortcut settings.")
                         .show(ui, |ui, _| {
-                            if ui
-                                .add(Button::secondary("Change…").icon(Icon::Settings))
-                                .clicked()
-                            {
+                            if ui.add(Button::secondary("Change…")).clicked() {
                                 forward::run_tray(&["configure-shortcut"]);
                             }
                         });
@@ -549,7 +544,7 @@ impl SettingsWindow {
                 let button = if status.present {
                     Button::secondary(label)
                 } else {
-                    Button::primary(label).icon(Icon::Download)
+                    Button::primary(label)
                 };
                 if ui.add_enabled(!state.busy, button).clicked() {
                     self.confirm_delete = false;
@@ -656,10 +651,7 @@ impl SettingsWindow {
                 .help(help)
                 .tone(tone)
                 .show(ui, |ui, _| {
-                    if ui
-                        .add(Button::secondary("Open saved sessions").icon(Icon::Sessions))
-                        .clicked()
-                    {
+                    if ui.add(Button::secondary("Open saved sessions")).clicked() {
                         forward::open_sessions();
                     }
                 });

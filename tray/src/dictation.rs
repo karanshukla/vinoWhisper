@@ -408,7 +408,7 @@ impl Dictation {
         let (tone, text, level) = match &self.phase {
             Phase::Idle => return None,
             Phase::Listening { live: false, .. } => {
-                (Tone::Dim, "Starting the microphone…".to_owned(), None)
+                (Tone::Dim, "Starting the microphone".to_owned(), None)
             }
             Phase::Listening { text, .. } => (Tone::Good, preview(text), Some(self.level)),
             Phase::Transcribing => (Tone::Warn, self.transcribing_text(), None),
@@ -449,11 +449,11 @@ impl Dictation {
 
     fn transcribing_text(&self) -> String {
         if self.cleaning {
-            return "Cleaning up with the model…".to_owned();
+            return "Cleaning up with the model".to_owned();
         }
         match &self.device {
-            Some((device, true)) => format!("Transcribing on {device}…"),
-            _ => "Transcribing…".to_owned(),
+            Some((device, true)) => format!("Transcribing on {device}"),
+            _ => "Transcribing".to_owned(),
         }
     }
 }
@@ -727,10 +727,10 @@ mod tests {
         d.key(true, Instant::now());
         d.event(Dictate::Transcribing);
         let before = d.epoch();
-        assert_eq!(d.pill().unwrap().text, "Transcribing…");
+        assert_eq!(d.pill().unwrap().text, "Transcribing");
         d.event(Dictate::Cleaning);
         assert_eq!(d.phase(), &Phase::Transcribing);
-        assert_eq!(d.pill().unwrap().text, "Cleaning up with the model…");
+        assert_eq!(d.pill().unwrap().text, "Cleaning up with the model");
         assert!(d.epoch() > before);
         d.event(Dictate::Dictated {
             text: "Hello.".into(),
