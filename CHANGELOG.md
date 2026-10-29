@@ -29,6 +29,11 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 - **Read a session aloud.** With vinoSpeak installed, the sessions window has
   **Read aloud** for the summary or transcript (`vinospeak --file BUNDLE
   --part …`), which turns into **Stop** while it reads.
+- **Open a session in another app.** **Open in…** in the sessions window sends
+  the summary or transcript to a word processor (`.odt`) or a text editor
+  (`.md`) through the desktop's app chooser (`xdg-open` without a portal). The
+  copy is kept in `~/Documents/vinoWhisper`, and one you've edited is opened as
+  it is rather than replaced.
 
 ## [1.0.1] - 2026-10-23
 

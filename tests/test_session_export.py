@@ -311,3 +311,66 @@ def test_characters_xml_cannot_hold_are_dropped_from_the_odt(tmp_path, out, caps
     assert "[00:00] bell tabhere & <tag>" in _odt_text(out / "x.odt")
     content = zipfile.ZipFile(out / "x.odt").read("content.xml").decode()
     assert "tab<text:tab/>here &amp; &lt;tag&gt;" in content
+
+
+def test_reuse_keeps_an_earlier_export_and_says_whether_it_was_edited(sessions, out, capsys):
+    path, _ = sessions
+
+    def reuse(fmt="md"):
+        status, stdout, _ = _export(
+            capsys, path, "--part", "summary", "--format", fmt, "-o", out, "--reuse", "--json"
+        )
+        assert status == 0
+        return json.loads(stdout)
+
+    first = reuse()
+    assert first["state"] == "written"
+    assert reuse() == {**first, "state": "unchanged"}
+    kept = Path(first["path"])
+    kept.write_text(kept.read_text(encoding="utf-8") + "\nMy own notes.\n", encoding="utf-8")
+    assert reuse() == {**first, "state": "edited"}
+    assert kept.read_text(encoding="utf-8").endswith("My own notes.\n")
+    assert [p.name for p in out.iterdir()] == [kept.name]
+
+    odt = reuse("odt")
+    assert reuse("odt")["state"] == "unchanged"
+    # A word processor saving it rewrites content.xml and keeps the custom properties.
+    saved = Path(odt["path"])
+    with zipfile.ZipFile(saved) as archive:
+        parts = {info.filename: archive.read(info) for info in archive.infolist()}
+    parts["content.xml"] = parts["content.xml"].replace(b"Captions run", b"Captions ran")
+    with zipfile.ZipFile(saved, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    assert reuse("odt")["state"] == "edited"
+
+
+def test_reuse_does_not_take_another_sessions_file_for_its_own(sessions, out, capsys):
+    path, without = sessions
+    other = path.with_name("2026-10-27-170000.vwsession")
+    shutil.copy(without, other)
+
+    def reuse(bundle_path):
+        argv = (bundle_path, "--part", "transcript", "-o", out, "--reuse", "--json")
+        return json.loads(_export(capsys, *argv)[1])
+
+    # Two sessions that day, neither summarised: both want "2026-10-27 Transcript.md".
+    mine = reuse(without)
+    theirs = reuse(other)
+    assert Path(mine["path"]).name == "2026-10-27 Transcript.md"
+    assert Path(theirs["path"]).name == "2026-10-27 Transcript (2).md"
+    assert theirs["state"] == "written"
+    assert reuse(other)["state"] == "unchanged"
+    assert reuse(without) == {**mine, "state": "unchanged"}
+    for fmt, needle in (("txt", "Session: "), ("md", "vinowhisper_session: ")):
+        stranger = out / f"2026-10-27 Transcript (3).{fmt}"
+        stranger.write_text(f"{needle}someone-else.vwsession\n", encoding="utf-8")
+        assert not session_export._from_session(stranger, bundle.read(without), fmt)
+    assert not session_export._from_session(out / "missing.odt", bundle.read(path), "odt")
+
+
+def test_force_and_reuse_together_are_refused(sessions, out, capsys):
+    path, _ = sessions
+    status, _, stderr = _export(capsys, path, "-o", out, "--force", "--reuse")
+    assert status == 1 and "pick one" in stderr
+    assert list(out.iterdir()) == []

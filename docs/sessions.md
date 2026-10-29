@@ -123,7 +123,7 @@ the file manager, export it, copy the part on screen, or have vinoSpeak read it 
 vinowhisper-session list [--json]
 vinowhisper-session show BUNDLE [--part transcript|summary|attestation]
 vinowhisper-session export BUNDLE [--part both|summary|transcript] [--format md|txt|odt]
-                              [-o PATH] [--force] [--json] [--print-path]
+                              [-o PATH] [--force | --reuse] [--json] [--print-path]
 vinowhisper-session summarise|delete-summary|delete|verify BUNDLE...
 vinowhisper-session backfill
 ```
@@ -158,6 +158,12 @@ Without `--format` the format comes from `-o`'s extension, else `md`.
 - `--part summary` on a session with no summary is an error; `--part both` exports the
   transcript and says so (`"summary_missing": true` with `--json`).
 - **Export is read-only**: nothing is recorded in the bundle or `sessions.json`.
+- **`--reuse`** (into a directory) keeps an earlier export of this session instead of
+  numbering a new one: `"state": "unchanged"` when its bytes are what export would write
+  now, `"edited"` when they differ. Which session a file came from is read from its
+  `vinowhisper_session` frontmatter key, `Session:` line or `meta.xml` property (LibreOffice
+  keeps that on save, checked 2026-10-29), so another session's file with the same name is
+  never taken; it gets a ` (2)` of its own.
 - `--json` prints `{"path", "parts", "summary_missing", "state"}` for the sessions window.
 
 Not supported: SRT/VTT (the bundle has one start stamp per paragraph, no end or word times,
@@ -170,6 +176,29 @@ opens the desktop's save dialog through the FileChooser portal. Without a portal
 `$XDG_DOCUMENTS_DIR/vinoWhisper/` and says where, with a Show in folder button. **Copy** in
 the viewer's header puts the part on screen on the clipboard, as `vinowhisper-session show`
 prints it.
+
+### Open in…
+
+The viewer's header has an **Open in…** split button: the main half opens the part on screen
+in the app picked last ("Open in word processor" to start with), the arrow picks the other
+one. The card's More menu has both (the summary, or the transcript when there is none).
+
+| Entry | Exports |
+|---|---|
+| Word processor | `odt` |
+| Text editor | `md` |
+
+1. It exports with `--reuse` into `$XDG_DOCUMENTS_DIR/vinoWhisper/`, a kept file rather than a
+   temp file, because people edit it. A copy that differs from the session (edited, or
+   summarised since) is opened as it is, never written over, and the notice says so;
+   **Export…** writes a fresh one.
+2. It opens the file through the OpenURI portal with `ask` set, so GNOME and KDE show their
+   own app chooser, Flatpak apps work, and the desktop remembers the pick. With no portal it
+   runs `xdg-open`, and the MIME defaults decide.
+
+There is no app list of our own. The last entry picked is `open_in` in `gui.json`
+(`"word_processor"` or `"text_editor"`). Obsidian wants the file inside a vault, which this
+doesn't do; **Export…** to the vault's folder does.
 
 Opening a session from elsewhere (vinoSearch, a notification, a file manager):
 

@@ -11,7 +11,8 @@ use vino_ui::widgets::{self, Button, ButtonKind, ChipKind, Tone};
 
 use crate::forward;
 use crate::sessions::{
-    self, ExportRequest, Exported, Format, Listing, Part, Piece, Scope, SummaryLine, Target,
+    self, ExportRequest, Exported, Format, Listing, OpenIn, Opened, Part, Piece, Scope,
+    SummaryLine, Target,
 };
 use crate::speak::{self, Reading};
 use vinowhisper_settings::Settings;
@@ -36,6 +37,8 @@ struct SessionsState {
     error: String,
     exporting: bool,
     exported: Option<Result<Exported, String>>,
+    opening: bool,
+    opened: Option<Result<Opened, String>>,
 }
 
 #[derive(Clone)]
@@ -48,6 +51,8 @@ struct ExportDialog {
 
 // Asks where (the save dialog) and writes; Ok(None) when the user cancelled. Tests swap it.
 type Exporter = Arc<dyn Fn(&ExportRequest) -> Result<Option<Exported>, String> + Send + Sync>;
+// Exports a kept copy and hands it to an app; Ok(None) when the app chooser was closed.
+type Opener = Arc<dyn Fn(&ExportRequest) -> Result<Option<Opened>, String> + Send + Sync>;
 
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
@@ -69,6 +74,10 @@ struct SessionsWindow {
     speaker: Option<PathBuf>,
     reading: Option<Reading>,
     read_error: Option<String>,
+    // The last "Open in…" picked, kept in gui.json.
+    open_in: OpenIn,
+    settings_path: PathBuf,
+    opener: Opener,
 }
 
 impl SessionsWindow {
@@ -86,6 +95,9 @@ impl SessionsWindow {
             speaker: None,
             reading: None,
             read_error: None,
+            open_in: OpenIn::default(),
+            settings_path: Settings::path(),
+            opener: Arc::new(sessions::open_in),
         }
     }
 
@@ -138,6 +150,116 @@ impl SessionsWindow {
             if widgets::notice(ui, Tone::Error, &format!("Reading aloud stopped: {why}")) {
                 self.read_error = None;
             }
+        }
+    }
+
+    fn open_with(&mut self, ctx: &egui::Context, path: PathBuf, part: Part, choice: OpenIn) {
+        if choice != self.open_in {
+            self.open_in = choice;
+            let mut settings = Settings::load_from(&self.settings_path);
+            settings.open_in = choice;
+            if let Err(err) = settings.save_to(&self.settings_path) {
+                eprintln!(
+                    "[vinowhisper-gui] could not save {}: {err}",
+                    self.settings_path.display()
+                );
+            }
+        }
+        let request = ExportRequest {
+            path,
+            scope: part.into(),
+            format: sessions::format_for(choice),
+        };
+        let state = Arc::clone(&self.state);
+        let opener = Arc::clone(&self.opener);
+        let ctx = ctx.clone();
+        {
+            let mut state = state.lock().unwrap();
+            state.opening = true;
+            state.opened = None;
+        }
+        std::thread::spawn(move || {
+            let result = opener(&request);
+            let mut state = state.lock().unwrap();
+            state.opening = false;
+            state.opened = result.transpose();
+            drop(state);
+            ctx.request_repaint();
+        });
+    }
+
+    // A split button: the last app picked, and a menu for the other.
+    fn open_in_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &std::path::Path,
+        part: Part,
+        enabled: bool,
+    ) {
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let menu =
+                widgets::icon_button(ui, ButtonKind::Secondary, Icon::ChevronDown, "Open in…");
+            let mut picked = None;
+            egui::Popup::menu(&menu).show(|ui| {
+                ui.set_min_width(180.0);
+                for choice in [OpenIn::WordProcessor, OpenIn::TextEditor] {
+                    if ui.button(sessions::open_in_label(choice)).clicked() {
+                        picked = Some(choice);
+                        ui.close();
+                    }
+                }
+            });
+            let label = format!(
+                "Open in {}",
+                sessions::open_in_label(self.open_in).to_lowercase()
+            );
+            if ui.add(Button::secondary(label)).clicked() {
+                picked = Some(self.open_in);
+            }
+            if let Some(choice) = picked {
+                self.open_with(ui.ctx(), path.to_path_buf(), part, choice);
+            }
+        });
+    }
+
+    fn open_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
+        if state.opening {
+            ui.add_space(12.0);
+            a11y::live(&widgets::small(ui, "Waiting for the app to open."));
+            return;
+        }
+        let Some(result) = &state.opened else {
+            return;
+        };
+        ui.add_space(12.0);
+        let dismissed = match result {
+            Ok(opened) => {
+                let path = &opened.exported.path;
+                let text = if opened.exported.state == "edited" {
+                    format!(
+                        "Opened {} as it is: it differs from the session (edited, or summarised \
+                         again), so it wasn't replaced. Export… writes a fresh copy.",
+                        path.display()
+                    )
+                } else {
+                    format!("Opened {}.", path.display())
+                };
+                widgets::banner(ui, Tone::Info, &text, |ui| {
+                    let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
+                    if ui
+                        .add(Button::secondary("Show in folder").small())
+                        .clicked()
+                    {
+                        sessions::show_in_folder(path);
+                    }
+                    dismissed
+                })
+            }
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Couldn't open it: {why}")),
+        };
+        if dismissed {
+            self.state.lock().unwrap().opened = None;
         }
     }
 
@@ -377,6 +499,7 @@ impl SessionsWindow {
             _ => None,
         };
         self.export_notice(ui, state);
+        self.open_notice(ui, state);
         if listing.as_ref().is_some_and(|l| !l.model_ready) {
             ui.add_space(12.0);
             widgets::banner(
@@ -596,6 +719,11 @@ impl SessionsWindow {
                 self.ask_export(path.clone(), Scope::Both, entry.summary);
                 ui.close();
             }
+            let part = if entry.summary {
+                Part::Summary
+            } else {
+                Part::Transcript
+            };
             if self.speaker.is_some() {
                 let label = if self.reading(&path) {
                     "Stop reading"
@@ -603,12 +731,14 @@ impl SessionsWindow {
                     "Read aloud"
                 };
                 if ui.add_enabled(readable, egui::Button::new(label)).clicked() {
-                    let part = if entry.summary {
-                        Part::Summary
-                    } else {
-                        Part::Transcript
-                    };
                     self.read_aloud(&path, part);
+                    ui.close();
+                }
+            }
+            for choice in [OpenIn::WordProcessor, OpenIn::TextEditor] {
+                let label = format!("Open in {}", sessions::open_in_label(choice).to_lowercase());
+                if ui.add_enabled(readable, egui::Button::new(label)).clicked() {
+                    self.open_with(ui.ctx(), path.clone(), part, choice);
                     ui.close();
                 }
             }
@@ -707,6 +837,8 @@ impl SessionsWindow {
                 if ui.add(Button::secondary("Export…")).clicked() {
                     self.ask_export(target.path.clone(), target.part.into(), has_summary);
                 }
+                let can_open = target.part == Part::Transcript || has_summary;
+                self.open_in_button(ui, &target.path, target.part, can_open);
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     let shown = ui.add(
@@ -805,6 +937,7 @@ impl SessionsWindow {
         };
         let title = entry.as_ref().and_then(|e| e.title.clone());
         self.export_notice(ui, state);
+        self.open_notice(ui, state);
         self.export_panel(ui, &target.path);
         ui.add_space(8.0);
         let text = match &state.viewer.text {
@@ -1141,8 +1274,10 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
         options,
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
-            let mut window = SessionsWindow::with(Settings::load().save_transcripts);
+            let settings = Settings::load();
+            let mut window = SessionsWindow::with(settings.save_transcripts);
             window.speaker = speak::find_on_path("vinospeak");
+            window.open_in = settings.open_in;
             window.kde_header = theme::kde_header();
             if let Some(target) = open {
                 window.open(&cc.egui_ctx, target);
@@ -1187,10 +1322,22 @@ mod tests {
                 under.window.show(ui);
             },
             Under {
-                window: SessionsWindow::with(save_transcripts),
+                window: SessionsWindow {
+                    // Never the user's gui.json.
+                    settings_path: scratch_settings(),
+                    ..SessionsWindow::with(save_transcripts)
+                },
                 styled: false,
             },
         )
+    }
+
+    fn scratch_settings() -> PathBuf {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!("vinowhisper-gui-test-{}-{n}", std::process::id()))
+            .join("gui.json")
     }
 
     fn listing() -> Listing {
@@ -1798,5 +1945,170 @@ mod tests {
         harness.get_by_label("Stop reading").click();
         harness.run();
         assert!(harness.state().window.reading.is_none());
+    }
+
+    fn opener_answering(
+        harness: &mut Harness<'static, Under>,
+        answer: Result<Option<Opened>, String>,
+    ) -> Arc<Mutex<Vec<ExportRequest>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&seen);
+        harness.state_mut().window.opener = Arc::new(move |request| {
+            recorded.lock().unwrap().push(request.clone());
+            answer.clone()
+        });
+        seen
+    }
+
+    fn until_opened(harness: &mut Harness<'static, Under>) {
+        for _ in 0..500 {
+            harness.step();
+            if !harness.state().window.state.lock().unwrap().opening {
+                harness.run();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("opening never finished");
+    }
+
+    fn opened(path: &str, state: &str) -> Opened {
+        Opened {
+            exported: Exported {
+                path: path.into(),
+                state: state.into(),
+                ..Exported::default()
+            },
+            fallback: true,
+        }
+    }
+
+    #[test]
+    fn open_in_sends_the_tab_being_read_to_the_last_app_picked() {
+        let mut harness = harness(true);
+        let seen = opener_answering(
+            &mut harness,
+            Ok(Some(opened(
+                "/d/2026-10-27 Local captions talk.odt",
+                "written",
+            ))),
+        );
+        {
+            let mut state = harness.state_mut().window.state.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            state.viewer = reading("summary", "# Local captions talk\n\nText.\n");
+        }
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Open in…");
+        harness
+            .get_by_role_and_label(Role::Button, "Open in word processor")
+            .click();
+        until_opened(&mut harness);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [ExportRequest {
+                path: "/t/b.vwsession".into(),
+                scope: Scope::Summary,
+                format: Format::Odt,
+            }]
+        );
+        harness.get_by_label("Opened /d/2026-10-27 Local captions talk.odt.");
+        // Using the remembered app writes nothing.
+        assert!(!harness.state().window.settings_path.exists());
+    }
+
+    #[test]
+    fn the_app_picked_from_the_menu_is_remembered_in_the_settings() {
+        let mut harness = harness(true);
+        let seen = opener_answering(&mut harness, Ok(None));
+        harness.state_mut().window.state.lock().unwrap().viewer =
+            reading("transcript", "[00:00] One.\n");
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Open in…")
+            .click();
+        harness.run();
+        harness.get_by_label("Text editor").click();
+        until_opened(&mut harness);
+        assert_eq!(seen.lock().unwrap()[0].format, Format::Markdown);
+        assert_eq!(seen.lock().unwrap()[0].scope, Scope::Transcript);
+        // A closed app chooser says nothing.
+        assert!(harness.query_by_label_contains("Opened").is_none());
+        harness.get_by_role_and_label(Role::Button, "Open in text editor");
+
+        let path = harness.state().window.settings_path.clone();
+        assert_eq!(Settings::load_from(&path).open_in, OpenIn::TextEditor);
+        // The next window starts on it.
+        let mut next = SessionsWindow::with(true);
+        next.open_in = Settings::load_from(&path).open_in;
+        assert_eq!(next.open_in, OpenIn::TextEditor);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn open_in_is_off_on_the_summary_tab_of_a_session_with_no_summary() {
+        let mut harness = harness(true);
+        {
+            let mut state = harness.state_mut().window.state.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            state.viewer = Viewer {
+                target: Some(Target::parse("/t/a.vwsession#summary")),
+                text: Some(Err("a.vwsession has no summary yet".into())),
+                ..Viewer::default()
+            };
+        }
+        harness.run();
+        let button = harness.get_by_role_and_label(Role::Button, "Open in word processor");
+        assert!(button.accesskit_node().is_disabled());
+        let menu = harness.get_by_role_and_label(Role::Button, "Open in…");
+        assert!(menu.accesskit_node().is_disabled());
+
+        harness.state_mut().window.state.lock().unwrap().viewer =
+            reading("transcript", "[00:00] One.\n");
+        harness.run();
+        let button = harness.get_by_role_and_label(Role::Button, "Open in word processor");
+        assert!(!button.accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn an_edited_copy_is_opened_as_it_is_and_the_notice_says_so() {
+        let mut harness = harness(true);
+        opener_answering(
+            &mut harness,
+            Ok(Some(opened("/d/2026-10-26 Transcript.md", "edited"))),
+        );
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        // The card without a summary sends its transcript.
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Open in word processor");
+        harness.get_by_label("Open in text editor").click();
+        until_opened(&mut harness);
+        harness.get_by_label(
+            "Opened /d/2026-10-26 Transcript.md as it is: it differs from the session (edited, \
+             or summarised again), so it wasn't replaced. Export… writes a fresh copy.",
+        );
+    }
+
+    #[test]
+    fn a_failure_to_open_says_why() {
+        let mut harness = harness(true);
+        opener_answering(
+            &mut harness,
+            Err("xdg-open found no app for /d/x.odt".into()),
+        );
+        harness.state_mut().window.state.lock().unwrap().viewer =
+            reading("transcript", "[00:00] One.\n");
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Open in word processor")
+            .click();
+        until_opened(&mut harness);
+        harness.get_by_label("Couldn't open it: xdg-open found no app for /d/x.odt");
     }
 }

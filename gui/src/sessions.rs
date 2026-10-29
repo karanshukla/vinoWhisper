@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::Deserialize;
+pub use vinowhisper_settings::OpenIn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
@@ -507,6 +508,96 @@ pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
         Err(ashpd::Error::Response(ResponseError::Cancelled)) => Chosen::Cancelled,
         Err(err) => Chosen::NoPortal(err.to_string()),
     }
+}
+
+pub fn format_for(open_in: OpenIn) -> Format {
+    match open_in {
+        OpenIn::WordProcessor => Format::Odt,
+        OpenIn::TextEditor => Format::Markdown,
+    }
+}
+
+pub fn open_in_label(open_in: OpenIn) -> &'static str {
+    match open_in {
+        OpenIn::WordProcessor => "Word processor",
+        OpenIn::TextEditor => "Text editor",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Opened {
+    pub exported: Exported,
+    // No OpenURI portal, so xdg-open picked the app.
+    pub fallback: bool,
+}
+
+// A kept copy in $XDG_DOCUMENTS_DIR/vinoWhisper/, not a temp file: people edit it. An edited
+// one is opened as it is (`state` "edited"), never written over.
+pub fn export_kept(request: &ExportRequest) -> Result<Exported, String> {
+    let mut args = export_args(request, None);
+    args.push("--reuse".as_ref());
+    args.push("--json".as_ref());
+    serde_json::from_str(run(&args)?.trim()).map_err(|_| "unreadable export result".to_owned())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Launched {
+    Portal,
+    Cancelled,
+    XdgOpen,
+}
+
+pub fn open_file(path: &Path) -> Result<Launched, String> {
+    use ashpd::desktop::ResponseError;
+    use ashpd::desktop::open_uri::OpenFileRequest;
+    let file = std::fs::File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    // ask: the desktop's own app chooser, which remembers the pick itself.
+    let asked = async_io::block_on(async {
+        OpenFileRequest::default()
+            .ask(true)
+            .send_file(&std::os::fd::AsFd::as_fd(&file))
+            .await?
+            .response()
+    });
+    match asked {
+        Ok(()) => Ok(Launched::Portal),
+        Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(Launched::Cancelled),
+        Err(err) => {
+            eprintln!("[vinowhisper-gui] no OpenURI portal ({err}); trying xdg-open");
+            let mut child = Command::new("xdg-open")
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|err| format!("could not run xdg-open: {err}"))?;
+            // On a bare compositor xdg-open can wait for the app to exit; still running is launched.
+            for _ in 0..20 {
+                if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
+                    return if status.success() {
+                        Ok(Launched::XdgOpen)
+                    } else {
+                        Err(format!("xdg-open found no app for {}", path.display()))
+                    };
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            std::thread::spawn(move || child.wait());
+            Ok(Launched::XdgOpen)
+        }
+    }
+}
+
+// Ok(None) when the user closed the app chooser.
+pub fn open_in(request: &ExportRequest) -> Result<Option<Opened>, String> {
+    let exported = export_kept(request)?;
+    Ok(match open_file(&exported.path)? {
+        Launched::Cancelled => None,
+        launched => Some(Opened {
+            exported,
+            fallback: launched == Launched::XdgOpen,
+        }),
+    })
 }
 
 // Ok(None) when the user cancelled the save dialog.
