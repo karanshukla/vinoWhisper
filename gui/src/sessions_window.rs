@@ -13,6 +13,7 @@ use crate::forward;
 use crate::sessions::{
     self, ExportRequest, Exported, Format, Listing, Part, Piece, Scope, SummaryLine, Target,
 };
+use crate::speak::{self, Reading};
 use vinowhisper_settings::Settings;
 
 #[derive(Clone, Default)]
@@ -64,6 +65,10 @@ struct SessionsWindow {
     text_scale: Option<f32>,
     export_dialog: Option<ExportDialog>,
     exporter: Exporter,
+    // vinoSpeak, looked up once when the window opens; no button without it.
+    speaker: Option<PathBuf>,
+    reading: Option<Reading>,
+    read_error: Option<String>,
 }
 
 impl SessionsWindow {
@@ -78,6 +83,61 @@ impl SessionsWindow {
             text_scale: None,
             export_dialog: None,
             exporter: Arc::new(sessions::export_with_dialog),
+            speaker: None,
+            reading: None,
+            read_error: None,
+        }
+    }
+
+    fn reading(&self, path: &std::path::Path) -> bool {
+        self.reading.as_ref().is_some_and(|r| r.path == path)
+    }
+
+    // One reading at a time: starting one, or Stop, ends the last.
+    fn read_aloud(&mut self, path: &std::path::Path, part: Part) {
+        let was = self.reading.take().map(|r| r.path.clone());
+        self.read_error = None;
+        if was.as_deref() == Some(path) {
+            return;
+        }
+        let Some(program) = &self.speaker else {
+            return;
+        };
+        match Reading::start(program, path, part) {
+            Ok(reading) => self.reading = Some(reading),
+            Err(why) => self.read_error = Some(why),
+        }
+    }
+
+    fn stop_reading_unless(&mut self, path: Option<&std::path::Path>) {
+        if self
+            .reading
+            .as_ref()
+            .is_some_and(|r| Some(r.path.as_path()) != path)
+        {
+            self.reading = None;
+        }
+    }
+
+    fn follow_reading(&mut self, ctx: &egui::Context) {
+        let Some(reading) = self.reading.as_mut() else {
+            return;
+        };
+        match reading.poll() {
+            None => ctx.request_repaint_after(Duration::from_millis(200)),
+            Some(result) => {
+                self.reading = None;
+                self.read_error = result.err();
+            }
+        }
+    }
+
+    fn read_notice(&mut self, ui: &mut egui::Ui) {
+        if let Some(why) = self.read_error.clone() {
+            ui.add_space(12.0);
+            if widgets::notice(ui, Tone::Error, &format!("Reading aloud stopped: {why}")) {
+                self.read_error = None;
+            }
         }
     }
 
@@ -535,6 +595,22 @@ impl SessionsWindow {
                 self.ask_export(path.clone(), Scope::Both, entry.summary);
                 ui.close();
             }
+            if self.speaker.is_some() {
+                let label = if self.reading(&path) {
+                    "Stop reading"
+                } else {
+                    "Read aloud"
+                };
+                if ui.add_enabled(readable, egui::Button::new(label)).clicked() {
+                    let part = if entry.summary {
+                        Part::Summary
+                    } else {
+                        Part::Transcript
+                    };
+                    self.read_aloud(&path, part);
+                    ui.close();
+                }
+            }
             ui.separator();
             let p = theme::palette(ui.ctx());
             if ui
@@ -553,6 +629,7 @@ impl SessionsWindow {
                 .add_enabled(readable, Button::primary("Summary").small())
                 .clicked()
             {
+                self.stop_reading_unless(Some(&path));
                 self.open(ui.ctx(), open(Part::Summary));
             }
         } else if ui
@@ -568,6 +645,7 @@ impl SessionsWindow {
             .add_enabled(readable, Button::secondary("Transcript").small())
             .clicked()
         {
+            self.stop_reading_unless(Some(&path));
             self.open(ui.ctx(), open(Part::Transcript));
         }
         if entry.error.is_none() && (waiting || !entry.summary) {
@@ -593,6 +671,7 @@ impl SessionsWindow {
             .clicked()
         {
             self.state.lock().unwrap().viewer = Viewer::default();
+            self.reading = None;
             self.refresh(ui.ctx());
             return;
         }
@@ -671,7 +750,7 @@ impl SessionsWindow {
                     );
                 }
             }
-            // Acts on the tab being read, so it sits with the tabs.
+            // Both act on the tab being read, so they sit with the tabs.
             let text = match &state.viewer.text {
                 Some(Ok(text)) => Some(text.clone()),
                 _ => None,
@@ -683,11 +762,25 @@ impl SessionsWindow {
                     "Copy"
                 };
                 let copy = ui.add_enabled(text.is_some(), Button::ghost(label).small());
-                if let Some(text) = text
+                if let Some(text) = &text
                     && copy.clicked()
                 {
-                    ui.ctx().copy_text(text);
+                    ui.ctx().copy_text(text.clone());
                     self.state.lock().unwrap().viewer.copied = true;
+                }
+                if self.speaker.is_some() {
+                    let label = if self.reading(&target.path) {
+                        "Stop"
+                    } else {
+                        "Read aloud"
+                    };
+                    let button = ui.add_enabled(
+                        text.is_some() || self.reading(&target.path),
+                        Button::secondary(label).small(),
+                    );
+                    if button.clicked() {
+                        self.read_aloud(&target.path, target.part);
+                    }
                 }
             });
         });
@@ -887,6 +980,7 @@ impl SessionsWindow {
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
+        self.follow_reading(ctx);
         let state = self.state.lock().unwrap().clone();
         let viewing = state.viewer.target.is_some();
 
@@ -929,6 +1023,7 @@ impl SessionsWindow {
                     ("saved sessions", LIST_MAX_WIDTH)
                 };
                 widgets::page_scroll(ui, what, width, |ui| {
+                    self.read_notice(ui);
                     if viewing {
                         self.viewer(ui, &state);
                     } else {
@@ -1040,6 +1135,7 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
             let mut window = SessionsWindow::with(Settings::load().save_transcripts);
+            window.speaker = speak::find_on_path("vinospeak");
             window.kde_header = theme::kde_header();
             if let Some(target) = open {
                 window.open(&cc.egui_ctx, target);
@@ -1497,5 +1593,203 @@ mod tests {
         harness.run();
         let copy = harness.get_by_role_and_label(Role::Button, "Copy");
         assert!(copy.accesskit_node().is_disabled());
+    }
+
+    // A stand-in for vinoSpeak#42's `vinospeak --file BUNDLE --part PART`.
+    fn fake_speaker(body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "vinowhisper-fake-vinospeak-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vinospeak");
+        let script = format!("#!/bin/sh\ncd '{}'\n{body}\n", dir.display());
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn viewing_summary(harness: &mut Harness<'static, Under>) {
+        let mut state = harness.state_mut().window.state.lock().unwrap();
+        state.listing = Some(Ok(listing()));
+        state.viewer = Viewer {
+            target: Some(Target::parse("/t/b.vwsession#summary")),
+            text: Some(Ok("# Local captions talk\n\nText.\n".into())),
+            ..Viewer::default()
+        };
+    }
+
+    fn until(harness: &mut Harness<'static, Under>, done: impl Fn(&Under) -> bool) {
+        for _ in 0..400 {
+            harness.step();
+            if done(harness.state()) {
+                harness.run();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("gave up waiting");
+    }
+
+    #[test]
+    fn read_aloud_is_not_offered_without_vinospeak() {
+        let mut harness = harness(true);
+        viewing_summary(&mut harness);
+        harness.run();
+        assert!(harness.query_by_label("Read aloud").is_none());
+        harness.state_mut().window.state.lock().unwrap().viewer = Viewer::default();
+        harness.run();
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Show in folder");
+        assert!(harness.query_by_label("Read aloud").is_none());
+    }
+
+    #[test]
+    fn read_aloud_turns_to_stop_while_it_reads_and_back_when_it_ends() {
+        let speaker = fake_speaker("echo \"$@\" > args\nsleep 0.5");
+        let args = speaker.with_file_name("args");
+        let mut harness = harness(true);
+        harness.state_mut().window.speaker = Some(speaker);
+        viewing_summary(&mut harness);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Read aloud")
+            .click();
+        harness.run();
+        harness.get_by_role_and_label(Role::Button, "Stop");
+        until(&mut harness, |under| under.window.reading.is_none());
+        harness.get_by_role_and_label(Role::Button, "Read aloud");
+        assert_eq!(
+            std::fs::read_to_string(&args).unwrap(),
+            "--file /t/b.vwsession --part summary\n"
+        );
+        assert!(harness.state().window.read_error.is_none());
+    }
+
+    #[test]
+    fn stop_ends_the_reading_and_whatever_it_started() {
+        let speaker = fake_speaker("echo $$ > pid\nsleep 30 &\necho $! > child\nwait");
+        let dir = speaker.parent().unwrap().to_path_buf();
+        let mut harness = harness(true);
+        harness.state_mut().window.speaker = Some(speaker);
+        viewing_summary(&mut harness);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Read aloud")
+            .click();
+        harness.run();
+        let pids: Vec<String> = ["pid", "child"]
+            .iter()
+            .map(|name| {
+                for _ in 0..200 {
+                    match std::fs::read_to_string(dir.join(name)) {
+                        Ok(pid) if pid.ends_with('\n') => return pid.trim().to_owned(),
+                        _ => std::thread::sleep(Duration::from_millis(10)),
+                    }
+                }
+                panic!("the fake never wrote {name}");
+            })
+            .collect();
+        harness.get_by_role_and_label(Role::Button, "Stop").click();
+        harness.run();
+        assert!(harness.state().window.reading.is_none());
+        harness.get_by_role_and_label(Role::Button, "Read aloud");
+        for pid in pids {
+            let proc = PathBuf::from(format!("/proc/{pid}"));
+            for _ in 0..300 {
+                // Gone, or a zombie its parent has not reaped yet.
+                let state = std::fs::read_to_string(proc.join("stat")).unwrap_or_default();
+                if state.is_empty() || state.contains(") Z ") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let state = std::fs::read_to_string(proc.join("stat")).unwrap_or_default();
+            assert!(
+                state.is_empty() || state.contains(") Z "),
+                "{pid} still runs"
+            );
+        }
+        assert!(harness.state().window.read_error.is_none());
+    }
+
+    #[test]
+    fn an_old_vinospeak_says_to_update_it() {
+        let speaker = fake_speaker(
+            "echo 'usage: vinospeak [-h] [--file FILE]' >&2\n\
+             echo 'vinospeak: error: unrecognized arguments: --part summary' >&2\nexit 2",
+        );
+        let mut harness = harness(true);
+        harness.state_mut().window.speaker = Some(speaker);
+        viewing_summary(&mut harness);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Read aloud")
+            .click();
+        until(&mut harness, |under| under.window.reading.is_none());
+        harness.get_by_label(
+            "Reading aloud stopped: this vinoSpeak can't read sessions yet. Update vinoSpeak \
+             to read them.",
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Dismiss")
+            .click();
+        harness.run();
+        assert!(harness.state().window.read_error.is_none());
+    }
+
+    #[test]
+    fn going_back_to_all_sessions_stops_it_and_a_card_reads_its_summary() {
+        let speaker = fake_speaker("echo \"$@\" > args\nexec sleep 30");
+        let args = speaker.with_file_name("args");
+        let mut harness = harness(true);
+        harness.state_mut().window.speaker = Some(speaker);
+        viewing_summary(&mut harness);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Read aloud")
+            .click();
+        harness.run();
+        assert!(harness.state().window.reading.is_some());
+        harness
+            .get_by_role_and_label(Role::Button, "All sessions")
+            .click();
+        harness.run();
+        assert!(harness.state().window.reading.is_none());
+
+        // The first card has a summary; its More menu reads that, then offers to stop.
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        let _ = std::fs::remove_file(&args);
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Read aloud").click();
+        harness.run();
+        until(&mut harness, |_| args.exists());
+        assert_eq!(
+            std::fs::read_to_string(&args).unwrap(),
+            "--file /t/b.vwsession --part summary\n"
+        );
+        harness
+            .query_all_by_role_and_label(Role::Button, "More")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Stop reading").click();
+        harness.run();
+        assert!(harness.state().window.reading.is_none());
     }
 }

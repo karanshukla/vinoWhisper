@@ -117,7 +117,7 @@ vinoSearch's search window is its own (`vinosearch-settings --search`). The sett
 window's **Sessions** page keeps the summary setting and a button that opens it. It
 lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
 transcript), summarise again, delete the summary, delete the session, show it in
-the file manager, export it, or copy the part on screen. It drives `vinowhisper-session`:
+the file manager, export it, copy the part on screen, or have vinoSpeak read it aloud. It drives `vinowhisper-session`:
 
 ```
 vinowhisper-session list [--json]
@@ -177,6 +177,21 @@ Opening a session from elsewhere (vinoSearch, a notification, a file manager):
 vinowhisper-gui --open <bundle>[#transcript[@MM:SS]|#summary]
 vinowhisper-gui <bundle>.vwsession
 ```
+
+### Read aloud
+
+When `vinospeak` is on `PATH` (looked up once, when the window opens), the viewer's tab row
+has **Read aloud** and each card's More menu has the same. It runs
+`vinospeak --file BUNDLE --part summary|transcript` (karanshukla/vinoSpeak#42): the tab being
+read in the viewer, the summary (or the transcript, without one) from a card. Without
+vinoSpeak there is no button and no prompt to install it.
+
+- While it reads the button is **Stop**, which sends SIGTERM to vinoSpeak's process group, so
+  whatever it plays through stops too. Going back to all sessions, opening another session or
+  closing the window stops it as well, and `PR_SET_PDEATHSIG` ends it if the window crashes.
+  One reading at a time.
+- If vinoSpeak exits non-zero, its last line on stderr is shown. An older vinoSpeak that
+  refuses `--part` gets "this vinoSpeak can't read sessions yet. Update vinoSpeak to read them."
 
 `--page sessions --open <bundle>` is still read and opens the same window: vinoSearch
 and notifications posted by older trays send it. `--page sessions` alone is the settings
