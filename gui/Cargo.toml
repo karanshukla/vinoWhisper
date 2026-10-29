@@ -15,6 +15,8 @@ publish = false
 # The tray's version; file_chooser and open_uri are the save dialog and "Open in…".
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "file_chooser", "open_uri"] }
 async-io = "2.6.0"
+# Process groups for Read aloud's Stop; already in the tree through winit.
+rustix = { version = "1.1.4", features = ["process"] }
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
