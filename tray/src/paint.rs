@@ -132,15 +132,8 @@ impl Painter {
         let left = frame.x0 + g.pad_x;
         let right = frame.x1 - g.pad_x;
 
-        let (dot, status) = captions.status();
+        let (_, status) = captions.status();
         let top = frame.y0 + g.pad_y;
-        let dot_radius = g.status_px * 0.3;
-        canvas.fill_circle(
-            left + dot_radius,
-            top + g.status_line / 2.0,
-            dot_radius,
-            tone_rgba(dot),
-        );
         self.draw_text(
             canvas,
             &status,
@@ -149,7 +142,7 @@ impl Painter {
                 weight: Weight::NORMAL,
                 style: Style::Normal,
                 wrap: Wrap::None,
-                left: left + dot_radius * 2.0 + g.status_px * 0.5,
+                left,
                 right,
                 top,
                 lines: 1,

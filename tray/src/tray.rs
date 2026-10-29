@@ -69,7 +69,7 @@ pub fn caption_status(
         return "Captions hidden".into();
     }
     match phase {
-        Phase::Starting => "Captions starting…".into(),
+        Phase::Starting => "Captions starting".into(),
         Phase::Live => match (device, degraded) {
             (Some(device), true) => {
                 format!("Captions live on {device}, not the NPU: expect more lag")
