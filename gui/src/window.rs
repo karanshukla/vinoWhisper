@@ -492,7 +492,7 @@ impl SettingsWindow {
                 widgets::group_label(ui, "Model");
                 widgets::group(ui, |ui| {
                     Row::new("Download").show(ui, |ui, _| {
-                        a11y::live(&widgets::chip_busy(ui, ChipKind::Neutral, "Checking…"));
+                        a11y::live(&widgets::chip(ui, ChipKind::Neutral, "Checking…"));
                     });
                 });
             }
@@ -561,7 +561,7 @@ impl SettingsWindow {
                     widgets::progress(ui, fraction, 120.0);
                     shown
                 } else if state.busy {
-                    widgets::chip_busy(ui, ChipKind::Neutral, "Deleting…")
+                    widgets::chip(ui, ChipKind::Neutral, "Deleting…")
                 } else if status.present {
                     widgets::chip(
                         ui,
