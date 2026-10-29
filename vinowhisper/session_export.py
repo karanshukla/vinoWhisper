@@ -7,7 +7,6 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from xml.sax.saxutils import escape
 
 from . import bundle
 
@@ -231,8 +230,14 @@ def to_text(document: Document) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    )
+
+
 def _xml(text: str) -> str:
-    return escape(_XML_INVALID.sub("", text)).replace("\t", "<text:tab/>")
+    return _escape(_XML_INVALID.sub("", text)).replace("\t", "<text:tab/>")
 
 
 _NS = (
@@ -415,10 +420,9 @@ def _into_dir(out: Path | None) -> bool:
 
 
 def target(read: bundle.Bundle, part: str, fmt: str, out: Path | None) -> Path:
-    if not _into_dir(out):
-        assert out is not None
+    if out is not None and not _into_dir(out):
         return out
-    return (out if out is not None else default_dir()) / default_name(read, part, fmt)
+    return (out or default_dir()) / default_name(read, part, fmt)
 
 
 def export(
