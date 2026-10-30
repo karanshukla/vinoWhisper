@@ -10,6 +10,8 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
 ### 🚀 Features
 
 - **LLM cleanup runs on this machine.** Dictation cleanup now uses SmolLM3-3B on
