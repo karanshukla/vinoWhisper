@@ -2883,7 +2883,7 @@ dependencies = [
 
 [[package]]
 name = "vinowhisper-gui"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "ashpd",
  "async-io",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "vinowhisper-settings"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",
