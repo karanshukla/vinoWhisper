@@ -106,7 +106,9 @@ def test_a_paragraph_longer_than_a_chunk_is_split_and_keeps_its_stamp():
 
 
 def _generate(model):
-    return lambda s, u, n, prefill: model.generate(s, u, n, summary.REPETITION_PENALTY, prefill=prefill)[0]
+    return lambda s, u, n, prefill: model.generate(
+        s, u, n, summary.REPETITION_PENALTY, prefill=prefill
+    )[0]
 
 
 def test_the_shape_is_assembled_whatever_the_model_writes():
@@ -132,7 +134,9 @@ def test_the_answers_are_made_to_start_in_the_shape():
     seen = []
     summary.summarise(
         _transcript(3),
-        lambda s, u, n, prefill: seen.append(prefill) or model.generate(s, u, n, summary.REPETITION_PENALTY)[0],
+        lambda s, u, n, prefill: (
+            seen.append(prefill) or model.generate(s, u, n, summary.REPETITION_PENALTY)[0]
+        ),
     )
     assert seen == ["-", "#", ""]
 
@@ -271,7 +275,10 @@ def test_a_title_like_mr_does_not_end_a_sentence():
 def test_no_key_points_is_a_failure_to_retry_not_an_empty_session():
     model = FakeModel(answer=lambda system, user: "")
     with pytest.raises(RuntimeError):
-        summary.summarise(_transcript(3), lambda s, u, n, prefill: model.generate(s, u, n, summary.REPETITION_PENALTY)[0])
+        summary.summarise(
+            _transcript(3),
+            lambda s, u, n, prefill: model.generate(s, u, n, summary.REPETITION_PENALTY)[0],
+        )
 
 
 def test_a_truncated_answer_loses_its_unfinished_last_line(tmp_path):
