@@ -10,7 +10,10 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-30
+## [1.1.1] - 2026-10-30
+
+v1.1.0 was tagged but never published: its release stopped at the changelog
+check, before PyPI. These are its notes, so upgrade from 1.0.1 straight to this.
 
 ### 🚀 Features
 
