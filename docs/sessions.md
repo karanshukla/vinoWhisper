@@ -97,8 +97,13 @@ uses ([tray.md](tray.md), "LLM cleanup").
   So each chunk becomes bullet points (its answer is prefilled with `-`), the code
   picks key points spread across every chunk, and the title (prefilled with `#`) and
   the overview are written from those points in separate short passes.
-- `repetition_penalty=1.1`: without it, greedy decoding looped on a long summary
-  in #121, and on bullet points again in 2026-10-30's test.
+- `repetition_penalty=1.05`: without it, greedy decoding looped on a long summary
+  in #121, and on bullet points again on 2026-10-30. At 1.1 it reworded enough to
+  bring in things the transcript never said, and covered only about the first half
+  of a chunk (`CHUNK_TOKENS` is 400 for the same reason).
+- **Names and numbers are checked.** A point naming something, or giving a number,
+  that its chunk doesn't contain is dropped, unless every point in the chunk would
+  go. A wrong claim made of real names gets through.
 - **The text is data.** It goes in between `<transcript>` (or `<notes>`) tags, with
   any closing tag inside it removed, and the prompt says never to obey it. The
   summary is only displayed and indexed, never typed, run or pasted.
@@ -255,31 +260,45 @@ server in 12 s windows, so n=1 per length and not the user's usual content.
 
 | Session | Chunks | Total | Per chunk |
 |---|---|---|---|
-| 13 s (real) | 1 | 12 s | |
-| 35 s (real) | 1 | 17 s | |
-| 30 min | 4 | 74 s | 16 s |
-| 60 min | 8 | 144 s | 16 s |
+| 13 s (real) | 1 | 10 s | |
+| 35 s (real) | 1 | 14 s | |
+| 16 min (real) | 3 | 66 s | 11-24 s |
+| 30 min | 4 | 87 s | 11-24 s |
+| 60 min | 8 | 181 s | 11-24 s |
 
-Every chunk of about 7,000 characters fills `CHUNK_TOKENS` at 16 tokens/s, so its
-last lines are dropped and the end of a chunk is covered less than its start.
+Comparing settings on the 30-minute session, points reached this far through a chunk
+on average (last point's stamp, by time):
+
+| `CHUNK_TOKENS` | `repetition_penalty` | Reach | Notes |
+|---|---|---|---|
+| 256 | 1.1 | 0.46 | 65 s, "£100k", "London" and "Lizzy" not in their chunk |
+| 400 | 1.1 | 0.56 | 85 s |
+| 256, chunks of 3,500 | 1.1 | 0.79 | 103 s, more names from outside the chunk |
+| 400 | 1.05 | 0.76 | 77 s, plainer points, one name from outside |
 
 - **Faithful in topic, not in every detail.** Stamps pointed at the right paragraph
-  in all four checked. The points are not all right: of nine on the 60-minute
-  session, three name the wrong person or misread the line, and a real 16-minute
-  review gained an "Apple Watch" its transcript never mentions. The footer's
-  "check it at the time stamps" is needed.
+  in all four checked. Of nine points on the 60-minute session, about three are
+  wrong or garbled ("Miss Bingley abused Jane" when it was Elizabeth). The name check
+  stopped "Apple Watch" and "Android 11" (a transcript saying "Android 17" and "the 11
+  Pro") reaching the 16-minute summary, but its overview still merged two topics into
+  "the Android Wear OS version of the Pixel Watch". The overview and title are written
+  from the points and aren't checked. The footer's "check it at the time stamps" is
+  needed.
 - **Sharing the NPU:** Whisper resident, SmolLM3 summarising and vinoSearch queries
   (one during that run, eleven during another, no failures) gave no
   `Failed to register command queue: -16`, or any other `intel_vpu` line, in the
-  kernel log.
+  kernel log. vinoSearch's service showed about 3 MB resident, so this was light.
 - **Memory:** `drm-resident-memory` peaked at 2.2 GB summarising, 2.4 GB with Whisper
   in the same server, and fell to 86 MiB (Whisper) as soon as the queue was empty.
+  Measured before the move to 400 tokens, which does not change the model loaded.
 - **Captions interrupting a summary do not stutter:** the first 12 s decode took
   0.77 s against 0.65-0.96 s beforehand, and seven more took 0.62-0.79 s. The session
   restarted from its first chunk once the 20 s of quiet had passed.
 - **On screen:** the "Summary ready" notification is sent with its title and an Open
-  action (seen on the session bus). The sessions window is right in light and dark.
-  A window that is open when the desktop switches theme follows it on its next focus.
-  `.vwsession` files have their icon in Dolphin.
+  action (seen on the session bus). An `ActionInvoked` signal sent by hand, what Plasma
+  sends on a click, opens that session's summary in the sessions window. The window is
+  right in light and dark; one already open when the desktop switches theme follows it
+  on its next focus. `.vwsession` files have their icon in Dolphin, and `xdg-open` on
+  one opens the window.
 
-Not checked: clicking Open on the notification.
+Not checked: pressing Open with a real pointer.

@@ -106,7 +106,7 @@ def test_a_paragraph_longer_than_a_chunk_is_split_and_keeps_its_stamp():
 
 
 def _generate(model):
-    return lambda s, u, n, prefill: model.generate(s, u, n, 1.1, prefill=prefill)[0]
+    return lambda s, u, n, prefill: model.generate(s, u, n, summary.REPETITION_PENALTY, prefill=prefill)[0]
 
 
 def test_the_shape_is_assembled_whatever_the_model_writes():
@@ -132,7 +132,7 @@ def test_the_answers_are_made_to_start_in_the_shape():
     seen = []
     summary.summarise(
         _transcript(3),
-        lambda s, u, n, prefill: seen.append(prefill) or model.generate(s, u, n, 1.1)[0],
+        lambda s, u, n, prefill: seen.append(prefill) or model.generate(s, u, n, summary.REPETITION_PENALTY)[0],
     )
     assert seen == ["-", "#", ""]
 
@@ -184,7 +184,7 @@ def test_stamps_the_model_wrote_are_replaced_by_the_transcripts():
 
 
 def test_a_time_said_out_loud_is_not_taken_for_a_stamp():
-    part = "[00:03] the alarm goes off at seven"
+    part = "[00:03] the alarm goes off at 7:30 every day"
     assert summary.points_in("- The alarm goes off at 7:30 sharp.", part) == [
         "- The alarm goes off at 7:30 sharp. [00:03]"
     ]
@@ -193,6 +193,48 @@ def test_a_time_said_out_loud_is_not_taken_for_a_stamp():
 def test_a_transcript_without_stamps_gets_points_without_them():
     assert summary.points_in("- Something was said.", "Something was said here.") == [
         "- Something was said."
+    ]
+
+
+def test_a_point_naming_what_the_transcript_never_said_is_dropped():
+    part = "The store does not stock bands. Scores were 7,025 and 2,741 on the Pixel's chip."
+    answer = (
+        "- Stocked products vary widely (e.g., Apple Watch).\n"
+        "- It inherited near 100k from the store.\n"
+        "- Scores were 7025 and 2741.\n"
+        "- The Pixel's chip scored well."
+    )
+    assert summary.points_in(answer, part) == [
+        "- Scores were 7025 and 2741.",
+        "- The Pixel's chip scored well.",
+    ]
+
+
+def test_real_words_put_together_wrongly_are_dropped_too():
+    part = "Google released Android 17 QPR3 for the 11 Pro XL."
+    assert summary.points_in("- Android 11 has new features.\n- Android 17 is out.", part) == [
+        "- Android 17 is out."
+    ]
+
+
+def test_the_first_word_of_a_sentence_is_not_taken_for_a_name():
+    part = "the store does not stock bands"
+    assert summary.points_in("- Stocked bands. Bands were sold.", part) == [
+        "- Stocked bands. Bands were sold."
+    ]
+
+
+def test_a_part_whose_points_are_all_doubtful_still_keeps_them():
+    assert summary.points_in("- It mentions the Apple Watch.", "bands") == [
+        "- It mentions the Apple Watch."
+    ]
+
+
+def test_points_read_in_transcript_order():
+    part = "[00:03] first thing happened\n\n[06:32] second thing occurred"
+    assert summary.points_in("- second thing occurred\n- first thing happened", part) == [
+        "- first thing happened [00:03]",
+        "- second thing occurred [06:32]",
     ]
 
 
@@ -229,7 +271,7 @@ def test_a_title_like_mr_does_not_end_a_sentence():
 def test_no_key_points_is_a_failure_to_retry_not_an_empty_session():
     model = FakeModel(answer=lambda system, user: "")
     with pytest.raises(RuntimeError):
-        summary.summarise(_transcript(3), lambda s, u, n, prefill: model.generate(s, u, n, 1.1)[0])
+        summary.summarise(_transcript(3), lambda s, u, n, prefill: model.generate(s, u, n, summary.REPETITION_PENALTY)[0])
 
 
 def test_a_truncated_answer_loses_its_unfinished_last_line(tmp_path):

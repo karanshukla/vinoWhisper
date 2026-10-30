@@ -15,7 +15,8 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 - **Summaries keep their shape and the whole session.** Longer sessions came out with
   the default title, no time stamps, and only the last topic. Each part of a session
   now contributes key points, every point links to the transcript, and the title is a
-  real one. Run **Summarise again** on a session to update it.
+  real one, and points naming something the transcript doesn't are dropped. Run
+  **Summarise again** on a session to update it.
 
 ## [1.1.1] - 2026-10-30
 
