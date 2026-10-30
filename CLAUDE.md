@@ -377,7 +377,7 @@ background with SmolLM3. Full write-up in `docs/sessions.md`. The traps:
   `$XDG_RUNTIME_DIR/vinowhisper/summaries-ready.json`.
 - **The bundled Inter has no arrows** ("←" panicked egui in a test). Check glyphs
   before putting symbols in the settings window.
-- Nothing of this has run on the NPU yet: the checklist is at the end of `docs/sessions.md`.
+- **The summary's shape is assembled in code** (2026-10-30): SmolLM3 ignored a shape asked for in one pass and kept only the end of a long session, so answers are prefilled (`-`, `#`), key points are spread across chunks and stamps come from word overlap with the transcript. Details are still sometimes wrong. Measured on the NPU, table at the end of `docs/sessions.md`.
 
 ## Architecture
 

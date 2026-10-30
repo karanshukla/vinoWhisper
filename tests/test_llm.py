@@ -206,6 +206,16 @@ def test_generate_turns_reasoning_off_decodes_greedily_and_strips_think_blocks(g
     assert settings.repetition_penalty == 1.0
 
 
+def test_a_prefill_starts_the_prompts_answer_and_comes_back_in_the_text(genai):
+    pipe = _Pipe(answer=" a point")
+    prompts = []
+    original = pipe.generate
+    pipe.generate = lambda prompt, **kw: prompts.append(prompt) or original(prompt, **kw)
+    answer, _ = _loaded(pipe).generate("S", "U", 8, prefill="-")
+    assert prompts == ["PROMPT-"]
+    assert answer == "- a point"
+
+
 def test_an_answer_that_fills_the_token_cap_is_truncated(genai):
     answer, truncated = _loaded(_Pipe(answer="a b c d")).generate("S", "U", 4)
     assert truncated

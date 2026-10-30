@@ -37,6 +37,12 @@ def no_real_cleanup_settings(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_real_language_settings(monkeypatch, tmp_path):
+    """The saved language picks the model and export; a test must never see the user's."""
+    monkeypatch.setattr(config, "LANGUAGE_FILE", tmp_path / "no-language.json")
+
+
+@pytest.fixture(autouse=True)
 def no_real_sessions(monkeypatch, tmp_path_factory):
     """Saved sessions, summary settings and the summariser's state are the user's; never touch them.
 

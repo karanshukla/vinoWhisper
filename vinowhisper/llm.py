@@ -253,12 +253,13 @@ class CleanupModel:
         repetition_penalty: float = 1.0,
         budget_s: float | None = None,
         cancel: Callable[[], bool] | None = None,
+        prefill: str = "",
     ) -> tuple[str, bool]:
         self.load()
         with self._lock:
             try:
                 return self._generate(
-                    system, user, max_new_tokens, repetition_penalty, budget_s, cancel
+                    system, user, max_new_tokens, repetition_penalty, budget_s, cancel, prefill
                 )
             finally:
                 self._last_used = self._clock()
@@ -271,6 +272,7 @@ class CleanupModel:
         repetition_penalty: float,
         budget_s: float | None,
         cancel: Callable[[], bool] | None = None,
+        prefill: str = "",
     ) -> tuple[str, bool]:
         import openvino_genai as ov_genai
 
@@ -283,7 +285,7 @@ class CleanupModel:
             {"role": "system", "content": system + " /no_think"},
             {"role": "user", "content": user},
         ]
-        prompt = tokenizer.apply_chat_template(history, add_generation_prompt=True)
+        prompt = tokenizer.apply_chat_template(history, add_generation_prompt=True) + prefill
         settings = ov_genai.GenerationConfig()
         settings.max_new_tokens = max_new_tokens
         settings.do_sample = False
@@ -310,7 +312,7 @@ class CleanupModel:
         if yielded.is_set():
             raise Preempted("the NPU was wanted for captions or dictation")
         produced = len(tokenizer.encode(answer).input_ids.data[0])
-        return _THINK.sub("", answer).strip(), produced >= max_new_tokens
+        return _THINK.sub("", prefill + answer).strip(), produced >= max_new_tokens
 
     def unload(self) -> None:
         with self._lock:

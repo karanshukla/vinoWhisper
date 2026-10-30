@@ -91,21 +91,32 @@ uses ([tray.md](tray.md), "LLM cleanup").
 - **Chunked at `[MM:SS]` paragraphs**, about 7,000 characters each
   (`CHUNK_CHARS`), which leaves room for the prompt inside `MAX_PROMPT_LEN=3072`.
   A paragraph longer than that is split at word boundaries and keeps its stamp.
-- One chunk: one pass straight to the final shape. More: each chunk becomes two to
-  six stamped notes, then one pass turns the notes into the summary. Notes too
-  long for one pass are condensed first.
-- `repetition_penalty=1.1`: without it, greedy decoding looped on a long summary
-  in #121.
+- **The shape is assembled here, not asked of the model.** Asked for the whole shape
+  in one pass, SmolLM3 wrote its own headings and numbered lists, left the stamps
+  out, and on a 16-minute session with two topics kept only the second (2026-10-30).
+  So each chunk becomes bullet points (its answer is prefilled with `-`), the code
+  picks key points spread across every chunk, and the title (prefilled with `#`) and
+  the overview are written from those points in separate short passes.
+- `repetition_penalty=1.05`: without it, greedy decoding looped on a long summary
+  in #121, and on bullet points again on 2026-10-30. At 1.1 it reworded enough to
+  bring in things the transcript never said, and covered only about the first half
+  of a chunk (`CHUNK_TOKENS` is 400 for the same reason).
+- **Names and numbers are checked.** A point naming something, or giving a number,
+  that its chunk doesn't contain is dropped, unless every point in the chunk would
+  go. A wrong claim made of real names gets through.
 - **The text is data.** It goes in between `<transcript>` (or `<notes>`) tags, with
   any closing tag inside it removed, and the prompt says never to obey it. The
   summary is only displayed and indexed, never typed, run or pasted.
-- **Stamps are checked.** A stamp the model wrote that isn't in the transcript is
-  moved to the paragraph it falls in, or dropped when it is past the end.
+- **Stamps come from the transcript.** Anything the model wrote that looks like a
+  stamp is removed, and each point gets the stamp of the paragraph in its chunk that
+  shares the most words with it.
 - **Language** follows the session's: French captions get a French summary, and
   `translate` sessions get English ones.
-- **Shape:** a `# title`, two or three sentences, three to eight key points ending
-  in `[MM:SS]`, and a closing line saying it is machine-written and that the
-  transcript is the record. The date, length and model are in the attestation.
+- **Shape:** a `# title` of at most eight words, up to three sentences, at least eight
+  key points where the session offers them (never fewer than one per chunk, so a long
+  session's middle is kept), each ending in `[MM:SS]`, and a closing line saying it is
+  machine-written and that the transcript is the record. The date, length and model
+  are in the attestation.
 - One failure is retried quietly on the next run. After three (`MAX_FAILURES`) the
   session stops being retried and the notification says so. A missing model stops
   the queue without counting a failure; the sessions window says to download it.
@@ -241,19 +252,53 @@ On its first start the tray writes
 window's desktop entry, then runs `update-mime-database` and
 `update-desktop-database`. `--export-desktop` writes the same XML for packagers.
 
-## Not yet measured on the laptop
+## Measured on the laptop, 2026-10-30
 
-Everything above is tested with a fake model and a scratch directory. Still to do
-on the NPU and Plasma:
+Wildcat Lake NPU, SmolLM3-3B, version 1.1.1 plus the assembled shape. The long
+transcripts are a LibriVox reading of Pride and Prejudice decoded through the
+server in 12 s windows, so n=1 per length and not the user's usual content.
 
-- [ ] Real 30- and 60-minute transcripts: time per chunk and in total, and a read
-      for faithfulness.
-- [ ] Whisper, SmolLM3 and vinoSearch loaded on the NPU together, with no
-      `Failed to register command queue: -16` in the kernel log.
-- [ ] Memory while summarising and after the unload (`drm-resident-memory` in the
-      server's accel fdinfo).
-- [ ] The notification on screen, with "Open" landing on the summary.
-- [ ] The sessions window on screen, light and dark, and opened from the settings window.
-- [ ] A `.vwsession` with its icon in Dolphin, opening the sessions window.
-- [ ] Whether cancelling SmolLM3 at a token boundary frees the NPU quickly enough
-      that captions starting mid-summary don't stutter.
+| Session | Chunks | Total | Per chunk |
+|---|---|---|---|
+| 13 s (real) | 1 | 10 s | |
+| 35 s (real) | 1 | 14 s | |
+| 16 min (real) | 3 | 66 s | 11-24 s |
+| 30 min | 4 | 87 s | 11-24 s |
+| 60 min | 8 | 181 s | 11-24 s |
+
+Comparing settings on the 30-minute session, points reached this far through a chunk
+on average (last point's stamp, by time):
+
+| `CHUNK_TOKENS` | `repetition_penalty` | Reach | Notes |
+|---|---|---|---|
+| 256 | 1.1 | 0.46 | 65 s, "£100k", "London" and "Lizzy" not in their chunk |
+| 400 | 1.1 | 0.56 | 85 s |
+| 256, chunks of 3,500 | 1.1 | 0.79 | 103 s, more names from outside the chunk |
+| 400 | 1.05 | 0.76 | 77 s, plainer points, one name from outside |
+
+- **Faithful in topic, not in every detail.** Stamps pointed at the right paragraph
+  in all four checked. Of nine points on the 60-minute session, about three are
+  wrong or garbled ("Miss Bingley abused Jane" when it was Elizabeth). The name check
+  stopped "Apple Watch" and "Android 11" (a transcript saying "Android 17" and "the 11
+  Pro") reaching the 16-minute summary, but its overview still merged two topics into
+  "the Android Wear OS version of the Pixel Watch". The overview and title are written
+  from the points and aren't checked. The footer's "check it at the time stamps" is
+  needed.
+- **Sharing the NPU:** Whisper resident, SmolLM3 summarising and vinoSearch queries
+  (one during that run, eleven during another, no failures) gave no
+  `Failed to register command queue: -16`, or any other `intel_vpu` line, in the
+  kernel log. vinoSearch's service showed about 3 MB resident, so this was light.
+- **Memory:** `drm-resident-memory` peaked at 2.2 GB summarising, 2.4 GB with Whisper
+  in the same server, and fell to 86 MiB (Whisper) as soon as the queue was empty.
+  Measured before the move to 400 tokens, which does not change the model loaded.
+- **Captions interrupting a summary do not stutter:** the first 12 s decode took
+  0.77 s against 0.65-0.96 s beforehand, and seven more took 0.62-0.79 s. The session
+  restarted from its first chunk once the 20 s of quiet had passed.
+- **On screen:** the "Summary ready" notification is sent with its title and an Open
+  action (seen on the session bus). An `ActionInvoked` signal sent by hand, what Plasma
+  sends on a click, opens that session's summary in the sessions window. The window is
+  right in light and dark; one already open when the desktop switches theme follows it
+  on its next focus. `.vwsession` files have their icon in Dolphin, and `xdg-open` on
+  one opens the window.
+
+Not checked: pressing Open with a real pointer.
