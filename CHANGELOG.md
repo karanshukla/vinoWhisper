@@ -10,6 +10,8 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-01
+
 ### 🐛 Bug Fixes
 
 - **Summaries keep their shape and the whole session.** Longer sessions came out with
