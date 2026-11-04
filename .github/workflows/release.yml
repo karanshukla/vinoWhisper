@@ -194,6 +194,15 @@ jobs:
           name: gui
           path: dist
 
+      # The one-line installer, for releases/latest/download/install.sh. Only on
+      # GitHub: PyPI got dist/ before this.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: src
+          sparse-checkout: install.sh
+          sparse-checkout-cone-mode: false
+      - run: cp src/install.sh dist/install.sh
+
       - name: Checksums
         run: |
           cd dist
