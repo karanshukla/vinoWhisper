@@ -2,8 +2,8 @@
 name = "vinowhisper-tray"
 version = "1.2.0"
 edition = "2024"
-# cosmic-text 0.19 (let-chains alone would be 1.88)
-rust-version = "1.89"
+# vino-ui (cosmic-text 0.19 alone would be 1.89)
+rust-version = "1.95"
 description = "Floating captions, dictation, tray icon and global shortcuts for vinoWhisper, on Wayland"
 license = "MIT"
 repository = "https://github.com/karanshukla/vinoWhisper"
@@ -21,6 +21,8 @@ rustix = { version = "1.1.4", features = ["fs", "net", "process", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 vinowhisper-settings = { path = "../settings" }
+# The vinoPilot apps and the tray menu icons every vinoPilot tray shares; no egui.
+vino-ui = { package = "vino-user-interface", version = "0.2.4", default-features = false }
 # Already in the tree through ksni and ashpd; named here for the screen reader announcements.
 zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
 smithay-client-toolkit = { version = "0.21.1", default-features = false, features = ["calloop"] }

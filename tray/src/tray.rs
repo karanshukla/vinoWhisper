@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
+use vino_ui::family::{self, App};
+use vino_ui::tray::{APPS_MENU, MenuIcon};
 
 use crate::APP_ID;
 use crate::app::Command;
@@ -137,6 +139,7 @@ fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
         submenu.push(
             StandardItem {
                 label: "Clear".into(),
+                icon_name: MenuIcon::Clear.name().into(),
                 activate: Box::new(|tray: &mut Tray| tray.send(Command::ClearRecent)),
                 ..Default::default()
             }
@@ -145,6 +148,41 @@ fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
     }
     SubMenu {
         label: "Recent dictations".into(),
+        icon_name: MenuIcon::Recent.name().into(),
+        submenu,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// vinopilot.ca and the other vinoPilot apps, the same submenu every
+/// vinoPilot tray ends with.
+fn apps_menu() -> MenuItem<Tray> {
+    let link = |label: &str, url: &'static str, icon: &str| -> MenuItem<Tray> {
+        StandardItem {
+            label: label.into(),
+            icon_name: icon.into(),
+            activate: Box::new(move |_: &mut Tray| {
+                if let Err(err) = family::open(url) {
+                    eprintln!("[vinowhisper-tray] couldn't open {url}: {err}");
+                }
+            }),
+            ..Default::default()
+        }
+        .into()
+    };
+    let mut submenu = vec![
+        link(family::SITE_LABEL, family::SITE, MenuIcon::Website.name()),
+        MenuItem::Separator,
+    ];
+    submenu.extend(
+        App::Whisper
+            .others()
+            .map(|app| link(app.name(), app.page(), "")),
+    );
+    SubMenu {
+        label: APPS_MENU.into(),
+        icon_name: MenuIcon::Apps.name().into(),
         submenu,
         ..Default::default()
     }
@@ -170,6 +208,7 @@ fn dictate_label(state: &ShortcutState) -> String {
 
 fn radio_menu<T: Copy + PartialEq + Send + Sync + 'static>(
     label: &str,
+    icon: MenuIcon,
     options: &'static [T],
     selected: T,
     name: fn(T) -> &'static str,
@@ -177,6 +216,7 @@ fn radio_menu<T: Copy + PartialEq + Send + Sync + 'static>(
 ) -> MenuItem<Tray> {
     SubMenu {
         label: label.into(),
+        icon_name: icon.name().into(),
         submenu: vec![
             RadioGroup {
                 selected: options
@@ -258,6 +298,7 @@ impl ksni::Tray for Tray {
             .into(),
             radio_menu(
                 "Listen to",
+                MenuIcon::Audio,
                 &Source::ALL,
                 self.view.source,
                 source_name,
@@ -267,6 +308,7 @@ impl ksni::Tray for Tray {
             recent_menu(&self.view.recent),
             StandardItem {
                 label: dictate_label(&self.view.shortcut),
+                icon_name: MenuIcon::Keyboard.name().into(),
                 enabled: false,
                 ..Default::default()
             }
@@ -274,7 +316,7 @@ impl ksni::Tray for Tray {
             MenuItem::Separator,
             StandardItem {
                 label: "Settings…".into(),
-                icon_name: "configure".into(),
+                icon_name: MenuIcon::Settings.name().into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Command::OpenSettings)),
                 ..Default::default()
             }
@@ -288,8 +330,11 @@ impl ksni::Tray for Tray {
                 ..Default::default()
             }
             .into(),
+            MenuItem::Separator,
+            apps_menu(),
             StandardItem {
                 label: "Quit".into(),
+                icon_name: MenuIcon::Quit.name().into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Command::Quit)),
                 ..Default::default()
             }
@@ -470,6 +515,31 @@ mod tests {
             seen.iter()
                 .any(|tip| tip.starts_with("Dictation recording"))
         );
+    }
+
+    #[test]
+    fn the_menu_ends_with_the_other_apps_then_quit() {
+        let menu = tray(view()).menu();
+        let [.., MenuItem::SubMenu(apps), MenuItem::Standard(quit)] = menu.as_slice() else {
+            panic!("the menu should end with a submenu, then Quit");
+        };
+        assert_eq!(apps.label, APPS_MENU);
+        assert_eq!(quit.label, "Quit");
+        let labels = labels(&apps.submenu);
+        assert_eq!(labels[0], family::SITE_LABEL);
+        assert_eq!(labels.len(), App::ALL.len());
+        assert!(!labels.iter().any(|label| label == "vinoWhisper"));
+    }
+
+    #[test]
+    fn top_level_actions_and_submenus_carry_an_icon() {
+        for item in tray(view()).menu() {
+            match item {
+                MenuItem::Standard(item) => assert!(!item.icon_name.is_empty(), "{}", item.label),
+                MenuItem::SubMenu(item) => assert!(!item.icon_name.is_empty(), "{}", item.label),
+                _ => {}
+            }
+        }
     }
 
     #[test]

@@ -150,7 +150,7 @@ jobs:
       matrix:
         include:
           - crate: tray
-            toolchain: "1.89"
+            toolchain: "1.95"
           - crate: settings
             toolchain: "1.88"
           - crate: gui
