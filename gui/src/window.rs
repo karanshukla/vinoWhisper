@@ -23,15 +23,17 @@ enum Page {
     Speech,
     Cleanup,
     Sessions,
+    About,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::Shortcuts,
         Page::Captions,
         Page::Speech,
         Page::Cleanup,
         Page::Sessions,
+        Page::About,
     ];
 
     fn parse(name: &str) -> Option<Page> {
@@ -51,6 +53,7 @@ impl Page {
             Page::Speech => "Speech",
             Page::Cleanup => "Cleanup",
             Page::Sessions => "Sessions",
+            Page::About => vino_ui::about::TITLE,
         }
     }
 
@@ -61,6 +64,7 @@ impl Page {
             Page::Speech => Icon::Mic,
             Page::Cleanup => Icon::Cleanup,
             Page::Sessions => Icon::Sessions,
+            Page::About => Icon::Info,
         }
     }
 }
@@ -987,6 +991,11 @@ impl SettingsWindow {
                         Page::Speech => saved_speech = self.speech(ui),
                         Page::Cleanup => self.cleanup(ui),
                         Page::Sessions => self.sessions(ui),
+                        Page::About => vino_ui::about::page(
+                            ui,
+                            vino_ui::App::Whisper,
+                            env!("CARGO_PKG_VERSION"),
+                        ),
                     }
                 });
             });
