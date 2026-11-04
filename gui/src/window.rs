@@ -178,6 +178,22 @@ struct SettingsWindow {
     summaries_dirty: bool,
     // From the session listing, read when the Sessions page is shown.
     model_ready: Arc<Mutex<Option<bool>>>,
+    // About's Updates row.
+    updater: vino_ui::update::Updater,
+}
+
+// The release installer leaves itself as ~/.local/bin/vinowhisper-upgrade, which installs a
+// release's wheel, tray and this window; without it (a checkout) About links to the release.
+fn updater() -> vino_ui::update::Updater {
+    let updater = vino_ui::update::Updater::new(vino_ui::App::Whisper, env!("CARGO_PKG_VERSION"));
+    match std::env::var_os("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".local/bin/vinowhisper-upgrade"))
+    {
+        Some(upgrade) if upgrade.is_file() => {
+            updater.with_command([upgrade.to_string_lossy().into_owned()])
+        }
+        _ => updater,
+    }
 }
 
 impl SettingsWindow {
@@ -216,6 +232,7 @@ impl SettingsWindow {
             summaries: Summaries::default(),
             summaries_dirty: false,
             model_ready: Arc::new(Mutex::new(None)),
+            updater: updater(),
         }
     }
 
@@ -991,11 +1008,7 @@ impl SettingsWindow {
                         Page::Speech => saved_speech = self.speech(ui),
                         Page::Cleanup => self.cleanup(ui),
                         Page::Sessions => self.sessions(ui),
-                        Page::About => vino_ui::about::page(
-                            ui,
-                            vino_ui::App::Whisper,
-                            env!("CARGO_PKG_VERSION"),
-                        ),
+                        Page::About => vino_ui::about::page_with_updates(ui, &mut self.updater),
                     }
                 });
             });

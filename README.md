@@ -95,11 +95,12 @@ machine. [docs/tray.md](https://docs.vinowhisper.com/tray/)
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
+curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/install.sh | bash
 ```
 
-That installs [uv](https://docs.astral.sh/uv/), clones the latest release,
-builds the locked environment, and hands over to `vinowhisper-setup`, which is where every
+That checks the latest release's wheel against its `SHA256SUMS`, installs it with
+[uv](https://docs.astral.sh/uv/) (fetching uv itself, hash-pinned, if you don't have it), and
+hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
 model export your device needs, and systemd units generated against paths that
 actually exist. It prints every command before running it and asks first.
@@ -107,6 +108,11 @@ actually exist. It prints every command before running it and asks first.
 The desktop overlay (floating captions and dictation) is one more command:
 `vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
 checks it against a digest pinned in the Python package.
+
+To upgrade, use **Check for updates** on the settings window's About page, or run
+`vinowhisper-upgrade`. It installs the new release's wheel, refreshes the overlay and window
+if you have them, and restarts the server; the exported model stays. To build from a
+checkout instead, `scripts/install.sh` still clones and syncs the locked environment.
 
 Or from PyPI, if you would rather wire up the machine yourself:
 
