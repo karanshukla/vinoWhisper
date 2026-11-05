@@ -10,6 +10,16 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-05
+
+### 🐛 Bug Fixes
+
+- The model export installs a CPU build of torch (`--torch-backend cpu` under uv, PyTorch's CPU index under pip) instead of PyPI's CUDA one, several GB smaller. The export only ever runs on the CPU.
+- Setup no longer installs the overlay on GNOME, which has no layer-shell: it got a tray that couldn't start and an autostart entry that failed at every login. The step now points at the tray docs.
+- openSUSE Tumbleweed and Leap 16 get the NPU driver from their own repos (`libze_intel_npu1` with `level-zero`), and the GPU runtime is `intel-opencl libze_intel_gpu1 level-zero`.
+- Any read-only `/usr` image (SteamOS, Vanilla OS 2, Endless OS) is treated as image-based: setup and the doctor name the packages it needs instead of printing a pacman or apt line.
+- NixOS snippets use the current option names (`hardware.cpu.intel.npu.enable`, `services.pulseaudio`), and `install.sh` stops early on NixOS without nix-ld, before uv fetches a Python that can't run there.
+
 ## [1.3.0] - 2026-11-05
 
 ### 🚀 Features
