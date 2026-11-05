@@ -10,7 +10,7 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
-## [1.4.0] - 2026-11-05
+## [1.3.1] - 2026-11-05
 
 ### 🐛 Bug Fixes
 
