@@ -82,6 +82,17 @@ def test_a_wheel_install_pins_the_extra_to_this_version(monkeypatch, tmp_path):
     assert argv[-1] == f"vinowhisper[export]=={wizard.__version__}"
 
 
+def test_a_wheel_install_takes_cpu_torch(monkeypatch, tmp_path):
+    """PyPI's Linux torch pulls in CUDA, a few GB the CPU-side export never uses."""
+    monkeypatch.setattr(config, "CONVERT_SCRIPT", tmp_path / "absent.sh")
+    monkeypatch.setattr(wizard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(wizard, "_has_pip", lambda: True)
+    assert "https://download.pytorch.org/whl/cpu" in wizard.export_extra_argv()
+    monkeypatch.setattr(wizard, "_has_pip", lambda: False)
+    argv = wizard.export_extra_argv()
+    assert argv[argv.index("--torch-backend") + 1] == "cpu"
+
+
 def test_a_venv_without_pip_goes_through_uv(monkeypatch, tmp_path):
     """uv-created venvs have no pip, and `python -m pip` would just fail."""
     monkeypatch.setattr(config, "CONVERT_SCRIPT", tmp_path / "absent.sh")

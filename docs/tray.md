@@ -20,6 +20,7 @@ your installed vinoWhisper and checks it against the sha256 pinned inside the
 Python package. It installs the binary into `~/.local/bin`, adds a launcher
 entry, and asks whether to start the tray at login. A plain
 `vinowhisper-setup` offers the same step when it runs in a Wayland session.
+Both skip it on GNOME, where the overlay can't start ([below](#where-it-works)).
 Nothing needs Rust.
 
 **It is not on PyPI, on purpose.** A Rust GUI has no place inside a Python
