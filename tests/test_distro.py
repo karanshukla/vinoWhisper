@@ -71,14 +71,14 @@ def test_npu_remediation_always_carries_the_upstream_url():
 def test_opensuse_npu_driver_is_the_package():
     info = distro.Distro(id="opensuse-tumbleweed", name="Tumbleweed", version="", family="suse")
     remedy = distro.remediation(distro.NPU_DRIVER, info)
-    assert remedy.commands == ("sudo zypper install -y libze_intel_npu1",)
+    assert remedy.commands == ("sudo zypper install -y libze_intel_npu1 level-zero",)
     assert any("compiler" in note for note in remedy.notes)
     aeon = distro.Distro(
         id="opensuse-microos", name="Aeon", version="", family="suse", image="transactional"
     )
     remedy = distro.remediation(distro.NPU_DRIVER, aeon)
     assert remedy.commands == (
-        "sudo transactional-update --non-interactive pkg install libze_intel_npu1",
+        "sudo transactional-update --non-interactive pkg install libze_intel_npu1 level-zero",
     )
     assert any("reboot" in note for note in remedy.notes)
 

@@ -153,7 +153,7 @@ covered:
 | Fedora | RHEL, CentOS, Alma, Rocky, Nobara; Fedora Atomic (Silverblue, Kinoite, Bazzite, Aurora, Bluefin) | `intel-npu-driver` in the repos | **Built and run here** (Atomic: untested) |
 | Debian | Ubuntu, Pop!\_OS, Mint, elementary, Raspbian | Intel's upstream `.deb`s | From the package index |
 | Arch | CachyOS, EndeavourOS, Manjaro, Garuda | AUR (`intel-npu-driver`) | From the package index |
-| openSUSE | Tumbleweed, Leap, SLES, Aeon, MicroOS | `libze_intel_npu1` (Tumbleweed, Leap 16), else upstream | From the package index |
+| openSUSE | Tumbleweed, Leap, SLES, Aeon, MicroOS | `libze_intel_npu1` + `level-zero` (Tumbleweed, Leap 16), else upstream | From the package index |
 | Gentoo | | Some overlays, else upstream | From the package index |
 | Void | | Upstream release | From the package index |
 | Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |

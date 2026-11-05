@@ -173,8 +173,9 @@ _FAMILIES: dict[str, Family] = {
             # Tumbleweed has no "intel-compute-runtime"; level-zero carries the loader.
             GPU_RUNTIME: ("intel-opencl", "libze_intel_gpu1", "level-zero"),
             # Tumbleweed 1.38.0, Leap 16.0 1.35.0 (checked 2026-11-05). The user-mode
-            # driver only: the spec builds with ENABLE_NPU_COMPILER_BUILD=OFF.
-            NPU_DRIVER: ("libze_intel_npu1",),
+            # driver only: the spec builds with ENABLE_NPU_COMPILER_BUILD=OFF. It
+            # doesn't require the loader either, unlike Fedora's rpm and Intel's debs.
+            NPU_DRIVER: ("libze_intel_npu1", "level-zero"),
         },
         notes={
             NPU_DRIVER: (
