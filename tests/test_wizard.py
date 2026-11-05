@@ -404,6 +404,15 @@ def test_run_all_succeeds_but_lists_skipped_steps(monkeypatch, capsys):
     assert "left undone" in capsys.readouterr().out
 
 
+def test_the_overlay_is_skipped_on_gnome(monkeypatch):
+    """No layer-shell: the tray would exit at start, and its autostart fail every login."""
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+    monkeypatch.setattr(wizard.overlay, "installed", lambda *a: pytest.fail("looked for the tray"))
+    outcome = wizard.Wizard(assume_yes=True).install_overlay()
+    assert outcome.ok is None
+    assert "docs/tray.md" in outcome.summary
+
+
 def test_run_all_fails_when_any_step_fails(monkeypatch, capsys):
     _steps(monkeypatch, check_model=False, install_units=None)
     wiz = wizard.Wizard(assume_yes=True)

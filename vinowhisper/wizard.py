@@ -363,6 +363,9 @@ class Wizard:
         return Outcome(True, f"completion installed for {len(COMMANDS)} commands")
 
     def install_overlay(self) -> Outcome:
+        if _is_gnome():
+            # No wlr-layer-shell, so the tray exits at start and an autostart entry fails every login.
+            return Outcome(None, "skipped on GNOME, which has no layer-shell (docs/tray.md)")
         path = overlay.installed(BIN_DIR)
         if path is not None:
             self.say(f"  Found {path}")
@@ -545,8 +548,17 @@ def optimum_cli() -> str | None:
     return shutil.which("optimum-cli")
 
 
+def _is_gnome() -> bool:
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+    return any(name.upper() == "GNOME" for name in desktops)
+
+
 def _has_pip() -> bool:
     return importlib.util.find_spec("pip") is not None
+
+
+# The export traces on the CPU, so CPU torch is enough; PyPI's Linux wheel pulls in CUDA, a few GB.
+TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
 def export_extra_argv() -> list[str]:
@@ -556,8 +568,25 @@ def export_extra_argv() -> list[str]:
         return [uv, "sync", "--extra", "export", "--project", str(_repo_root())]
     requirement = f"vinowhisper[export]=={__version__}"
     if not _has_pip() and uv:
-        return [uv, "pip", "install", "--python", sys.executable, requirement]
-    return [sys.executable, "-m", "pip", "install", requirement]
+        return [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--torch-backend",
+            "cpu",
+            requirement,
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--extra-index-url",
+        TORCH_CPU_INDEX,
+        requirement,
+    ]
 
 
 def _repo_root() -> Path:

@@ -62,7 +62,9 @@ Re-run it after upgrading from 0.6.x or earlier too: the server moved from
 what rewrites the socket unit and restarts it.
 The export tooling (optimum, and torch with it) is the `export` extra, which
 the wizard offers to install when it gets to the model step;
-`pip install 'vinowhisper[export]'` does it up front.
+`pip install --extra-index-url https://download.pytorch.org/whl/cpu 'vinowhisper[export]'`
+does it up front. The export runs on the CPU, so that index's CPU torch is
+enough; PyPI's Linux wheel brings CUDA libraries, several GB more.
 
 **Python must be 3.11-3.13.** 3.14 made `functools.partial` a descriptor, which
 breaks `optimum`'s `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)`
@@ -268,7 +270,8 @@ extra is separate because only the export uses optimum and transformers, and
 optimum brings torch with it, while the runtime imports none of them.
 `vinowhisper-setup` offers to install it when it needs to export, as
 `uv sync --extra export` in a checkout and `pip install 'vinowhisper[export]'`
-otherwise.
+otherwise, either way with CPU torch (`--torch-backend cpu` under uv, PyTorch's
+CPU index under pip).
 
 The pin's `known_bad` entry still carries a floor at transformers 5.4.0, for
 an export made some other way, so `vinowhisper-setup` and `convert_model.sh`

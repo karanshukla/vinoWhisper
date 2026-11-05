@@ -16,7 +16,7 @@
 # hash pinned below, if it isn't installed). No git, no build.
 #
 # A first install then runs vinowhisper-setup, which checks the capture tools
-# and NPU driver, exports the model once (that pulls torch, a few GB, the one
+# and NPU driver, exports the model once (that pulls CPU torch, the one
 # time), writes the systemd units and, with --gui, fetches the tray and window
 # binaries the wheel pins. An upgrade reinstalls the wheel, refreshes the tray
 # and window if they're installed, and restarts the server: the model stays.
