@@ -136,7 +136,29 @@ def test_an_image_without_a_known_layering_tool_gets_notes_not_a_command():
     remedy = distro.remediation(distro.AUDIO_PIPEWIRE, info)
     assert remedy.commands == ()
     assert any("read-only" in note and "pipewire-bin" in note for note in remedy.notes)
+    # Endless has no layering tool, so the note must not send people looking for one.
+    assert not any("layer" in note for note in remedy.notes)
     assert not distro.install_needs_reboot(info)
+
+
+def test_a_read_only_usr_without_a_known_tool_is_image_based(
+    monkeypatch, fake_os_release, tmp_path
+):
+    """SteamOS and Vanilla OS 2: no ostree marker, no transactional-update,
+    but pacman or apt would fail (or be undone by the next update)."""
+    path = fake_os_release(ID="steamos", ID_LIKE="arch", PRETTY_NAME="SteamOS")
+    monkeypatch.setattr(distro, "_read_only", lambda path: False)
+    assert not distro.detect(path, root=tmp_path).image_based
+    monkeypatch.setattr(distro, "_read_only", lambda path: True)
+    info = distro.detect(path, root=tmp_path)
+    assert (info.family, info.image) == ("arch", distro.IMAGE_READ_ONLY)
+    assert distro.install_command(distro.AUDIO_PIPEWIRE, info) is None
+    remedy = distro.remediation(distro.GPU_RUNTIME, info)
+    assert remedy.commands == ()
+    assert any("read-only" in note and "intel-compute-runtime" in note for note in remedy.notes)
+    assert not distro.install_needs_reboot(info)
+    steps = "\n".join(distro.remediation(distro.NPU_COMPILER, info).notes)
+    assert " /usr/lib64/" not in steps
 
 
 def test_the_npu_compiler_steps_avoid_read_only_usr():

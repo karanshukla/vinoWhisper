@@ -8,6 +8,8 @@ ROOT = Path("/")
 # Image-based systems, where /usr is read-only and packages go into the next boot.
 IMAGE_OSTREE = "ostree"
 IMAGE_TRANSACTIONAL = "transactional"
+# /usr is read-only and the tool that writes it is unknown (SteamOS, Vanilla OS 2).
+IMAGE_READ_ONLY = "read-only"
 
 AUDIO_PIPEWIRE = "pipewire-tools"
 AUDIO_PULSE = "pulse-tools"
@@ -168,7 +170,8 @@ _FAMILIES: dict[str, Family] = {
         packages={
             AUDIO_PIPEWIRE: ("pipewire-tools",),
             AUDIO_PULSE: ("pulseaudio-utils",),
-            GPU_RUNTIME: ("intel-compute-runtime", "level-zero"),
+            # Tumbleweed has no "intel-compute-runtime"; level-zero carries the loader.
+            GPU_RUNTIME: ("intel-opencl", "libze_intel_gpu1", "level-zero"),
         },
         notes={
             NPU_DRIVER: (
@@ -216,8 +219,11 @@ _FAMILIES: dict[str, Family] = {
         packages={},
         notes={
             AUDIO_PIPEWIRE: ("services.pipewire.enable = true;",),
-            AUDIO_PULSE: ("hardware.pulseaudio or services.pipewire.pulse.enable",),
-            NPU_DRIVER: ("hardware.intel-npu (unstable) or an overlay for intel-npu-driver.",),
+            AUDIO_PULSE: (
+                "services.pulseaudio (hardware.pulseaudio before 25.05) or "
+                "services.pipewire.pulse.enable",
+            ),
+            NPU_DRIVER: ("hardware.cpu.intel.npu.enable = true; (NixOS 25.11 and later).",),
             GPU_RUNTIME: ("hardware.graphics.extraPackages = [ pkgs.intel-compute-runtime ];",),
         },
     ),
@@ -280,10 +286,10 @@ def _image(root: Path) -> str:
     if (root / "run/ostree-booted").exists():
         return IMAGE_OSTREE
     # Aeon and MicroOS: a read-only root snapshot that transactional-update writes the next one of.
+    if not _read_only(root / "usr"):
+        return ""
     tool = any((root / d / "transactional-update").exists() for d in ("usr/sbin", "usr/bin"))
-    if tool and _read_only(root / "usr"):
-        return IMAGE_TRANSACTIONAL
-    return ""
+    return IMAGE_TRANSACTIONAL if tool else IMAGE_READ_ONLY
 
 
 def detect(path: Path = OS_RELEASE, root: Path = ROOT) -> Distro:
@@ -362,7 +368,8 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
             notes = (
                 *notes,
                 f"/usr is read-only on {distro.name}, so `{family.install}` cannot work. "
-                f"Add {' '.join(packages)} to your image, or layer them with its own tool.",
+                f"{' '.join(packages)} has to come with the OS image, or from "
+                "your distro's own image tool if it has one.",
             )
     return Remediation(
         capability=capability,
