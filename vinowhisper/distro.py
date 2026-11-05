@@ -172,11 +172,18 @@ _FAMILIES: dict[str, Family] = {
             AUDIO_PULSE: ("pulseaudio-utils",),
             # Tumbleweed has no "intel-compute-runtime"; level-zero carries the loader.
             GPU_RUNTIME: ("intel-opencl", "libze_intel_gpu1", "level-zero"),
+            # Tumbleweed 1.38.0, Leap 16.0 1.35.0 (checked 2026-11-05). The user-mode
+            # driver only: the spec builds with ENABLE_NPU_COMPILER_BUILD=OFF. It
+            # doesn't require the loader either, unlike Fedora's rpm and Intel's debs.
+            NPU_DRIVER: ("libze_intel_npu1", "level-zero"),
         },
         notes={
             NPU_DRIVER: (
-                "No NPU package in the openSUSE repos as of writing; build or "
-                "unpack the upstream release below.",
+                "In Tumbleweed and Leap 16; on Leap 15 zypper will not find it "
+                "and the upstream release below is the way in. The firmware "
+                "comes with kernel-firmware-intel. The NPU compiler is not in "
+                "this package: once the driver is in, the NPU compiler check "
+                "prints how to add it.",
             ),
         },
     ),
