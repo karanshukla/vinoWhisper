@@ -1188,7 +1188,7 @@ checksum = "afcf90f156d20a32f35f5330f2d4f86cea2ad3aaeb6caf1c302c622e83841d0f"
 
 [[package]]
 name = "vinowhisper-settings"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "vinowhisper-tray"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "ashpd",
  "async-channel",
