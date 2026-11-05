@@ -157,15 +157,16 @@ covered:
 | Gentoo | | Some overlays, else upstream | From the package index |
 | Void | | Upstream release | From the package index |
 | Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
-| NixOS | | `hardware.intel-npu` (unstable) | Config snippets, not `nix-env` lines |
+| NixOS | | `hardware.cpu.intel.npu.enable` (25.11+) | Config snippets, not `nix-env` lines |
 
 Anything else gets generic advice, and says so. Derivatives not listed are
 matched through `ID_LIKE`. On every distro the NPU compiler library
 (`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
 because nobody packages it; the doctor detects that and prints the steps.
 On image-based systems (Fedora Atomic, openSUSE Aeon) the commands use
-`rpm-ostree` or `transactional-update` instead, and everything else installs
-into your home directory:
+`rpm-ostree` or `transactional-update` instead (any other read-only `/usr`,
+such as SteamOS, gets the package names and no command), and everything else
+installs into your home directory:
 [docs/install.md](https://docs.vinowhisper.com/install/#image-based-distros-fedora-atomic-opensuse-aeon).
 [docs/audio.md](https://docs.vinowhisper.com/audio/#distro-support)
 has the capture side.

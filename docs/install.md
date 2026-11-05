@@ -86,13 +86,13 @@ exist where setup ran.
 
 Host packages are the exception, and `vinowhisper-setup` and
 `vinowhisper-doctor` detect the image (`/run/ostree-booted`, or a read-only
-`/usr` with `transactional-update`) and print the image's own tool:
+`/usr`, with or without `transactional-update`) and print the image's own tool:
 
 | System | Install line | Then |
 |---|---|---|
 | Fedora Atomic | `sudo rpm-ostree install --idempotent <packages>` | reboot |
 | openSUSE Aeon / MicroOS | `sudo transactional-update --non-interactive pkg install <packages>` | reboot |
-| any other image-based system | none: the doctor names the packages to add to your image | |
+| any other image-based system (SteamOS, Vanilla OS 2, Endless OS) | none: the doctor names the packages the image needs | |
 
 The wizard says to reboot and re-run rather than reporting the step done,
 since a layered package only exists after the reboot. `pipewire-utils`

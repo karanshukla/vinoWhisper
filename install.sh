@@ -91,6 +91,13 @@ main() {
         command -v "$tool" >/dev/null || die "missing $tool: install it, then run this again"
     done
 
+    # uv's own Python is a generic glibc build that expects the standard
+    # loader path, which NixOS only provides through nix-ld.
+    if [ "$(uname -m)" = x86_64 ] && [ ! -e /lib64/ld-linux-x86-64.so.2 ] \
+        && grep -qsx 'ID="\{0,1\}nixos"\{0,1\}' /etc/os-release; then
+        die "no /lib64/ld-linux-x86-64.so.2: uv's Python can't run on NixOS without nix-ld. Set programs.nix-ld.enable = true; rebuild, then run this again"
+    fi
+
     # An install this script made before: upgrade it rather than set up again.
     local upgrade=0
     [ -x "$BIN/vinowhisper-upgrade" ] && [ -x "$BIN/vinowhisper-setup" ] && upgrade=1
@@ -125,8 +132,11 @@ main() {
 
     say "Installing ${wheel%-py3-none-any.whl}"
     # --force replaces an older one in place, at the same path, so the units
-    # vinowhisper-setup wrote keep pointing at it.
-    uv tool install --force --python "$PYTHON" "$WORK/$wheel"
+    # vinowhisper-setup wrote keep pointing at it. uv's own Python, not a
+    # system or Homebrew python3.13 (Tumbleweed, Bluefin): removing that would
+    # leave the tool's venv pointing at nothing. The env var, not
+    # --managed-python, so an older uv already on PATH still runs it.
+    UV_PYTHON_PREFERENCE=only-managed uv tool install --force --python "$PYTHON" "$WORK/$wheel"
     install -Dm755 "$WORK/install.sh" "$BIN/vinowhisper-upgrade"
 
     if [ "$upgrade" = 1 ]; then
