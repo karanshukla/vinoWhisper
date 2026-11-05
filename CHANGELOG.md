@@ -10,10 +10,13 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-05
+
 ### 🚀 Features
 
 - One-line install from a GitHub release: `install.sh`, attached to every release, checks the wheel against `SHA256SUMS`, installs it with `uv tool install` and runs `vinowhisper-setup`. No git clone. The model export stays a one-time local step.
 - `vinowhisper-upgrade` (a checked copy of that script) upgrades in place: the wheel, the overlay and window if installed, and a server restart. The settings window's About page runs it: Check for updates, then Update to vN.
+- The settings window's About page and the tray link to vinopilot.ca and the other vinoPilot apps; the tray uses the menu icons the other vinoPilot trays share.
 
 ## [1.2.0] - 2026-11-01
 
