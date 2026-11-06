@@ -206,7 +206,7 @@ def test_main_serves_once_the_model_loads(monkeypatch, main_env, capsys):
     assert server.main(["--device", "CPU"]) == 0
     assert FakeServer.served
     err = capsys.readouterr().err
-    assert "loading on CPU" in err
+    assert "loading whisper-small on CPU" in err
     assert "WARNING: below NPU" in err
 
 

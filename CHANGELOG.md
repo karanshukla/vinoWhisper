@@ -13,6 +13,9 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 ### 🚀 Features
 
 - One-line install from a GitHub release: `install.sh`, attached to every release, checks the wheel against `SHA256SUMS`, installs it with `uv tool install` and runs `vinowhisper-setup`. No git clone. The model export stays a one-time local step.
+- **A second speech model: NVIDIA Canary 1B v2** (#143). Pick it under Settings → Speech → Speech model, or with `vinowhisper-server --model canary-1b-v2`. It transcribes 25 European languages and translates them into English, with Detect automatically for translation. Whisper stays the default. Download it from the same page (0.97 GB on an NPU) or with `vinowhisper-canary model fetch`. Details and measurements in `docs/models.md`.
+- Captions drop a decode that is a repetition loop instead of committing it (both models).
+- Settings opened before an upgrade can still open the sessions window.
 - `vinowhisper-upgrade` (a checked copy of that script) upgrades in place: the wheel, the overlay and window if installed, and a server restart. The settings window's About page runs it: Check for updates, then Update to vN.
 
 ## [1.2.0] - 2026-11-01

@@ -17,7 +17,17 @@ from . import source as model_source
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
-COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup", "cleanup", "session")
+COMMANDS = (
+    "caption",
+    "dictate",
+    "server",
+    "replay",
+    "doctor",
+    "setup",
+    "cleanup",
+    "session",
+    "canary",
+)
 
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"
@@ -48,7 +58,7 @@ class Wizard:
         self.device = device
         # Only an explicit choice is written; a plain re-run keeps what the tray chose.
         self.explicit_language = language is not None or task is not None
-        self.language, self.task = config.resolve_language(language, task)
+        self.language, self.task, self.model = config.resolve_language(language, task)
         self.multilingual = config.is_multilingual(self.language, self.task)
         self.distro = distro.detect()
         self.failed: list[str] = []
@@ -261,7 +271,7 @@ class Wizard:
         if self.dry_run:
             return Outcome(None, f"would write {summary} to {config.LANGUAGE_FILE}")
         try:
-            config.save_language(self.language, self.task)
+            config.save_language(self.language, self.task, model=self.model)
         except OSError as exc:
             return Outcome(False, f"could not write {config.LANGUAGE_FILE}: {exc}")
         return Outcome(True, f"{summary}, saved to {config.LANGUAGE_FILE}")

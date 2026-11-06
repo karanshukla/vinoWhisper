@@ -49,14 +49,49 @@ TASKS = ("transcribe", "translate")
 DEFAULT_LANGUAGE = "en"
 DEFAULT_TASK = "transcribe"
 
+# The speech model, picked in the settings window (#143). Whisper stays the default: on a
+# stitched session it beat Canary on English (4.8% WER against 5.8%, 2026-11-06).
+WHISPER_MODEL = "whisper-small"
+CANARY_MODEL = "canary-1b-v2"
+MODELS = (WHISPER_MODEL, CANARY_MODEL)
+DEFAULT_MODEL = WHISPER_MODEL
+CANARY_MODEL_ID = "nvidia/canary-1b-v2"
+# INT8 weights for the NPU; the CPU plugin cannot compile those (2026-11-06), so fp16 there.
+CANARY_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov"
+CANARY_FP16_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov-fp16"
+# Canary's own list. Only en, fr, de and es have been run here (2026-11-06). Auto means
+# translate whatever is spoken: Canary has no language detection, but into English it
+# translates the same with the wrong source named (fr audio named de, de named fr, and en
+# named fr all came out right), so the prompt names CANARY_AUTO_SOURCE. Named English
+# instead, French audio leaked French words.
+CANARY_LANGUAGES = (
+    "en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
+    "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
+)  # fmt: skip
 
-def check_language(language: str, task: str) -> None:
-    if language != AUTO_LANGUAGE and language not in LANGUAGES:
-        raise ValueError(
-            f"language must be one of {', '.join((AUTO_LANGUAGE, *LANGUAGES))}, got {language!r}"
-        )
+
+CANARY_AUTO_SOURCE = "fr"
+
+
+def languages(model: str = DEFAULT_MODEL) -> tuple[str, ...]:
+    if model == CANARY_MODEL:
+        return (AUTO_LANGUAGE, *CANARY_LANGUAGES)
+    return (AUTO_LANGUAGE, *LANGUAGES)
+
+
+def check_language(language: str, task: str, model: str = DEFAULT_MODEL) -> None:
+    if model not in MODELS:
+        raise ValueError(f"model must be one of {', '.join(MODELS)}, got {model!r}")
+    allowed = languages(model)
+    if language not in allowed:
+        raise ValueError(f"{model} language must be one of {', '.join(allowed)}, got {language!r}")
     if task not in TASKS:
         raise ValueError(f"task must be one of {', '.join(TASKS)}, got {task!r}")
+    if model == CANARY_MODEL and language == AUTO_LANGUAGE and task != "translate":
+        raise ValueError(
+            f"{model} cannot detect a language to transcribe it; with auto it translates "
+            "into English (--task translate), or name the spoken language"
+        )
     if task == "translate" and language == "en":
         # Whisper translates into English, so there is nothing to do for English audio.
         raise ValueError("translate turns speech into English; give the spoken language or auto")
@@ -76,45 +111,60 @@ CLEANUP_MODEL_DIR = MODEL_ROOT / "SmolLM3-3B-int4-cw-ov"
 CLEANUP_CACHE_DIR = _cache_home() / "vinowhisper/cleanup-cache"
 
 
-def load_language(path: Path | None = None) -> tuple[str, str]:
+def load_language(path: Path | None = None) -> tuple[str, str, str]:
     import json
 
     try:
         raw = json.loads((path or LANGUAGE_FILE).read_text(encoding="utf-8"))
-        language = str(raw.get("language", DEFAULT_LANGUAGE))
-        task = str(raw.get("task", DEFAULT_TASK))
-        check_language(language, task)
+        model = str(raw.get("model", DEFAULT_MODEL))
     except (OSError, ValueError, AttributeError):
         # A missing, hand-broken or contradictory file is English, never a dead server.
-        return DEFAULT_LANGUAGE, DEFAULT_TASK
-    return language, task
+        return DEFAULT_LANGUAGE, DEFAULT_TASK, DEFAULT_MODEL
+    # An unknown model (a newer version's) is Whisper; the language survives if Whisper has it.
+    model = model if model in MODELS else DEFAULT_MODEL
+    try:
+        language = str(raw.get("language", DEFAULT_LANGUAGE))
+        task = str(raw.get("task", DEFAULT_TASK))
+        check_language(language, task, model)
+    except ValueError:
+        return DEFAULT_LANGUAGE, DEFAULT_TASK, model
+    return language, task, model
 
 
-def save_language(language: str, task: str, path: Path | None = None) -> None:
+def save_language(
+    language: str, task: str, path: Path | None = None, *, model: str = DEFAULT_MODEL
+) -> None:
     import json
 
-    check_language(language, task)
+    check_language(language, task, model)
     # resolve(): through a symlink, so a dotfiles-managed link stays a link.
     target = (path or LANGUAGE_FILE).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     # Renamed over the old file: the server reads a torn one as English, silently.
     partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
     try:
-        partial.write_text(json.dumps({"language": language, "task": task}, indent=2) + "\n")
+        body = {"language": language, "task": task, "model": model}
+        partial.write_text(json.dumps(body, indent=2) + "\n")
         os.replace(partial, target)
     except OSError:
         partial.unlink(missing_ok=True)
         raise
 
 
-def resolve_language(language: str | None, task: str | None) -> tuple[str, str]:
+def resolve_language(
+    language: str | None, task: str | None, model: str | None = None
+) -> tuple[str, str, str]:
     """A flag beats the file; a flag on one half replaces the file's whole choice."""
-    saved_language, saved_task = load_language()
+    saved_language, saved_task, saved_model = load_language()
+    model = model or saved_model
     if language is None and task is None:
-        return saved_language, saved_task
+        if saved_language not in languages(model):
+            # `--model` onto a saved language the other model lacks: its default instead.
+            return DEFAULT_LANGUAGE, DEFAULT_TASK, model
+        return saved_language, saved_task, model
     language = language or saved_language
     # `--language en` must not be undone by a saved translate, which English cannot do.
-    return language, task or (saved_task if language == saved_language else DEFAULT_TASK)
+    return language, task or (saved_task if language == saved_language else DEFAULT_TASK), model
 
 
 def is_multilingual(language: str, task: str = DEFAULT_TASK) -> bool:
@@ -126,8 +176,10 @@ def model_id(multilingual: bool = False) -> str:
     return MULTILINGUAL_MODEL_ID if multilingual else MODEL_ID
 
 
-def model_dir(device_kind: str, multilingual: bool = False) -> Path:
+def model_dir(device_kind: str, multilingual: bool = False, model: str = DEFAULT_MODEL) -> Path:
     npu = device_kind.upper() == "NPU"
+    if model == CANARY_MODEL:
+        return CANARY_MODEL_DIR if npu else CANARY_FP16_MODEL_DIR
     if multilingual:
         return MULTILINGUAL_MODEL_DIR if npu else MULTILINGUAL_STATEFUL_MODEL_DIR
     return MODEL_DIR if npu else STATEFUL_MODEL_DIR
@@ -240,12 +292,21 @@ CLEANUP_MAX_BUDGET_S = 10.0
 IDLE_CHECK_INTERVAL_S = 30.0
 
 
+CANARY_EXPORT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts/export_canary.py"
+CANARY_EXPORT_URL = (
+    "https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/export_canary.py"
+)
 CONVERT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "convert_model.sh"
 # optimum writes a full-size intermediate to $TMPDIR, and /tmp is often tmpfs (RAM).
 EXPORT_TMP_ROOT = _cache_home() / "vinowhisper/export-tmp"
 
 
-def export_command(variant: str, multilingual: bool = False) -> str:
+def export_command(variant: str, multilingual: bool = False, model: str = DEFAULT_MODEL) -> str:
+    if model == CANARY_MODEL:
+        # PEP 723 script with its own transformers, clear of the [export] extra's <5.4 pin.
+        if CANARY_EXPORT_SCRIPT.is_file():
+            return "uv run scripts/export_canary.py"
+        return f"uv run {CANARY_EXPORT_URL}"
     if CONVERT_SCRIPT.is_file():
         extra = f" --model {MULTILINGUAL_MODEL_ID}" if multilingual else ""
         return f"./scripts/convert_model.sh --variant {variant}{extra}"

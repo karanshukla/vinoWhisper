@@ -204,6 +204,33 @@ def _models() -> list[Result]:
     return results
 
 
+def _speech_model() -> list[Result]:
+    language, task, model = config.load_language()
+    label = "speech model"
+    summary = f"{model} ({language}, {task})"
+    if model != config.CANARY_MODEL:
+        return [Result(OK, label, summary)]
+    try:
+        kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
+    except devices.DeviceError:
+        kind = "NPU"
+    directory = config.model_dir(kind, model=model)
+    missing = [
+        n for n in ("encoder.xml", "decoder.xml", "tokenizer.json") if not (directory / n).is_file()
+    ]
+    if missing:
+        variant = "npu" if kind == "NPU" else "stateful"
+        return [
+            Result(
+                FAIL,
+                label,
+                f"{summary} is selected, but {directory} has no {', '.join(missing)} — run "
+                f"{config.export_command(variant, model=model)}, or pick Whisper in Settings",
+            )
+        ]
+    return [Result(OK, label, f"{summary}, {directory} for {kind}")]
+
+
 def _model(
     kind: str, variant: str, directory: Path, needed_kind: str, multilingual: bool
 ) -> list[Result]:
@@ -458,6 +485,7 @@ def collect(probe: bool = True) -> list[Result]:
     results += _failed_devices()
     results += _replacements()
     results += _models()
+    results += _speech_model()
     results += _server()
     results += _audio_tools()
     results += _sink()
