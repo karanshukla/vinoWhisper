@@ -286,12 +286,13 @@ FP16_REPO = "arankays/canary-1b-v2-fp16-ov"
 _EXPORT_FILES = ("encoder.xml", "encoder.bin", "decoder.xml", "decoder.bin", "tokenizer.json")
 
 
-def _target() -> tuple[str, Path]:
+def _target(kind: str | None = None) -> tuple[str, Path]:
     # The export the server would load here: INT8 on an NPU, fp16 anywhere else.
-    try:
-        kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
-    except devices.DeviceError:
-        kind = "CPU"
+    if kind is None:
+        try:
+            kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
+        except devices.DeviceError:
+            kind = "CPU"
     if kind == "NPU":
         return NPU_REPO, config.CANARY_MODEL_DIR
     return FP16_REPO, config.CANARY_FP16_MODEL_DIR
@@ -301,10 +302,10 @@ def _exported(directory: Path) -> bool:
     return all((directory / name).is_file() for name in _EXPORT_FILES)
 
 
-def model_status() -> dict:
+def model_status(kind: str | None = None) -> dict:
     from . import llm
 
-    repo, directory = _target()
+    repo, directory = _target(kind)
     pin = llm.pinned(repo, PINS_PATH)
     if pin is None:
         raise llm.ModelMissing(f"{PINS_PATH} is missing or unreadable; reinstall vinowhisper")
@@ -323,10 +324,10 @@ def model_status() -> dict:
     }
 
 
-def model_fetch(progress: Callable[[int, int], None]) -> Path:
+def model_fetch(progress: Callable[[int, int], None], kind: str | None = None) -> Path:
     from . import llm
 
-    repo, directory = _target()
+    repo, directory = _target(kind)
     pin = llm.pinned(repo, PINS_PATH)
     if pin is None:
         raise llm.ModelMissing(f"{PINS_PATH} is missing or unreadable; reinstall vinowhisper")

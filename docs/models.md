@@ -14,7 +14,7 @@ Whisper stays the default. Canary is the better pick for translation into Englis
 
 ## Downloading Canary
 
-Settings → Speech has a Download row for it, and `vinowhisper-canary model status|fetch|delete` does the same from a terminal (JSON lines, like `vinowhisper-cleanup model`). It fetches our prebuilt export for the device the server would pick: [arankays/canary-1b-v2-int8-ov](https://huggingface.co/arankays/canary-1b-v2-int8-ov) on an NPU, [arankays/canary-1b-v2-fp16-ov](https://huggingface.co/arankays/canary-1b-v2-fp16-ov) otherwise. Both are pinned by commit and per-file sha256 in `vinowhisper/canary_model.json`, and both were downloaded back and matched the local export byte for byte (2026-11-06). Deleting the model while it's selected switches Settings back to Whisper.
+Settings → Speech has a Download row for it, `vinowhisper-setup --model canary-1b-v2` selects it and offers the download, and `vinowhisper-canary model status|fetch|delete` does the same from a terminal (JSON lines, like `vinowhisper-cleanup model`). It fetches our prebuilt export for the device the server would pick: [arankays/canary-1b-v2-int8-ov](https://huggingface.co/arankays/canary-1b-v2-int8-ov) on an NPU, [arankays/canary-1b-v2-fp16-ov](https://huggingface.co/arankays/canary-1b-v2-fp16-ov) otherwise. Both are pinned by commit and per-file sha256 in `vinowhisper/canary_model.json`, and both were downloaded back and matched the local export byte for byte (2026-11-06). Deleting the model while it's selected switches Settings back to Whisper.
 
 ## Detect automatically
 

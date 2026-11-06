@@ -233,7 +233,7 @@ def test_the_pins_name_both_published_exports():
 
 def _point_at(monkeypatch, tmp_path, repo=canary.NPU_REPO):
     directory = tmp_path / "canary-1b-v2-ov"
-    monkeypatch.setattr(canary, "_target", lambda: (repo, directory))
+    monkeypatch.setattr(canary, "_target", lambda kind=None: (repo, directory))
     return directory
 
 
@@ -308,3 +308,83 @@ def test_delete_removes_both_exports(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "CANARY_FP16_MODEL_DIR", cpu)
     canary.model_delete()
     assert not npu.exists() and not cpu.exists()
+
+
+def _wizard(monkeypatch, tmp_path, **kwargs):
+    from vinowhisper import wizard
+
+    path = tmp_path / "language.json"
+    config.save_language("auto", "translate", path, model=config.CANARY_MODEL)
+    monkeypatch.setattr(config, "LANGUAGE_FILE", path)
+    monkeypatch.setattr(wizard.devices, "select", lambda *a, **k: type("S", (), {"kind": "NPU"})())
+    return wizard.Wizard(**kwargs)
+
+
+def test_setup_checks_the_canary_export_not_whispers(monkeypatch, tmp_path):
+    w = _wizard(monkeypatch, tmp_path, dry_run=True)
+    seen = []
+    monkeypatch.setattr(
+        canary,
+        "model_status",
+        lambda kind=None: (
+            seen.append(kind)
+            or {
+                "dir": "/m/canary-1b-v2-ov",
+                "verified": True,
+                "present": True,
+                "download_bytes": 1,
+                "repo": canary.NPU_REPO,
+                "revision": "r" * 40,
+            }
+        ),
+    )
+    outcome = w.check_model()
+    assert outcome.ok is True and "Canary" in outcome.summary
+    assert seen == ["NPU"]
+
+
+def test_setup_offers_the_canary_download_and_fetches_on_yes(monkeypatch, tmp_path):
+    w = _wizard(monkeypatch, tmp_path, assume_yes=True)
+    monkeypatch.setattr(
+        canary,
+        "model_status",
+        lambda kind=None: {
+            "dir": "/m/canary-1b-v2-ov",
+            "verified": False,
+            "present": False,
+            "download_bytes": 972_131_242,
+            "repo": canary.NPU_REPO,
+            "revision": "r" * 40,
+        },
+    )
+    fetched = []
+    monkeypatch.setattr(
+        canary, "model_fetch", lambda progress, kind=None: fetched.append(kind) or progress(1, 1)
+    )
+    outcome = w.check_model()
+    assert outcome.ok is True and "downloaded" in outcome.summary
+    assert fetched == ["NPU"]
+
+
+def test_a_dry_run_never_downloads_canary(monkeypatch, tmp_path):
+    w = _wizard(monkeypatch, tmp_path, dry_run=True)
+    monkeypatch.setattr(
+        canary,
+        "model_status",
+        lambda kind=None: {
+            "dir": "/m",
+            "verified": False,
+            "present": False,
+            "download_bytes": 1,
+            "repo": canary.NPU_REPO,
+            "revision": "r" * 40,
+        },
+    )
+    monkeypatch.setattr(canary, "model_fetch", lambda *a, **k: pytest.fail("downloaded"))
+    assert w.check_model().ok is None
+
+
+def test_setup_model_flag_is_saved_beside_the_language(monkeypatch, tmp_path):
+    w = _wizard(monkeypatch, tmp_path, model=config.WHISPER_MODEL)
+    assert w.save_language().ok is True
+    assert config.load_language() == ("auto", "translate", "whisper-small")

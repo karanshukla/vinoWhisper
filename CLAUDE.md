@@ -405,7 +405,9 @@ server); Whisper stays the default by the user's choice. Full write-up and numbe
 - Confidence commits are possible with Canary (the loop has token probabilities) and
   measured offline only: half the words 0.53 s sooner at no WER cost. Not built; it needs
   the server to send confidences to the caption client.
-- Not yet: a wizard step, any run on a live caption session or with dictation.
+- `vinowhisper-setup --model` picks it, and the export step checks or downloads Canary
+  instead of a Whisper export when it is selected.
+- Not yet: any long run on a live caption session, or dictation with it.
 
 ## Architecture
 
