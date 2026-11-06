@@ -3,8 +3,7 @@ use std::sync::OnceLock;
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
-use vino_ui::family::{self, App};
-use vino_ui::tray::{APPS_MENU, MenuIcon};
+use vino_ui::tray::MenuIcon;
 
 use crate::APP_ID;
 use crate::app::Command;
@@ -155,40 +154,6 @@ fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
     .into()
 }
 
-/// vinopilot.ca and the other vinoPilot apps, the same submenu every
-/// vinoPilot tray ends with.
-fn apps_menu() -> MenuItem<Tray> {
-    let link = |label: &str, url: &'static str, icon: &str| -> MenuItem<Tray> {
-        StandardItem {
-            label: label.into(),
-            icon_name: icon.into(),
-            activate: Box::new(move |_: &mut Tray| {
-                if let Err(err) = family::open(url) {
-                    eprintln!("[vinowhisper-tray] couldn't open {url}: {err}");
-                }
-            }),
-            ..Default::default()
-        }
-        .into()
-    };
-    let mut submenu = vec![
-        link(family::SITE_LABEL, family::SITE, MenuIcon::Website.name()),
-        MenuItem::Separator,
-    ];
-    submenu.extend(
-        App::Whisper
-            .others()
-            .map(|app| link(app.name(), app.page(), "")),
-    );
-    SubMenu {
-        label: APPS_MENU.into(),
-        icon_name: MenuIcon::Apps.name().into(),
-        submenu,
-        ..Default::default()
-    }
-    .into()
-}
-
 fn tray_status(passive: bool) -> ksni::Status {
     if passive {
         ksni::Status::Passive
@@ -331,7 +296,6 @@ impl ksni::Tray for Tray {
             }
             .into(),
             MenuItem::Separator,
-            apps_menu(),
             StandardItem {
                 label: "Quit".into(),
                 icon_name: MenuIcon::Quit.name().into(),
@@ -518,17 +482,22 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_ends_with_the_other_apps_then_quit() {
+    fn the_menu_ends_with_quit_and_lists_no_other_apps() {
         let menu = tray(view()).menu();
-        let [.., MenuItem::SubMenu(apps), MenuItem::Standard(quit)] = menu.as_slice() else {
-            panic!("the menu should end with a submenu, then Quit");
+        let [.., MenuItem::Separator, MenuItem::Standard(quit)] = menu.as_slice() else {
+            panic!("the menu should end with a separator, then Quit");
         };
-        assert_eq!(apps.label, APPS_MENU);
         assert_eq!(quit.label, "Quit");
-        let labels = labels(&apps.submenu);
-        assert_eq!(labels[0], family::SITE_LABEL);
-        assert_eq!(labels.len(), App::ALL.len());
-        assert!(!labels.iter().any(|label| label == "vinoWhisper"));
+        // The settings window's About page links to vinopilot.ca and the
+        // other vinoPilot apps; the tray doesn't.
+        let mut all = Vec::new();
+        all_labels(&menu, &mut all);
+        assert!(
+            !all.iter().any(|label| label.contains("vinoPilot")
+                || label.contains("vinopilot.ca")
+                || label == "vinoWatch"),
+            "{all:?}"
+        );
     }
 
     #[test]
