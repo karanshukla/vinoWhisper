@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::APP_ID;
 use crate::icon;
 use crate::settings;
+use crate::settings::exec_arg;
 
 const COMMAND: &str = "vinowhisper-tray";
 const LEGACY_COMMAND: &str = "vinowhisper-gui";
@@ -306,6 +307,7 @@ fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
     let paths = [
         dirs.launcher(),
         dirs.settings_entry(),
+        settings::sessions_entry_in(&dirs.data),
         mime_package_in(&dirs.data),
     ]
     .into_iter()
@@ -385,31 +387,6 @@ StartupNotify=false
     )
 }
 
-fn exec_arg(arg: &str) -> String {
-    const RESERVED: &[char] = &[
-        ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#', '(',
-        ')', '`',
-    ];
-    if !arg.contains(RESERVED) {
-        return arg.replace('%', "%%");
-    }
-    let mut quoted = String::from("\"");
-    for c in arg.chars() {
-        match c {
-            '"' | '`' | '$' => {
-                quoted.push_str("\\\\");
-                quoted.push(c);
-            }
-            // Escaped once for the quoting and again for the key file.
-            '\\' => quoted.push_str("\\\\\\\\"),
-            '%' => quoted.push_str("%%"),
-            _ => quoted.push(c),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +462,21 @@ mod tests {
         let removed = uninstall_from(&dirs).unwrap();
         assert_eq!(removed.len(), 6);
         assert!(written.iter().all(|path| !path.exists()));
+    }
+
+    #[test]
+    fn uninstall_also_takes_the_sessions_entry_out_of_the_menu() {
+        let dirs = scratch("sessions-entry");
+        settings::show_sessions_entry_in(&dirs.data, true, Path::new("/bin/vinowhisper-gui"))
+            .unwrap();
+        let removed = uninstall_from(&dirs).unwrap();
+        assert!(removed.contains(&settings::sessions_entry_in(&dirs.data)));
+        assert!(!settings::sessions_entry_shown_in(&dirs.data));
+    }
+
+    #[test]
+    fn every_entry_uses_the_same_icon() {
+        assert_eq!(settings::APP_ICON, APP_ID);
     }
 
     #[test]

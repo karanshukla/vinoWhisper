@@ -10,6 +10,10 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+### 🚀 Features
+
+- **Saved sessions in the app menu.** A switch on the settings window's Sessions page adds *vinoWhisper Sessions* to the app list, so saved sessions open without going through Settings. Off until turned on.
+
 ### ♻️ Refactor
 
 - The tray menu no longer lists vinopilot.ca and the other vinoPilot apps; the settings window's About page still links to them.

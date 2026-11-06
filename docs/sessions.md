@@ -125,8 +125,12 @@ uses ([tray.md](tray.md), "LLM cleanup").
 
 Saved sessions have a window of their own, `vinowhisper-gui --sessions`, the way
 vinoSearch's search window is its own (`vinosearch-settings --search`). The settings
-window's **Sessions** page keeps the summary setting and a button that opens it. It
-lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
+window's **Sessions** page keeps the summary setting and a button that opens it, and
+**Show saved sessions in the app menu** adds it to the app list as *vinoWhisper Sessions*.
+That switch writes `~/.local/share/applications/io.github.karanshukla.vinowhisper.sessions.desktop`
+(`Exec=vinowhisper-gui --sessions`), off until turned on, the way vinoSearch adds its search
+window; the file being there is the setting, and `vinowhisper-tray --uninstall` removes it.
+The window lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
 transcript), summarise again, delete the summary, delete the session, show it in
 the file manager, export it, copy the part on screen, or have vinoSpeak read it aloud. It drives `vinowhisper-session`:
 
