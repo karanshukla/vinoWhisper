@@ -50,8 +50,22 @@ pub fn tray_command() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("vinowhisper-tray"))
 }
 
+// An upgrade replaces the binary under an open window, and Linux then reports the old one as
+// "<path> (deleted)", which cannot be spawned; the new binary is at the plain path.
+fn installed_path(exe: PathBuf) -> PathBuf {
+    match exe
+        .to_str()
+        .and_then(|path| path.strip_suffix(" (deleted)"))
+    {
+        Some(path) => PathBuf::from(path),
+        None => exe,
+    }
+}
+
 fn spawn_self(args: &[&str]) {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vinowhisper-gui"));
+    let exe = std::env::current_exe()
+        .map(installed_path)
+        .unwrap_or_else(|_| PathBuf::from("vinowhisper-gui"));
     match Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
@@ -305,5 +319,17 @@ mod tests {
     #[test]
     fn help_is_answered_here() {
         assert_eq!(decide(&args(&["--help"])), Action::Help);
+    }
+
+    #[test]
+    fn a_window_outliving_an_upgrade_opens_the_new_binary() {
+        assert_eq!(
+            installed_path(PathBuf::from(
+                "/home/u/.local/bin/vinowhisper-gui (deleted)"
+            )),
+            PathBuf::from("/home/u/.local/bin/vinowhisper-gui")
+        );
+        let here = PathBuf::from("/home/u/.local/bin/vinowhisper-gui");
+        assert_eq!(installed_path(here.clone()), here);
     }
 }
