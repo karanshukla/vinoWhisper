@@ -10,6 +10,10 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+### ♻️ Refactor
+
+- The tray menu no longer lists vinopilot.ca and the other vinoPilot apps; the settings window's About page still links to them.
+
 ## [1.3.1] - 2026-11-05
 
 ### 🐛 Bug Fixes

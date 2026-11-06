@@ -217,7 +217,7 @@ libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
 | smithay-client-toolkit | Wayland: layer-shell, shm buffers, the event loop. Pure-Rust backend, so no libwayland, and no xkbcommon since nothing reads the keyboard |
 | cosmic-text | Shaping, wrapping and glyph rasterising. Finds fonts by parsing fontconfig's files, not by linking libfontconfig |
 | ksni | The tray icon (StatusNotifierItem over D-Bus) |
-| vino-ui | Without egui (`default-features = false`): the menu icons every vinoPilot tray shares, and the other apps for the menu's vinoPilot apps submenu |
+| vino-ui | Without egui (`default-features = false`): the menu icons every vinoPilot tray shares |
 | ashpd | Global shortcuts, and Shift+Insert for dictation (xdg-desktop-portal) |
 | rustix | Signals, the child's parent-death signal, the memfd that carries a keymap to the compositor, and the tray's idle timerfd |
 
