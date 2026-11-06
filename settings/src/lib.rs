@@ -412,6 +412,81 @@ pub enum OpenIn {
 // The settings window's Wayland app id; the tray installs a desktop entry under it for the icon.
 pub const SETTINGS_APP_ID: &str = "io.github.karanshukla.vinowhisper.settings";
 
+// The tray's APP_ID: the icon every vinoWhisper desktop entry uses.
+pub const APP_ICON: &str = "io.github.karanshukla.vinowhisper";
+
+// Saved sessions in the app menu, off until the Sessions page turns it on. The file being
+// there is the setting, as vinoSearch does for its search window. No StartupWMClass: the
+// sessions window's app id is the settings window's.
+pub const SESSIONS_ENTRY_ID: &str = "io.github.karanshukla.vinowhisper.sessions";
+
+pub fn sessions_entry_in(data: &Path) -> PathBuf {
+    data.join(format!("applications/{SESSIONS_ENTRY_ID}.desktop"))
+}
+
+pub fn sessions_entry_shown_in(data: &Path) -> bool {
+    sessions_entry_in(data).is_file()
+}
+
+/// Write or remove the entry; `gui` is the vinowhisper-gui it runs with `--sessions`.
+pub fn show_sessions_entry_in(data: &Path, show: bool, gui: &Path) -> io::Result<()> {
+    let path = sessions_entry_in(data);
+    if !show {
+        return match std::fs::remove_file(&path) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+            _ => Ok(()),
+        };
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, sessions_desktop_entry(gui))
+}
+
+pub fn sessions_desktop_entry(gui: &Path) -> String {
+    format!(
+        "[Desktop Entry]
+Type=Application
+Name=vinoWhisper Sessions
+GenericName=Saved Caption Sessions
+Comment=Transcripts and summaries of saved caption sessions
+Exec={} --sessions
+Icon={APP_ICON}
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=transcript;summary;sessions;captions;subtitles;whisper;
+StartupNotify=false
+",
+        exec_arg(&gui.to_string_lossy())
+    )
+}
+
+/// One argument of a desktop entry's Exec key, quoted per the Desktop Entry spec.
+pub fn exec_arg(arg: &str) -> String {
+    const RESERVED: &[char] = &[
+        ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#', '(',
+        ')', '`',
+    ];
+    if !arg.contains(RESERVED) {
+        return arg.replace('%', "%%");
+    }
+    let mut quoted = String::from("\"");
+    for c in arg.chars() {
+        match c {
+            '"' | '`' | '$' => {
+                quoted.push_str("\\\\");
+                quoted.push(c);
+            }
+            // Escaped once for the quoting and again for the key file.
+            '\\' => quoted.push_str("\\\\\\\\"),
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 pub const DEFAULT_SHORTCUT: &str = "LOGO+ALT+C";
 
 pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
@@ -896,5 +971,30 @@ mod tests {
         assert_eq!(Source::parse("output"), Some(Source::Output));
         assert_eq!(Source::parse("mic"), Some(Source::Mic));
         assert_eq!(Source::parse("speakers"), None);
+    }
+
+    #[test]
+    fn the_sessions_entry_is_there_only_while_shown() {
+        let data = scratch("sessions-entry").parent().unwrap().join("data");
+        let gui = Path::new("/home/me/.local/bin/vinowhisper-gui");
+        assert!(!sessions_entry_shown_in(&data));
+        show_sessions_entry_in(&data, true, gui).unwrap();
+        assert!(sessions_entry_shown_in(&data));
+        let entry = std::fs::read_to_string(sessions_entry_in(&data)).unwrap();
+        assert!(entry.contains("Exec=/home/me/.local/bin/vinowhisper-gui --sessions\n"));
+        assert!(entry.contains(&format!("Icon={APP_ICON}\n")));
+        assert!(!entry.contains("NoDisplay"));
+        show_sessions_entry_in(&data, false, gui).unwrap();
+        assert!(!sessions_entry_shown_in(&data));
+        show_sessions_entry_in(&data, false, gui).unwrap();
+    }
+
+    #[test]
+    fn exec_paths_with_spaces_are_quoted() {
+        assert_eq!(
+            exec_arg("/opt/vino whisper/gui"),
+            "\"/opt/vino whisper/gui\""
+        );
+        assert_eq!(exec_arg("/bin/100%"), "/bin/100%%");
     }
 }

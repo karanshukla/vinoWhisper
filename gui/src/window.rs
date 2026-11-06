@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -241,6 +242,11 @@ struct SettingsWindow {
     speech_note: Option<String>,
     summaries: Summaries,
     summaries_dirty: bool,
+    // The sessions window's app menu entry: where it goes, whether it is there, and why
+    // the last change failed.
+    apps_data: PathBuf,
+    in_app_menu: bool,
+    app_menu_error: Option<String>,
     // From the session listing, read when the Sessions page is shown.
     model_ready: Arc<Mutex<Option<bool>>>,
     // About's Updates row.
@@ -265,6 +271,7 @@ impl SettingsWindow {
     fn new(page: Option<Page>) -> Self {
         let mut window = Self::with(page, Settings::load(), Speech::load(), Cleanup::load());
         window.summaries = Summaries::load();
+        window.in_app_menu = vinowhisper_settings::sessions_entry_shown_in(&window.apps_data);
         window.multilingual = multilingual_installed();
         window.canary = SpeechModel::Canary.installed();
         window.kde_header = theme::kde_header();
@@ -300,6 +307,9 @@ impl SettingsWindow {
             notice: None,
             speech_note: None,
             summaries: Summaries::default(),
+            apps_data: vinowhisper_settings::data_home(),
+            in_app_menu: false,
+            app_menu_error: None,
             summaries_dirty: false,
             model_ready: Arc::new(Mutex::new(None)),
             updater: updater(),
@@ -794,7 +804,42 @@ impl SettingsWindow {
                         forward::open_sessions();
                     }
                 });
+            let (help, tone) = match &self.app_menu_error {
+                Some(err) => (format!("Could not change the app menu: {err}"), Tone::Error),
+                None => (
+                    "Adds vinoWhisper Sessions to the app list, to open saved sessions \
+                     without opening Settings first."
+                        .to_owned(),
+                    Tone::Neutral,
+                ),
+            };
+            Row::new("App menu")
+                .help(&help)
+                .tone(tone)
+                .show(ui, |ui, _| {
+                    let mut shown = self.in_app_menu;
+                    if widgets::switch(ui, &mut shown, "Show saved sessions in the app menu")
+                        .changed()
+                    {
+                        self.set_app_menu(shown);
+                    }
+                });
         });
+    }
+
+    fn set_app_menu(&mut self, show: bool) {
+        // with_file_name, not the exe itself: after an upgrade that reads "<path> (deleted)".
+        let gui = std::env::current_exe()
+            .map(|exe| exe.with_file_name("vinowhisper-gui"))
+            .unwrap_or_else(|_| PathBuf::from("vinowhisper-gui"));
+        match vinowhisper_settings::show_sessions_entry_in(&self.apps_data, show, &gui) {
+            Ok(()) => {
+                self.in_app_menu = show;
+                self.app_menu_error = None;
+                refresh_app_menu(self.apps_data.join("applications"));
+            }
+            Err(err) => self.app_menu_error = Some(err.to_string()),
+        }
     }
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
@@ -918,6 +963,18 @@ impl SettingsWindow {
         }
         changed
     }
+}
+
+// Plasma and GNOME watch the directory anyway; the cache is for the rest. Off the UI thread.
+fn refresh_app_menu(dir: PathBuf) {
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    });
 }
 
 // The caption box as the overlay draws it, on a stand-in screen.
@@ -1269,6 +1326,11 @@ mod tests {
             Cleanup::default(),
         );
         window.multilingual = true;
+        window.apps_data = std::env::temp_dir().join(format!(
+            "vinowhisper-gui-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         window.model.lock().unwrap().status = Some(Ok(Status {
             label: "SmolLM3-3B".into(),
             download_bytes: 1_702_000_000,
@@ -1788,6 +1850,33 @@ mod tests {
         harness.get_by_label(
             "Saving transcripts is off (Captions page), so new sessions aren't kept.",
         );
+    }
+
+    #[test]
+    fn the_app_menu_switch_adds_and_removes_the_sessions_entry() {
+        let mut harness = harness(Page::Sessions, WIDE);
+        let data = harness.state().window.apps_data.clone();
+        let _ = std::fs::remove_dir_all(&data);
+        harness.run();
+        let switch = "Show saved sessions in the app menu";
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::Switch, switch)
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::False),
+            "off until turned on"
+        );
+        harness.get_by_role_and_label(Role::Switch, switch).click();
+        harness.run();
+        assert!(vinowhisper_settings::sessions_entry_shown_in(&data));
+        let entry =
+            std::fs::read_to_string(vinowhisper_settings::sessions_entry_in(&data)).unwrap();
+        assert!(entry.contains("vinowhisper-gui --sessions\n"));
+        harness.get_by_role_and_label(Role::Switch, switch).click();
+        harness.run();
+        assert!(!vinowhisper_settings::sessions_entry_shown_in(&data));
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
