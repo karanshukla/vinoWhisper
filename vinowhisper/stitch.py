@@ -1,4 +1,5 @@
 import unicodedata
+import zlib
 from difflib import SequenceMatcher
 
 _ANCHOR_WORDS = 40
@@ -20,6 +21,10 @@ _MIN_REALIGN_WORDS = 2
 
 _LOOKBACK_DECODES = 2
 
+# Over this a decode is a loop, not speech: Canary's measured 2.4-2.9, real text at most
+# 1.66 for either model (docs/models.md, 2026-11-06).
+_MAX_COMPRESSION_RATIO = 2.0
+
 _COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
 
 
@@ -38,6 +43,11 @@ def strip_controls(text: str) -> str:
 def _norm(word: str) -> str:
     # A punctuation-only token falls back to itself so it never matches everything.
     return word.strip(_COMPARE_STRIP).lower() or word.lower()
+
+
+def compression_ratio(text: str) -> float:
+    data = text.encode("utf-8")
+    return len(data) / len(zlib.compress(data)) if data else 0.0
 
 
 def collapse_repeats(text: str) -> str:
@@ -184,7 +194,9 @@ class Stitcher:
     def push(self, transcript: str) -> list[str]:
         # Cleaned before anchoring, so _confirmed matches what the next cycle's curr holds.
         curr = collapse_word_repeats(collapse_repeats(transcript).split())
-        if not curr:
+        # A loop the collapses could not fold is dropped whole: two such decodes in a row
+        # agree with each other and would commit.
+        if not curr or compression_ratio(" ".join(curr)) > _MAX_COMPRESSION_RATIO:
             return []
 
         cut = _cut(self._confirmed, curr)

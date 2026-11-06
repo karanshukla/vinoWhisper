@@ -9,11 +9,11 @@ use vino_ui::theme;
 use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
 
 use crate::forward::{self, Shortcuts};
-use crate::model::{self, Line, ModelState, Status};
+use crate::model::{self, Line, ModelState, Status, Tool};
 use crate::sessions;
 use vinowhisper_settings::{
-    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, Summaries, Task, TextSize,
-    multilingual_installed,
+    Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, SpeechModel, Summaries,
+    Task, TextSize, multilingual_installed,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -105,6 +105,66 @@ fn language_label(language: Language) -> &'static str {
         Language::De => "German",
         Language::Es => "Spanish",
         Language::Auto => "Detect automatically",
+        Language::Bg => "Bulgarian",
+        Language::Hr => "Croatian",
+        Language::Cs => "Czech",
+        Language::Da => "Danish",
+        Language::Nl => "Dutch",
+        Language::Et => "Estonian",
+        Language::Fi => "Finnish",
+        Language::El => "Greek",
+        Language::Hu => "Hungarian",
+        Language::It => "Italian",
+        Language::Lv => "Latvian",
+        Language::Lt => "Lithuanian",
+        Language::Mt => "Maltese",
+        Language::Pl => "Polish",
+        Language::Pt => "Portuguese",
+        Language::Ro => "Romanian",
+        Language::Sk => "Slovak",
+        Language::Sl => "Slovenian",
+        Language::Sv => "Swedish",
+        Language::Ru => "Russian",
+        Language::Uk => "Ukrainian",
+    }
+}
+
+fn model_label(model: SpeechModel) -> &'static str {
+    match model {
+        SpeechModel::Whisper => "Whisper small",
+        SpeechModel::Canary => "Canary 1B v2",
+    }
+}
+
+fn model_switch_note(wanted: Speech) -> String {
+    let from = language_label(wanted.language);
+    match (wanted.model, wanted.language) {
+        (SpeechModel::Canary, Language::Auto) => {
+            "Canary can detect the language only to translate it, so Language is now English. \
+             Turn on Translate after choosing Detect automatically to keep translating."
+                .to_owned()
+        }
+        (model, _) => format!(
+            "{} has no {from}, so Language is now English.",
+            model_label(model)
+        ),
+    }
+}
+
+fn model_help(model: SpeechModel, installed: bool) -> &'static str {
+    match (model, installed) {
+        (SpeechModel::Whisper, _) => {
+            "OpenAI's Whisper small, 0.9 GB. Five languages, translates them into English. \
+             The default, and the most accurate on English captions."
+        }
+        (SpeechModel::Canary, true) => {
+            "NVIDIA's Canary 1B v2, 0.9 GB. 25 European languages, translates them into \
+             English, with or without naming the language. Switching reloads the model."
+        }
+        (SpeechModel::Canary, false) => {
+            "Canary 1B v2 is not downloaded yet: use Download below (0.97 GB on an NPU, \
+             1.9 GB otherwise)."
+        }
     }
 }
 
@@ -163,7 +223,10 @@ struct SettingsWindow {
     cleanup_dirty: bool,
     model: Arc<Mutex<ModelState>>,
     confirm_delete: bool,
+    canary_model: Arc<Mutex<ModelState>>,
+    confirm_delete_canary: bool,
     multilingual: bool,
+    canary: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
     // The last factor read from the desktop: zoom follows it only when it changes, so a
@@ -174,6 +237,8 @@ struct SettingsWindow {
     shown: Option<Page>,
     refused: Arc<Mutex<Option<String>>>,
     notice: Option<String>,
+    // Why a model switch changed the language, so it never happens silently.
+    speech_note: Option<String>,
     summaries: Summaries,
     summaries_dirty: bool,
     // From the session listing, read when the Sessions page is shown.
@@ -201,6 +266,7 @@ impl SettingsWindow {
         let mut window = Self::with(page, Settings::load(), Speech::load(), Cleanup::load());
         window.summaries = Summaries::load();
         window.multilingual = multilingual_installed();
+        window.canary = SpeechModel::Canary.installed();
         window.kde_header = theme::kde_header();
         window
     }
@@ -221,7 +287,10 @@ impl SettingsWindow {
             cleanup_dirty: false,
             model: Arc::new(Mutex::new(ModelState::default())),
             confirm_delete: false,
+            canary_model: Arc::new(Mutex::new(ModelState::default())),
+            confirm_delete_canary: false,
             multilingual: false,
+            canary: false,
             focused: true,
             kde_header: None,
             text_scale: None,
@@ -229,6 +298,7 @@ impl SettingsWindow {
             shown: None,
             refused: Arc::new(Mutex::new(None)),
             notice: None,
+            speech_note: None,
             summaries: Summaries::default(),
             summaries_dirty: false,
             model_ready: Arc::new(Mutex::new(None)),
@@ -401,18 +471,40 @@ impl SettingsWindow {
         changed
     }
 
-    fn refresh_model(&self, ctx: &egui::Context) {
-        let model = Arc::clone(&self.model);
+    // Deleting the model in use: the server could not load it any more, so back to Whisper,
+    // and the page says so.
+    fn forget_canary(&mut self) -> bool {
+        if self.speech.model != SpeechModel::Canary {
+            return false;
+        }
+        self.speech = Speech {
+            model: SpeechModel::Whisper,
+            ..self.speech
+        }
+        .normalised();
+        self.speech_note = Some("Canary was deleted, so the speech model is Whisper again.".into());
+        true
+    }
+
+    fn model_state(&self, tool: Tool) -> Arc<Mutex<ModelState>> {
+        match tool {
+            Tool::Cleanup => Arc::clone(&self.model),
+            Tool::Canary => Arc::clone(&self.canary_model),
+        }
+    }
+
+    fn refresh_model(&self, ctx: &egui::Context, tool: Tool) {
+        let model = self.model_state(tool);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let status = model::status();
+            let status = model::status(tool);
             model.lock().unwrap().status = Some(status);
             ctx.request_repaint();
         });
     }
 
-    fn run_model(&self, ctx: &egui::Context, action: &'static str) {
-        let model = Arc::clone(&self.model);
+    fn run_model(&self, ctx: &egui::Context, tool: Tool, action: &'static str) {
+        let model = self.model_state(tool);
         let ctx = ctx.clone();
         {
             let mut state = model.lock().unwrap();
@@ -423,13 +515,13 @@ impl SettingsWindow {
             }
         }
         std::thread::spawn(move || {
-            let result = model::run(action, |line| {
+            let result = model::run(tool, action, |line| {
                 if let Line::Progress { done, total } = line {
                     model.lock().unwrap().fetching = Some((done, total));
                     ctx.request_repaint();
                 }
             });
-            let status = model::status();
+            let status = model::status(tool);
             let mut state = model.lock().unwrap();
             state.busy = false;
             state.fetching = None;
@@ -526,31 +618,49 @@ impl SettingsWindow {
                         .show(ui, |_, _| {});
                 });
             }
-            Some(Ok(status)) => self.model_rows(ui, status, &state),
+            Some(Ok(status)) => {
+                self.model_rows(ui, Tool::Cleanup, status, &state);
+            }
         }
     }
 
-    fn model_rows(&mut self, ui: &mut egui::Ui, status: &Status, state: &ModelState) {
+    fn model_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        tool: Tool,
+        status: &Status,
+        state: &ModelState,
+    ) -> bool {
+        let mut speech_changed = false;
         let p = theme::palette(ui.ctx());
+        let mut confirm = match tool {
+            Tool::Cleanup => self.confirm_delete,
+            Tool::Canary => self.confirm_delete_canary,
+        };
         widgets::group_label(ui, &status.label);
         widgets::group(ui, |ui| {
-            let row = Row::new("Download").help("Checked against pinned sha256s.");
-            let row = if self.confirm_delete {
-                row.tint(p.error_tint)
-            } else {
-                row
-            };
+            let row = Row::new("Download").help(match tool {
+                Tool::Cleanup => "Checked against pinned sha256s.",
+                Tool::Canary => {
+                    "INT8 for the NPU, fp16 for CPU and GPU, checked against pinned sha256s. \
+                     CC-BY-4.0, by NVIDIA."
+                }
+            });
+            let row = if confirm { row.tint(p.error_tint) } else { row };
             row.show(ui, |ui, _| {
-                if self.confirm_delete {
+                if confirm {
                     if ui
                         .add(Button::destructive("Delete the model").small())
                         .clicked()
                     {
-                        self.confirm_delete = false;
-                        self.run_model(ui.ctx(), "delete");
+                        confirm = false;
+                        if tool == Tool::Canary {
+                            speech_changed |= self.forget_canary();
+                        }
+                        self.run_model(ui.ctx(), tool, "delete");
                     }
                     if ui.add(Button::ghost("Cancel").small()).clicked() {
-                        self.confirm_delete = false;
+                        confirm = false;
                     }
                     return;
                 }
@@ -559,7 +669,7 @@ impl SettingsWindow {
                     .add_enabled(deletable, Button::secondary("Delete…"))
                     .clicked()
                 {
-                    self.confirm_delete = true;
+                    confirm = true;
                 }
                 let label = if status.present { "Verify" } else { "Download" };
                 let button = if status.present {
@@ -568,8 +678,8 @@ impl SettingsWindow {
                     Button::primary(label)
                 };
                 if ui.add_enabled(!state.busy, button).clicked() {
-                    self.confirm_delete = false;
-                    self.run_model(ui.ctx(), "fetch");
+                    confirm = false;
+                    self.run_model(ui.ctx(), tool, "fetch");
                 }
                 let shown = if let Some((done, total)) = state.fetching {
                     let fraction = done as f32 / total.max(1) as f32;
@@ -604,12 +714,20 @@ impl SettingsWindow {
                     .tone(Tone::Error)
                     .show(ui, |_, _| {});
             }
+            if tool == Tool::Canary {
+                return;
+            }
             Row::new("Compiled cache")
                 .help("Built on first load. Deleting the model clears it too.")
                 .show(ui, |ui, _| {
                     ui.label(model::size(status.cache_bytes));
                 });
         });
+        match tool {
+            Tool::Cleanup => self.confirm_delete = confirm,
+            Tool::Canary => self.confirm_delete_canary = confirm,
+        }
+        speech_changed
     }
 
     fn refresh_model_ready(&self, ctx: &egui::Context) {
@@ -687,15 +805,70 @@ impl SettingsWindow {
                 self.notice = None;
             }
         }
+        if let Some(note) = self.speech_note.clone() {
+            ui.add_space(12.0);
+            if widgets::notice(ui, Tone::Info, &note) {
+                self.speech_note = None;
+            }
+        }
         widgets::group_label(ui, "Recognition");
-        let multilingual = self.multilingual;
+        let model = self.speech.model;
+        let canary_state = self.canary_model.lock().unwrap().clone();
+        // The download's own status once known; until then, what is on disk.
+        let canary = match &canary_state.status {
+            Some(Ok(status)) => status.present,
+            _ => self.canary,
+        };
+        let multilingual = match model {
+            SpeechModel::Whisper => self.multilingual,
+            SpeechModel::Canary => true,
+        };
         widgets::group(ui, |ui| {
+            Row::new("Speech model")
+                .help(model_help(model, model != SpeechModel::Canary || canary))
+                .show(ui, |ui, named| {
+                    let before = self.speech.model;
+                    let shown = widgets::combo(
+                        ui,
+                        "speech-model",
+                        model_label(before).to_owned(),
+                        COMBO_WIDTH,
+                    )
+                    .show_ui(ui, |ui| {
+                        for option in SpeechModel::ALL {
+                            let installed = option != SpeechModel::Canary || canary;
+                            let label = if installed {
+                                model_label(option).to_owned()
+                            } else {
+                                format!("{} (not installed)", model_label(option))
+                            };
+                            ui.add_enabled_ui(installed, |ui| {
+                                ui.selectable_value(&mut self.speech.model, option, label);
+                            });
+                        }
+                    });
+                    named(shown.response);
+                    if self.speech.model != before {
+                        let wanted = self.speech;
+                        self.speech = self.speech.normalised();
+                        self.speech_note = (self.speech.language != wanted.language)
+                            .then(|| model_switch_note(wanted));
+                        changed = true;
+                    }
+                });
             Row::new("Language")
-                .help(if multilingual {
-                    "Detect automatically picks per sentence. Switching reloads the model."
-                } else {
-                    "Only English is installed. Run vinowhisper-setup --language auto to add \
-                     the others."
+                .help(match model {
+                    SpeechModel::Whisper if multilingual => {
+                        "Detect automatically picks per sentence. Switching reloads the model."
+                    }
+                    SpeechModel::Whisper => {
+                        "Only English is installed. Run vinowhisper-setup --language auto to add \
+                         the others."
+                    }
+                    SpeechModel::Canary => {
+                        "Detect automatically translates whatever is spoken into English. To \
+                         caption in another language, name it. Switching reloads the model."
+                    }
                 })
                 .show(ui, |ui, named| {
                     ui.add_enabled_ui(multilingual, |ui| {
@@ -704,7 +877,7 @@ impl SettingsWindow {
                             "language",
                             named,
                             &mut self.speech.language,
-                            &Language::ALL,
+                            self.speech.model.languages(),
                             language_label,
                         ) {
                             self.speech = self.speech.normalised();
@@ -713,10 +886,21 @@ impl SettingsWindow {
                     });
                 });
             let foreign = multilingual && self.speech.language != Language::En;
+            // Canary's auto only ever translates (it has no detection to transcribe with).
+            let locked = model == SpeechModel::Canary && self.speech.language == Language::Auto;
             Row::new("Translation")
-                .help("Captions arrive in English whatever was spoken.")
+                .help(if locked {
+                    "Always on with Detect automatically: Canary translates whatever is spoken."
+                } else if foreign {
+                    "Captions arrive in English whatever was spoken."
+                } else if self.speech.language == Language::En {
+                    "English speech is captioned as it is. To translate, set Language to the \
+                     one being spoken, or to Detect automatically."
+                } else {
+                    "Needs the other languages installed, as above."
+                })
                 .show(ui, |ui, _| {
-                    ui.add_enabled_ui(foreign, |ui| {
+                    ui.add_enabled_ui(foreign && !locked, |ui| {
                         let mut translate = self.speech.task == Task::Translate;
                         if widgets::switch(ui, &mut translate, "Translate to English").changed() {
                             self.speech.task = if translate {
@@ -729,6 +913,9 @@ impl SettingsWindow {
                     });
                 });
         });
+        if let Some(Ok(status)) = &canary_state.status {
+            changed |= self.model_rows(ui, Tool::Canary, status, &canary_state);
+        }
         changed
     }
 }
@@ -840,7 +1027,10 @@ impl eframe::App for SettingsWindow {
             self.ask_shortcuts(ctx, Duration::ZERO);
         }
         if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
-            self.refresh_model(ctx);
+            self.refresh_model(ctx, Tool::Cleanup);
+        }
+        if self.shown != Some(Page::Speech) && self.page == Page::Speech {
+            self.refresh_model(ctx, Tool::Canary);
         }
         if self.page == Page::Sessions && (regained || self.shown != Some(Page::Sessions)) {
             self.refresh_model_ready(ctx);
@@ -1243,8 +1433,185 @@ mod tests {
     fn the_speech_page_names_its_controls() {
         let mut harness = harness(Page::Speech, WIDE);
         harness.run();
+        harness.get_by_role_and_label(Role::ComboBox, "Speech model");
         harness.get_by_role_and_label(Role::ComboBox, "Language");
         harness.get_by_role_and_label(Role::Switch, "Translate to English");
+    }
+
+    #[test]
+    fn canary_says_how_to_install_it_until_it_is_there() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness.run();
+        harness.get_by_label_contains("Whisper small, 0.9 GB");
+        harness.state_mut().window.speech.model = SpeechModel::Canary;
+        harness.run();
+        harness.get_by_label_contains("not downloaded yet: use Download below");
+        harness.state_mut().window.canary = true;
+        harness.run();
+        harness.get_by_label_contains("25 European languages");
+        assert!(
+            harness
+                .query_by_label_contains("not downloaded yet")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn canary_offers_its_own_languages_and_detection_to_translate() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness.state_mut().window.canary = true;
+        harness.state_mut().window.speech.model = SpeechModel::Canary;
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Language")
+            .click();
+        harness.run();
+        harness.get_by_label("Italian");
+        harness.get_by_label("Detect automatically");
+    }
+
+    #[test]
+    fn switching_to_canary_keeps_auto_translate() {
+        let mut harness = harness(Page::Speech, WIDE);
+        let window = &mut harness.state_mut().window;
+        window.canary = true;
+        window.speech.language = Language::Auto;
+        window.speech.task = Task::Translate;
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Speech model")
+            .click();
+        harness.run();
+        harness.get_by_label("Canary 1B v2").click();
+        harness.run();
+        let speech = harness.state().window.speech;
+        assert_eq!(
+            (speech.model, speech.language, speech.task),
+            (SpeechModel::Canary, Language::Auto, Task::Translate)
+        );
+        assert!(harness.state().window.speech_note.is_none());
+        let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
+        assert!(
+            switch.accesskit_node().is_disabled(),
+            "locked on for Canary's auto"
+        );
+        assert_eq!(
+            switch.accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+    }
+
+    #[test]
+    fn a_model_switch_that_drops_the_language_says_so() {
+        let mut harness = harness(Page::Speech, WIDE);
+        let window = &mut harness.state_mut().window;
+        window.canary = true;
+        window.speech.language = Language::Auto;
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Speech model")
+            .click();
+        harness.run();
+        harness.get_by_label("Canary 1B v2").click();
+        harness.run();
+        assert_eq!(harness.state().window.speech.language, Language::En);
+        harness.get_by_label_contains("so Language is now English");
+    }
+
+    fn canary_status(present: bool) -> Status {
+        Status {
+            label: "Canary 1B v2".into(),
+            download_bytes: 972_131_242,
+            present,
+            bytes: if present { 972_131_242 } else { 0 },
+            cache_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn canary_can_be_downloaded_from_the_speech_page() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness
+            .state_mut()
+            .window
+            .canary_model
+            .lock()
+            .unwrap()
+            .status = Some(Ok(canary_status(false)));
+        harness.run();
+        harness.get_by_label("Not downloaded (972 MB)");
+        harness.get_by_role_and_label(Role::Button, "Download");
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Speech model")
+            .click();
+        harness.run();
+        harness.get_by_label("Canary 1B v2 (not installed)");
+    }
+
+    #[test]
+    fn a_downloaded_canary_can_be_picked() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness
+            .state_mut()
+            .window
+            .canary_model
+            .lock()
+            .unwrap()
+            .status = Some(Ok(canary_status(true)));
+        harness.run();
+        harness.get_by_label("Downloaded, 972 MB");
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Speech model")
+            .click();
+        harness.run();
+        // The download group is headed "Canary 1B v2" too; the option is the one that isn't a label.
+        harness
+            .get_all_by_label("Canary 1B v2")
+            .find(|node| node.accesskit_node().role() != Role::Label)
+            .unwrap()
+            .click();
+        harness.run();
+        assert_eq!(harness.state().window.speech.model, SpeechModel::Canary);
+        assert!(harness.state().saved.1, "the switch is saved");
+    }
+
+    #[test]
+    fn deleting_the_canary_in_use_goes_back_to_whisper() {
+        let mut window = SettingsWindow::with(
+            Some(Page::Speech),
+            Settings::default(),
+            Speech {
+                language: Language::Auto,
+                task: Task::Translate,
+                model: SpeechModel::Canary,
+            },
+            Cleanup::default(),
+        );
+        assert!(window.forget_canary());
+        assert_eq!(
+            window.speech,
+            Speech {
+                language: Language::Auto,
+                task: Task::Translate,
+                model: SpeechModel::Whisper,
+            }
+        );
+        assert!(window.speech_note.is_some());
+        assert!(!window.forget_canary(), "Whisper in use: nothing to switch");
+    }
+
+    #[test]
+    fn translation_says_why_it_is_off_for_english() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness.run();
+        let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
+        assert!(switch.accesskit_node().is_disabled());
+        harness.get_by_label_contains("set Language to the one being spoken");
+        harness.state_mut().window.speech.language = Language::Fr;
+        harness.run();
+        let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
+        assert!(!switch.accesskit_node().is_disabled());
+        harness.get_by_label("Captions arrive in English whatever was spoken.");
     }
 
     #[test]

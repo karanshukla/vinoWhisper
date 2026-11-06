@@ -379,6 +379,36 @@ background with SmolLM3. Full write-up in `docs/sessions.md`. The traps:
   before putting symbols in the settings window.
 - **The summary's shape is assembled in code** (2026-10-30): SmolLM3 ignored a shape asked for in one pass and kept only the end of a long session, so answers are prefilled (`-`, `#`), key points are spread across chunks and stamps come from word overlap with the transcript. Details are still sometimes wrong. Measured on the NPU, table at the end of `docs/sessions.md`.
 
+## Canary 1B v2, a second speech model (#143), added 2026-11-06
+
+Selectable in Settings → Speech → Speech model (`model` in `language.json`, `--model` on the
+server); Whisper stays the default by the user's choice. Full write-up and numbers in
+`docs/models.md`. The facts that would otherwise be re-learned:
+
+- **Our own export and decode loop**, not optimum or `WhisperPipeline`:
+  `scripts/export_canary.py` (PEP 723, its own transformers 5.22.2, because Canary needs
+  >= 5.15 and the Whisper NPU export < 5.4) writes a static 12 s encoder that also emits
+  the cross K/V, and a one-token stateless decoder; `vinowhisper/canary.py` drives them.
+  INT8 for the NPU, fp16 for CPU/GPU (the CPU plugin cannot compile the INT8 IR).
+- **The extractor counts `len // 160` frames as real, one fewer than it computes.** The
+  encoder must get that mask or its output moves by up to 2.5. The numpy port matches
+  transformers' to 2.3e-4 (`tests/fixtures/canary_features.npz`).
+- **Separate windows flatter Canary; stitched, Whisper wins on English** (4.8% vs 5.8%
+  WER). Canary hallucinates repetition loops on short startup windows, two in a row agree,
+  and LocalAgreement commits them; `Stitcher.push` now drops decodes with a zlib ratio
+  over 2.0 (real text <= 1.66 for both models).
+- en → X translation is off: it returned English on 5-7 of 23 mid-sentence windows.
+- Auto exists for Canary only with translate: it translates the same with the wrong source
+  named, so the prompt names `CANARY_AUTO_SOURCE`. Auto + transcribe is refused.
+- Prebuilt exports: `arankays/canary-1b-v2-{int8,fp16}-ov`, pinned in `canary_model.json`,
+  fetched by `vinowhisper-canary model fetch` and the Speech page's Download row.
+- Confidence commits are possible with Canary (the loop has token probabilities) and
+  measured offline only: half the words 0.53 s sooner at no WER cost. Not built; it needs
+  the server to send confidences to the caption client.
+- `vinowhisper-setup --model` picks it, and the export step checks or downloads Canary
+  instead of a Whisper export when it is selected.
+- Not yet: any long run on a live caption session, or dictation with it.
+
 ## Architecture
 
 ```
@@ -395,7 +425,8 @@ vinowhisper/
   client.py       TranscriptionClient, streaming HTTP over the server's Unix socket
   server.py       Flask on a Unix socket, socket-activated + self-idle-exit
   listen.py       the server's socket: systemd's, or bound 0600 under $XDG_RUNTIME_DIR
-  transcriber.py  WhisperTranscriber, wraps WhisperPipeline, serialized by a lock
+  transcriber.py  BaseTranscriber (device, failures, streaming), WhisperTranscriber over WhisperPipeline
+  canary.py       CanaryTranscriber: numpy mel features, tokenizer, our own NPU decode loop
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
   integrity.py    sha256 pins for the model export, and what a mismatch means
   source.py       the pinned Hugging Face revision, downloaded and sha256-checked before export

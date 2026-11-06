@@ -96,34 +96,50 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-fn command() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-cleanup")))
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from("vinowhisper-cleanup"))
+/// The downloadable models: each command answers `model status|fetch|delete` in JSON lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    Cleanup,
+    Canary,
 }
 
-fn spawn(action: &str) -> Result<std::process::Child, String> {
-    Command::new(command())
+impl Tool {
+    fn program(self) -> &'static str {
+        match self {
+            Tool::Cleanup => "vinowhisper-cleanup",
+            Tool::Canary => "vinowhisper-canary",
+        }
+    }
+}
+
+fn command(tool: Tool) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(tool.program())))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(tool.program()))
+}
+
+fn spawn(tool: Tool, action: &str) -> Result<std::process::Child, String> {
+    Command::new(command(tool))
         .args(["model", action])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|err| format!("could not run vinowhisper-cleanup: {err}"))
+        .map_err(|err| format!("could not run {}: {err}", tool.program()))
 }
 
-pub fn status() -> Result<Status, String> {
-    let output = spawn("status")?
+pub fn status(tool: Tool) -> Result<Status, String> {
+    let output = spawn(tool, "status")?
         .wait_with_output()
         .map_err(|err| err.to_string())?;
     let text = String::from_utf8_lossy(&output.stdout);
     parse_status(text.lines().last().unwrap_or(""))
 }
 
-pub fn run(action: &str, mut on_line: impl FnMut(Line)) -> Result<(), String> {
-    let mut child = spawn(action)?;
+pub fn run(tool: Tool, action: &str, mut on_line: impl FnMut(Line)) -> Result<(), String> {
+    let mut child = spawn(tool, action)?;
     let mut failed = None;
     if let Some(stdout) = child.stdout.take() {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -137,7 +153,7 @@ pub fn run(action: &str, mut on_line: impl FnMut(Line)) -> Result<(), String> {
     let exit = child.wait().map_err(|err| err.to_string())?;
     match failed {
         Some(message) => Err(message),
-        None if !exit.success() => Err(format!("vinowhisper-cleanup exited ({exit})")),
+        None if !exit.success() => Err(format!("{} exited ({exit})", tool.program())),
         None => Ok(()),
     }
 }

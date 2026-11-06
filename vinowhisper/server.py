@@ -11,14 +11,15 @@ from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
 from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
-from .transcriber import WhisperTranscriber
+from .canary import CanaryTranscriber
+from .transcriber import BaseTranscriber, WhisperTranscriber
 
 app = Flask(__name__)
 # One longest window of raw float32 PCM, the wire format client.py sends, plus slack.
 app.config["MAX_CONTENT_LENGTH"] = (
     int(config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ) * audio.BYTES_PER_SAMPLE + 4096
 )
-transcriber = WhisperTranscriber()
+transcriber: BaseTranscriber = WhisperTranscriber()
 cleaner = llm.CleanupModel()
 
 _activity_lock = threading.Lock()
@@ -220,8 +221,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--language",
         default=None,
-        metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
-        help=f"Spoken language, overriding {config.LANGUAGE_FILE} (default en). 'en' loads the English-only model; any other "
+        metavar="LANGUAGE",
+        help=f"Spoken language, overriding {config.LANGUAGE_FILE} (default en). With Whisper, "
+        f"{'|'.join(config.languages(config.WHISPER_MODEL))}: 'en' loads the English-only model; any other "
         "value loads the multilingual whisper-small, which has to be exported first "
         "(vinowhisper-setup --language ...). 'auto' detects per window and can flip "
         "mid-caption, so name the language when you know it.",
@@ -234,11 +236,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "translate task, so it needs a spoken language or 'auto', and cannot go "
         "into any other language.",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        choices=config.MODELS,
+        help=f"Speech model, overriding {config.LANGUAGE_FILE} (default {config.DEFAULT_MODEL}). "
+        f"{config.CANARY_MODEL} takes any of {len(config.CANARY_LANGUAGES)} languages by "
+        "code (no auto) and translates them into English; it needs its own export.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
-    args.language, args.task = config.resolve_language(args.language, args.task)
+    args.language, args.task, args.model = config.resolve_language(
+        args.language, args.task, args.model
+    )
     try:
-        config.check_language(args.language, args.task)
+        config.check_language(args.language, args.task, args.model)
     except ValueError as exc:
         parser.error(str(exc))
     return args
@@ -254,7 +266,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     global transcriber, cleaner, summariser
-    transcriber = WhisperTranscriber(device=args.device, language=args.language, task=args.task)
+    kind = CanaryTranscriber if args.model == config.CANARY_MODEL else WhisperTranscriber
+    transcriber = kind(device=args.device, language=args.language, task=args.task)
     cleaner = llm.CleanupModel(device=args.device)
     summariser = summary.Summariser(cleaner, npu_busy)
 
@@ -264,7 +277,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
         return 1
 
-    print(f"[vinowhisper-server] loading on {selection.device}", file=sys.stderr, flush=True)
+    print(
+        f"[vinowhisper-server] loading {args.model} on {selection.device}",
+        file=sys.stderr,
+        flush=True,
+    )
     for warning in selection.warnings:
         print(f"[vinowhisper-server] WARNING: {warning}", file=sys.stderr, flush=True)
 

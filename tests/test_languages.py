@@ -121,7 +121,7 @@ def test_the_unit_never_carries_the_language():
 def test_the_language_file_round_trips(tmp_path):
     path = tmp_path / "vinowhisper/language.json"
     config.save_language("fr", "translate", path)
-    assert config.load_language(path) == ("fr", "translate")
+    assert config.load_language(path) == ("fr", "translate", "whisper-small")
 
 
 @pytest.mark.parametrize(
@@ -132,17 +132,17 @@ def test_a_missing_or_bad_language_file_means_english_not_a_dead_server(tmp_path
     path = tmp_path / "language.json"
     if text:
         path.write_text(text)
-    assert config.load_language(path) == ("en", "transcribe")
+    assert config.load_language(path) == ("en", "transcribe", "whisper-small")
 
 
 def test_flags_beat_the_file(monkeypatch, tmp_path):
     path = tmp_path / "language.json"
     config.save_language("fr", "translate", path)
     monkeypatch.setattr(config, "LANGUAGE_FILE", path)
-    assert config.resolve_language(None, None) == ("fr", "translate")
-    assert config.resolve_language("de", None) == ("de", "transcribe")
-    assert config.resolve_language(None, "transcribe") == ("fr", "transcribe")
-    assert config.resolve_language("en", None) == ("en", "transcribe")
+    assert config.resolve_language(None, None) == ("fr", "translate", "whisper-small")
+    assert config.resolve_language("de", None) == ("de", "transcribe", "whisper-small")
+    assert config.resolve_language(None, "transcribe") == ("fr", "transcribe", "whisper-small")
+    assert config.resolve_language("en", None) == ("en", "transcribe", "whisper-small")
 
 
 def test_the_server_reads_the_saved_choice(monkeypatch, tmp_path):
@@ -161,7 +161,7 @@ def test_setup_writes_the_language_only_when_asked(monkeypatch, tmp_path):
     assert not path.exists()
     explicit = wizard.Wizard(assume_yes=True, language="de", task="translate")
     assert explicit.save_language().ok is True
-    assert config.load_language(path) == ("de", "translate")
+    assert config.load_language(path) == ("de", "translate", "whisper-small")
     assert explicit.multilingual
 
 
@@ -217,7 +217,7 @@ def test_saving_the_language_replaces_the_file_rather_than_rewriting_it(tmp_path
     before = path.stat().st_ino
     config.save_language("de", "translate", path)
     assert path.stat().st_ino != before
-    assert config.load_language(path) == ("de", "translate")
+    assert config.load_language(path) == ("de", "translate", "whisper-small")
     assert [p.name for p in tmp_path.iterdir()] == ["language.json"]
 
 
@@ -228,7 +228,7 @@ def test_saving_the_language_through_a_symlink_keeps_the_link(tmp_path):
     link.symlink_to(real)
     config.save_language("es", "transcribe", link)
     assert link.is_symlink()
-    assert config.load_language(real) == ("es", "transcribe")
+    assert config.load_language(real) == ("es", "transcribe", "whisper-small")
 
 
 def test_a_failed_language_save_leaves_no_partial_file(tmp_path, monkeypatch):
@@ -242,4 +242,4 @@ def test_a_failed_language_save_leaves_no_partial_file(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         config.save_language("de", "transcribe", path)
     assert [p.name for p in tmp_path.iterdir()] == ["language.json"]
-    assert config.load_language(path) == ("fr", "transcribe")
+    assert config.load_language(path) == ("fr", "transcribe", "whisper-small")

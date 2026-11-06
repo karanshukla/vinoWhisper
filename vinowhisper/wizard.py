@@ -17,7 +17,17 @@ from . import source as model_source
 BIN_DIR = Path.home() / ".local/bin"
 UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
-COMMANDS = ("caption", "dictate", "server", "replay", "doctor", "setup", "cleanup", "session")
+COMMANDS = (
+    "caption",
+    "dictate",
+    "server",
+    "replay",
+    "doctor",
+    "setup",
+    "cleanup",
+    "session",
+    "canary",
+)
 
 # Keep in step with scripts/convert_model.sh.
 EXPORT_TASK = "automatic-speech-recognition-with-past"
@@ -42,13 +52,14 @@ class Wizard:
         device: str = "auto",
         language: str | None = None,
         task: str | None = None,
+        model: str | None = None,
     ):
         self.assume_yes = assume_yes
         self.dry_run = dry_run
         self.device = device
         # Only an explicit choice is written; a plain re-run keeps what the tray chose.
-        self.explicit_language = language is not None or task is not None
-        self.language, self.task = config.resolve_language(language, task)
+        self.explicit_language = language is not None or task is not None or model is not None
+        self.language, self.task, self.model = config.resolve_language(language, task, model)
         self.multilingual = config.is_multilingual(self.language, self.task)
         self.distro = distro.detect()
         self.failed: list[str] = []
@@ -188,6 +199,8 @@ class Wizard:
             kind = devices.select(self.device).kind
         except devices.DeviceError:
             kind = "NPU"
+        if self.model == config.CANARY_MODEL:
+            return self.check_canary(kind)
         variant = "npu" if kind == "NPU" else "stateful"
         directory = config.model_dir(kind, self.multilingual)
         model_id = config.model_id(self.multilingual)
@@ -237,6 +250,44 @@ class Wizard:
             return self.check_digests(variant, directory, f"exported to {directory}", model_id)
         return Outcome(None, f"run {export} when ready")
 
+    def check_canary(self, kind: str) -> Outcome:
+        from . import canary, llm
+
+        try:
+            status = canary.model_status(kind)
+        except llm.ModelMissing as exc:
+            return Outcome(False, str(exc))
+        directory = status["dir"]
+        if status["verified"]:
+            return Outcome(True, f"Canary 1B v2 present at {directory}, sha256s verified")
+        if status["present"]:
+            # scripts/export_canary.py: usable, just not the bytes the pins describe.
+            return Outcome(True, f"Canary 1B v2 present at {directory} (a local export)")
+        size = status["download_bytes"] / 1e9
+        self.say(f"  No Canary 1B v2 export at {directory}.")
+        self.say(
+            f"  $ fetch {status['repo']}@{status['revision'][:12]} ({size:.2f} GB) into "
+            f"{directory}, checking every file's sha256"
+        )
+        self.say(f"  Or export it yourself: {config.export_command('npu', model=self.model)}")
+        if not self.confirm(f"download it now ({size:.2f} GB)?"):
+            return Outcome(None, "download it from Settings > Speech, or re-run this")
+        shown = [-1]
+
+        def progress(done: int, total: int) -> None:
+            percent = done * 100 // max(total, 1)
+            if percent // 10 != shown[0] // 10 or done >= total:
+                shown[0] = percent
+                self.say(f"  {percent}% of {total / 1e9:.2f} GB")
+
+        try:
+            canary.model_fetch(progress, kind)
+        except model_source.SourceError as exc:
+            return Outcome(False, str(exc))
+        except (requests.RequestException, OSError, RuntimeError) as exc:
+            return Outcome(None, f"download failed ({exc}); re-run to resume")
+        return Outcome(True, f"Canary 1B v2 downloaded to {directory}, sha256s verified")
+
     def export(self, argv: list[str]) -> bool:
         config.EXPORT_TMP_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=config.EXPORT_TMP_ROOT) as tmp:
@@ -255,13 +306,13 @@ class Wizard:
         return Outcome(True, f"{summary} ({result.status})")
 
     def save_language(self) -> Outcome:
-        summary = f"{self.language}, {self.task}"
+        summary = f"{self.model}: {self.language}, {self.task}"
         if not self.explicit_language:
-            return Outcome(True, f"{summary} (unchanged; set it with --language)")
+            return Outcome(True, f"{summary} (unchanged; set it with --language or --model)")
         if self.dry_run:
             return Outcome(None, f"would write {summary} to {config.LANGUAGE_FILE}")
         try:
-            config.save_language(self.language, self.task)
+            config.save_language(self.language, self.task, model=self.model)
         except OSError as exc:
             return Outcome(False, f"could not write {config.LANGUAGE_FILE}: {exc}")
         return Outcome(True, f"{summary}, saved to {config.LANGUAGE_FILE}")
@@ -704,8 +755,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--language",
         default=None,
-        metavar="|".join((config.AUTO_LANGUAGE, *config.LANGUAGES)),
-        help="Spoken language. 'en' (the default) uses the English-only model; anything "
+        metavar="LANGUAGE",
+        help="Spoken language. With Whisper, 'en' (the default) uses the English-only model; anything "
         f"else sets up the multilingual whisper-small. Saved to {config.LANGUAGE_FILE}, "
         "which the server and the tray read; without it the saved choice is kept.",
     )
@@ -714,6 +765,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         choices=config.TASKS,
         help="'translate' captions foreign speech in English (needs a spoken language or 'auto').",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        choices=config.MODELS,
+        help=f"Speech model (default {config.DEFAULT_MODEL}). {config.CANARY_MODEL} takes 25 "
+        "languages and translates them into English, with auto for translation; the wizard "
+        "downloads its prebuilt export. Saved beside the language.",
     )
     parser.add_argument(
         "--print-units",
@@ -738,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
     try:
-        config.check_language(*config.resolve_language(args.language, args.task))
+        config.check_language(*config.resolve_language(args.language, args.task, args.model))
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -758,6 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         language=args.language,
         task=args.task,
+        model=args.model,
     )
     try:
         if args.gui:

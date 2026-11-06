@@ -70,16 +70,103 @@ pub enum Language {
     De,
     Es,
     Auto,
+    Bg,
+    Hr,
+    Cs,
+    Da,
+    Nl,
+    Et,
+    Fi,
+    El,
+    Hu,
+    It,
+    Lv,
+    Lt,
+    Mt,
+    Pl,
+    Pt,
+    Ro,
+    Sk,
+    Sl,
+    Sv,
+    Ru,
+    Uk,
 }
 
 impl Language {
-    pub const ALL: [Language; 5] = [
+    pub const WHISPER: [Language; 5] = [
         Language::En,
         Language::Fr,
         Language::De,
         Language::Es,
         Language::Auto,
     ];
+
+    // config.languages("canary-1b-v2"). Auto only translates: Canary cannot detect a
+    // language to transcribe it (Speech::normalised).
+    pub const CANARY: [Language; 26] = [
+        Language::En,
+        Language::Bg,
+        Language::Hr,
+        Language::Cs,
+        Language::Da,
+        Language::Nl,
+        Language::Et,
+        Language::Fi,
+        Language::Fr,
+        Language::De,
+        Language::El,
+        Language::Hu,
+        Language::It,
+        Language::Lv,
+        Language::Lt,
+        Language::Mt,
+        Language::Pl,
+        Language::Pt,
+        Language::Ro,
+        Language::Sk,
+        Language::Sl,
+        Language::Es,
+        Language::Sv,
+        Language::Ru,
+        Language::Uk,
+        Language::Auto,
+    ];
+}
+
+/// The speech model the server loads (config.MODELS), picked in the settings window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SpeechModel {
+    #[default]
+    #[serde(rename = "whisper-small")]
+    Whisper,
+    #[serde(rename = "canary-1b-v2")]
+    Canary,
+}
+
+impl SpeechModel {
+    pub const ALL: [SpeechModel; 2] = [SpeechModel::Whisper, SpeechModel::Canary];
+
+    pub fn languages(self) -> &'static [Language] {
+        match self {
+            SpeechModel::Whisper => &Language::WHISPER,
+            SpeechModel::Canary => &Language::CANARY,
+        }
+    }
+
+    /// The exports `vinowhisper-server` loads it from (config.model_dir), either variant.
+    fn export_dirs(self) -> &'static [&'static str] {
+        match self {
+            SpeechModel::Whisper => &["whisper-small.en-ov", "whisper-small.en-ov-stateful"],
+            SpeechModel::Canary => &["canary-1b-v2-ov", "canary-1b-v2-ov-fp16"],
+        }
+    }
+
+    pub fn installed(self) -> bool {
+        self.export_dirs()
+            .iter()
+            .any(|name| has_xml(&data_home().join("vinowhisper/models").join(name)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -97,6 +184,7 @@ pub enum Task {
 pub struct Speech {
     pub language: Language,
     pub task: Task,
+    pub model: SpeechModel,
 }
 
 impl Speech {
@@ -112,18 +200,67 @@ impl Speech {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Speech::default();
         };
-        // The server falls back to English on a bad file too, so both agree on what is live.
-        serde_json::from_str::<Speech>(&text)
-            .map(Speech::normalised)
-            .unwrap_or_default()
+        // Field by field like config.load_language: an unknown model (a newer version's) is
+        // Whisper, and a bad or contradictory language is English without losing the model.
+        let Ok(serde_json::Value::Object(raw)) = serde_json::from_str(&text) else {
+            return Speech::default();
+        };
+        let model: SpeechModel = raw
+            .get("model")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let language: Option<Language> = match raw.get("language") {
+            None => Some(Language::En),
+            Some(v) => serde_json::from_value(v.clone()).ok(),
+        };
+        let task: Option<Task> = match raw.get("task") {
+            None => Some(Task::Transcribe),
+            Some(v) => serde_json::from_value(v.clone()).ok(),
+        };
+        match (language, task) {
+            (Some(language), Some(task))
+                if Speech {
+                    language,
+                    task,
+                    model,
+                }
+                .normalised()
+                    == (Speech {
+                        language,
+                        task,
+                        model,
+                    }) =>
+            {
+                Speech {
+                    language,
+                    task,
+                    model,
+                }
+            }
+            _ => Speech {
+                model,
+                ..Speech::default()
+            },
+        }
     }
 
-    /// English audio has nothing to translate; the server rejects that pair.
+    /// English audio has nothing to translate (the server rejects that pair), and a
+    /// language the model does not know is English.
     pub fn normalised(mut self) -> Speech {
+        if !self.model.languages().contains(&self.language) || self.auto_cannot_transcribe() {
+            self.language = Language::En;
+        }
         if self.language == Language::En {
             self.task = Task::Transcribe;
         }
         self
+    }
+
+    /// Canary's auto means translate whatever is spoken; it has no detection to transcribe with.
+    fn auto_cannot_transcribe(self) -> bool {
+        self.model == SpeechModel::Canary
+            && self.language == Language::Auto
+            && self.task == Task::Transcribe
     }
 
     pub fn save(&self) {
@@ -252,14 +389,15 @@ pub fn transcripts_dir() -> PathBuf {
 pub fn multilingual_installed() -> bool {
     ["whisper-small-ov", "whisper-small-ov-stateful"]
         .into_iter()
-        .map(|name| data_home().join("vinowhisper/models").join(name))
-        .any(|dir| {
-            std::fs::read_dir(dir).is_ok_and(|mut entries| {
-                entries.any(|entry| {
-                    entry.is_ok_and(|entry| entry.path().extension().is_some_and(|e| e == "xml"))
-                })
-            })
+        .any(|name| has_xml(&data_home().join("vinowhisper/models").join(name)))
+}
+
+fn has_xml(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| {
+        entries.any(|entry| {
+            entry.is_ok_and(|entry| entry.path().extension().is_some_and(|e| e == "xml"))
         })
+    })
 }
 
 /// Where the sessions window's "Open in…" sends a session (#138): the last one picked.
@@ -609,15 +747,81 @@ mod tests {
         let speech = Speech {
             language: Language::Fr,
             task: Task::Translate,
+            model: SpeechModel::Canary,
         };
         speech.save_to(&path).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path)
                 .unwrap()
                 .replace([' ', '\n'], ""),
-            r#"{"language":"fr","task":"translate"}"#
+            r#"{"language":"fr","task":"translate","model":"canary-1b-v2"}"#
         );
         assert_eq!(Speech::load_from(&path), speech);
+        // Written before #143: no model is Whisper.
+        std::fs::write(&path, r#"{"language":"fr","task":"translate"}"#).unwrap();
+        assert_eq!(Speech::load_from(&path).model, SpeechModel::Whisper);
+    }
+
+    #[test]
+    fn an_unknown_model_is_whisper_and_keeps_the_language() {
+        let path = scratch("speech-unknown-model");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"language":"de","task":"transcribe","model":"parakeet"}"#,
+        )
+        .unwrap();
+        let speech = Speech::load_from(&path);
+        assert_eq!(
+            (speech.model, speech.language),
+            (SpeechModel::Whisper, Language::De)
+        );
+    }
+
+    #[test]
+    fn a_language_the_model_lacks_is_english_like_the_server() {
+        let path = scratch("speech-model-language");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"language":"it","model":"whisper-small"}"#).unwrap();
+        assert_eq!(Speech::load_from(&path), Speech::default());
+        std::fs::write(&path, r#"{"language":"auto","model":"canary-1b-v2"}"#).unwrap();
+        assert_eq!(
+            Speech::load_from(&path),
+            Speech {
+                model: SpeechModel::Canary,
+                ..Speech::default()
+            }
+        );
+        std::fs::write(&path, r#"{"language":"it","model":"canary-1b-v2"}"#).unwrap();
+        assert_eq!(Speech::load_from(&path).language, Language::It);
+    }
+
+    #[test]
+    fn canary_keeps_auto_only_to_translate() {
+        let translate = Speech {
+            language: Language::Auto,
+            task: Task::Translate,
+            model: SpeechModel::Canary,
+        };
+        assert_eq!(translate.normalised(), translate);
+        let transcribe = Speech {
+            task: Task::Transcribe,
+            ..translate
+        };
+        assert_eq!(
+            transcribe.normalised(),
+            Speech {
+                model: SpeechModel::Canary,
+                ..Speech::default()
+            }
+        );
+    }
+
+    #[test]
+    fn every_whisper_language_is_also_a_canary_language() {
+        for language in Language::WHISPER {
+            assert!(Language::CANARY.contains(&language), "{language:?}");
+        }
     }
 
     #[test]
@@ -636,6 +840,7 @@ mod tests {
         let speech = Speech {
             language: Language::En,
             task: Task::Translate,
+            model: SpeechModel::Whisper,
         };
         assert_eq!(speech.normalised().task, Task::Transcribe);
     }

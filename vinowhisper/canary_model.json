@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "note": "The prebuilt Canary exports: our own export of nvidia/canary-1b-v2 (CC-BY-4.0) by scripts/export_canary.py, INT8 for the NPU and fp16 for CPU/GPU, at these commits. Downloaded back from the Hub and hashed 2026-11-06; every file matched the local export byte for byte. Nothing downloads them yet. Bump the revision and re-hash together.",
+  "models": {
+    "arankays/canary-1b-v2-int8-ov": {
+      "label": "Canary 1B v2 (INT8, NPU)",
+      "device": "NPU",
+      "base": "nvidia/canary-1b-v2@d455706339a6b32e1aa40f82c713a482a0c938e2",
+      "revision": "c836f010eaa0bcd1e42b8e6363f2a45c701fea9e",
+      "recorded": "2026-11-06",
+      "files": {
+        "encoder.xml": {
+          "sha256": "90a26ab213a9eacdceebdf8be2d083be9242b895e018bc5035514f80bdf61cbb",
+          "size": 3600618
+        },
+        "encoder.bin": {
+          "sha256": "01b238fc2187a26da8fb66480c972406ab5e6dc4fd39bc15b126113f01faeb4e",
+          "size": 829998260
+        },
+        "decoder.xml": {
+          "sha256": "1ed9900c93afc588fcf6dc2f02bbff38860e433779a54cf6f7c84ab0e31e8b6c",
+          "size": 541450
+        },
+        "decoder.bin": {
+          "sha256": "991d371f4e18959edd4399db291d9c850949f55e7a32f105f4a7a092f7a04125",
+          "size": 135800934
+        },
+        "tokenizer.json": {
+          "sha256": "286dd42a7b27e15332195df556c2df6d383bb4c4869774b055e1666a72e6bc64",
+          "size": 2189980
+        }
+      }
+    },
+    "arankays/canary-1b-v2-fp16-ov": {
+      "label": "Canary 1B v2 (fp16, CPU/GPU)",
+      "device": "CPU/GPU",
+      "base": "nvidia/canary-1b-v2@d455706339a6b32e1aa40f82c713a482a0c938e2",
+      "revision": "df2213f6d2eb5357490f3160d01615dbe8dc8b1e",
+      "recorded": "2026-11-06",
+      "files": {
+        "encoder.xml": {
+          "sha256": "6588e521ad915b394d3e1da7c8a24ee9de754884ecba9d434d72ceedab34a081",
+          "size": 3061740
+        },
+        "encoder.bin": {
+          "sha256": "536105acca17a9b309bbb1d90490fd81ec7873d4c0e9022b0f9c1d4a17556065",
+          "size": 1655426484
+        },
+        "decoder.xml": {
+          "sha256": "8ee14415f3940d7d1dea29e232255f065811e7bcc005beb9505f3b0bee8e1cfd",
+          "size": 455345
+        },
+        "decoder.bin": {
+          "sha256": "11411bbc3eccc1f2771f0968dc2b8fb5a3f7358bd01a5e682bb1566e62448288",
+          "size": 270852198
+        },
+        "tokenizer.json": {
+          "sha256": "286dd42a7b27e15332195df556c2df6d383bb4c4869774b055e1666a72e6bc64",
+          "size": 2189980
+        }
+      }
+    }
+  }
+}

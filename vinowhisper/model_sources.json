@@ -101,6 +101,40 @@
           "size": 835550
         }
       }
+    },
+    "nvidia/canary-1b-v2": {
+      "revision": "d455706339a6b32e1aa40f82c713a482a0c938e2",
+      "recorded": "2026-11-06",
+      "files": {
+        "chat_template.jinja": {
+          "sha256": "5c06139c492bc95a9cf6ebe7e37aa4611af525485aeba32310dca560f8f1a78b",
+          "size": 534
+        },
+        "config.json": {
+          "sha256": "e6818410f7dd0a460a4f09324d5fb4ec76b64410416e1ce172e06658335b2aa2",
+          "size": 1591
+        },
+        "generation_config.json": {
+          "sha256": "e7c62fe7fbc09a036f7a2be62f02491c71720a5557c7d761f18262ed54191cb4",
+          "size": 252
+        },
+        "model.safetensors": {
+          "sha256": "4f6d381f6a939b95e9f8516212148b701e9b3805d26462c4c3e9e34f3d89b6f8",
+          "size": 3916173816
+        },
+        "processor_config.json": {
+          "sha256": "07936c62f5d52898d05fc0c78b632121413cebc35e194432c7230196f3638e4a",
+          "size": 362
+        },
+        "tokenizer.json": {
+          "sha256": "286dd42a7b27e15332195df556c2df6d383bb4c4869774b055e1666a72e6bc64",
+          "size": 2189980
+        },
+        "tokenizer_config.json": {
+          "sha256": "82126b51f23a52cfe5a9be05cf15d9b30e454693a72d1ed6f0a43f9292975843",
+          "size": 328
+        }
+      }
     }
   }
 }
