@@ -209,6 +209,15 @@ main() {
         exit 0
     fi
 
+    # A release or PyPI install is a uv tool, which owns the same commands in
+    # ~/.local/bin; left in place, it's what keeps being found and updated.
+    # The setup wizard links the checkout's commands in its place.
+    if uv tool list 2>/dev/null | grep -q '^vinowhisper '; then
+        say "Removing the release/PyPI install (uv tool vinowhisper)"
+        run uv tool uninstall vinowhisper
+    fi
+    run rm -f "${XDG_BIN_HOME:-$HOME/.local/bin}/vinowhisper-upgrade"
+
     say "Handing over to vinowhisper-setup"
     run uv run --project "$INSTALL_DIR" vinowhisper-setup "${SETUP_ARGS[@]}"
 }
