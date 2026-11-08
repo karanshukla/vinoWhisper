@@ -10,12 +10,25 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-08
+
+1.4.0 is skipped: that version was published and withdrawn on 2026-11-05 (it became 1.3.1) and PyPI won't take it again.
+
 ### 🚀 Features
 
 - **A second speech model: NVIDIA Canary 1B v2** (#143). Pick it under Settings → Speech → Speech model, or with `vinowhisper-server --model canary-1b-v2`. It transcribes 25 European languages and translates them into English, with Detect automatically for translation. Whisper stays the default. Download it from the same page (0.97 GB on an NPU), with `vinowhisper-setup --model canary-1b-v2`, or with `vinowhisper-canary model fetch`. Details and measurements in `docs/models.md`.
 - Captions drop a decode that is a repetition loop instead of committing it (both models).
 - Settings opened before an upgrade can still open the sessions window.
 - **Saved sessions in the app menu.** A switch on the settings window's Sessions page adds *vinoWhisper Sessions* to the app list, so saved sessions open without going through Settings. Off until turned on.
+
+### 🎨 Changed
+
+- The settings and sessions windows have vino-ui 0.4's quieter look: primary buttons are ink on light and near-white on dark, and green is kept for what is selected or on.
+- The About page lists vinoPilot, the app that installs and updates the others, with the rest of the family.
+
+### 🐛 Bug Fixes
+
+- Installing from a checkout removes a release or PyPI install (the `vinowhisper` uv tool and `vinowhisper-upgrade`), which otherwise kept being found and updated instead of the checkout.
 
 ### ♻️ Refactor
 
