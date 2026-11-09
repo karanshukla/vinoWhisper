@@ -764,6 +764,7 @@ impl SessionsWindow {
                 }
                 facts.extend(entry.length());
                 facts.extend(entry.source.clone());
+                facts.extend(entry.playing.clone());
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1006,6 +1007,7 @@ impl SessionsWindow {
                         }
                         facts.extend(entry.length());
                         facts.extend(entry.source.clone());
+                        facts.extend(entry.playing.clone());
                         ui.label(
                             RichText::new(facts.join(" · "))
                                 .size(12.5)
@@ -1511,6 +1513,7 @@ mod tests {
                "sessions": [
                  {"path": "/t/b.vwsession", "name": "b.vwsession", "started": "2026-10-27T14:05:12-04:00",
                   "duration_s": 2530, "source": "system audio", "summary": true, "title": "Local captions talk",
+                  "playing": "How NPUs work (Firefox)",
                   "verified": true},
                  {"path": "/t/a.vwsession", "name": "a.vwsession", "started": "2026-10-26T09:00:00-04:00",
                   "duration_s": 40, "source": "microphone", "summary": false, "verified": true}]}"#,
@@ -1542,7 +1545,7 @@ mod tests {
         harness.get_by_role_and_label(Role::Button, "Bundle and summarise 3 transcripts");
         harness.get_by_role_and_label(Role::Heading, "Sessions (2)");
         harness.get_by_role_and_label(Role::Heading, "Local captions talk");
-        harness.get_by_label("2026-10-27 14:05 · 42 min · system audio");
+        harness.get_by_label("2026-10-27 14:05 · 42 min · system audio · How NPUs work (Firefox)");
         harness.get_by_role_and_label(Role::Heading, "2026-10-26 09:00");
         harness.get_by_label("40 s · microphone");
         harness.get_by_label("Waiting for a summary");

@@ -8,7 +8,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bundle
+from . import bundle, playing
 
 FORMATS = ("md", "txt", "odt")
 PARTS = ("both", "summary", "transcript")
@@ -135,6 +135,7 @@ def _facts(read: bundle.Bundle, with_summary: bool) -> list[tuple[str, str, str]
         ("date", "Date", started),
         ("duration", "Length", _duration(read.session.get("duration_s"))),
         ("source", "Source", read.session.get("source")),
+        ("playing", "Playing", playing.label(playing.valid(read.session.get("playing")))),
         ("language", "Language", read.session.get("language")),
         ("model", "Transcribed by", files.get(bundle.TRANSCRIPT, {}).get("model")),
     ]

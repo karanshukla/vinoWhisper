@@ -12,7 +12,7 @@ from typing import IO
 
 import numpy as np
 
-from . import bundle, config, events, session_export
+from . import bundle, config, events, playing, session_export
 from .paragraphs import ParagraphBreaker
 
 AUDIO_NAME = "audio.wav"
@@ -79,8 +79,10 @@ class TranscriptWriter:
         source: str,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = datetime.now,
+        tracker: playing.Tracker | None = None,
     ) -> None:
         self.path: Path | None = None
+        self._tracker = tracker
         self._target = target
         self._source = _SOURCE_LABELS.get(source, source)
         self._clock = clock
@@ -139,6 +141,7 @@ class TranscriptWriter:
                 language=language,
                 task=task,
                 device=None if self._device == "?" else self._device,
+                playing=self._tracker.entries() if self._tracker else None,
                 model_id=config.model_id(
                     config.is_multilingual(language or "en", task or config.DEFAULT_TASK)
                 ),
@@ -148,6 +151,9 @@ class TranscriptWriter:
         if not words:
             return
         file = self._file or self._open()
+        if self._tracker is not None:
+            # Only while words arrive, so what is noted is what was being captioned.
+            self._tracker.poke()
         for word in words:
             if self._breaker.word(word):
                 file.write("\n\n" + self._stamp() + word)
@@ -218,6 +224,7 @@ def _describe(path: Path, state: dict) -> dict:
         },
         "summary": read.summary is not None,
         "title": read.summary_title,
+        "playing": playing.label(playing.valid(read.session.get("playing"))) or None,
         "summary_made_by": files.get(bundle.SUMMARY, {}).get("made_by"),
         "declined": path.name in state["declined"],
         "failed": state["failures"].get(path.name, 0) >= summary.MAX_FAILURES,

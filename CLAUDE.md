@@ -444,6 +444,19 @@ file". The choices that answer the issue's open questions:
 - Found on the way, not fixed: `TranscriptWriter._bundle` attests a live Canary session
   as Whisper (it calls `config.model_id`, and `Ready` carries no model).
 
+## What was playing (#156) and pausing media (#163), added 2026-11-09
+
+- A saved system-audio session's attestation gains `session.playing` (app, title, artist
+  per entry; never the URL, art or track id), from `vinowhisper/playing.py`: MPRIS through
+  `busctl` plus running PipeWire streams. Additive, still `vinowhisper-session/1`. The
+  summary's `_Playing: …_` line is written by code and never shown to the model.
+- `pause_media` in `gui.json` (Speech page, off by default): the tray pauses MPRIS players
+  that are `Playing` at the dictation key's press and plays only those still `Paused`
+  afterwards (`tray/src/media.rs`, one worker thread).
+- Both ran against fake MPRIS players on a real session bus in a container. **Neither has
+  run on the laptop.** Write-ups: `docs/sessions.md` "Attestation", `docs/tray.md`
+  "Pausing media while you dictate".
+
 ## Architecture
 
 ```
@@ -473,6 +486,7 @@ vinowhisper/
   llm.py          the local cleanup model: pins, download, LLMPipeline in the server
   ui.py           RichRenderer, the pinned status bar
   paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
+  playing.py      what was sending the audio: MPRIS (busctl) and PipeWire streams, for the attestation
   session.py      --record writer, --transcript writer (TranscriptWriter), vinowhisper-session
   transcribe.py   vinowhisper-transcribe: a file decoded, cut at pauses, into a .vwsession
   bundle.py       the .vwsession zip: read, atomic write, attestation, verify
@@ -488,6 +502,7 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
   src/clipboard.rs ext- (or wlr-) data-control: set, sync, clear after the paste reads
   src/paste.rs    Shift+Insert: uinput.rs first, RemoteDesktop portal fallback
+  src/media.rs    MPRIS pause while dictating, resume after
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports),
