@@ -157,7 +157,8 @@ class Wizard:
             for line in distro.remediation(distro.MEDIA_DECODER, self.distro).lines():
                 self.say(line)
             return Outcome(None, "install ffmpeg by hand to transcribe files")
-        if self.run(command.split(), "install ffmpeg?"):
+        # Optional, so --yes does not sudo for it.
+        if not self.assume_yes and self.run(command.split(), "install ffmpeg?"):
             if distro.install_needs_reboot(self.distro):
                 return Outcome(None, "ffmpeg added to the next boot; reboot to transcribe files")
             return Outcome(True, "ffmpeg installed")

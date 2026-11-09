@@ -527,17 +527,34 @@ pub fn open_dialog() -> Chosen {
             .accept_label("Import")
             .modal(true)
             .multiple(false)
-            .filter(
-                FileFilter::new("Audio and video")
-                    .mimetype("audio/*")
-                    .mimetype("video/*"),
-            )
+            .filter(media_filter())
             .filter(FileFilter::new("All files").glob("*"))
             .send()
             .await?
             .response()
     });
     chosen(asked)
+}
+
+// What people keep recordings in. Globs, not "audio/*": a portal looks MIME types up by
+// name, and a wildcard is not one.
+const MEDIA_EXTENSIONS: [&str; 20] = [
+    "mp3", "m4a", "m4b", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "amr", "mp4",
+    "m4v", "mkv", "webm", "mov", "avi", "mpg", "wmv",
+];
+
+fn media_globs() -> Vec<String> {
+    MEDIA_EXTENSIONS
+        .iter()
+        .flat_map(|ext| [format!("*.{ext}"), format!("*.{}", ext.to_uppercase())])
+        .collect()
+}
+
+fn media_filter() -> ashpd::desktop::file_chooser::FileFilter {
+    media_globs().iter().fold(
+        ashpd::desktop::file_chooser::FileFilter::new("Audio and video"),
+        |filter, glob| filter.glob(glob),
+    )
 }
 
 // What an import reports while `vinowhisper-transcribe --json` runs.
@@ -547,6 +564,8 @@ pub enum ImportEvent {
     Chosen(String),
     // The child's pid, which Cancel signals.
     Started(u32),
+    // Its output has ended: the pid is about to be reaped and must not be signalled.
+    Ending,
     Progress {
         position_s: f64,
         duration_s: Option<f64>,
@@ -574,17 +593,26 @@ pub fn parse_import_line(line: &str) -> Option<ImportEvent> {
 
 pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<PathBuf, String> {
     use std::io::BufRead;
-    let mut child = Command::new(sibling("vinowhisper-transcribe"))
+    use std::os::unix::process::CommandExt;
+    let mut command = Command::new(sibling("vinowhisper-transcribe"));
+    command
         // After "--": a file name may start with a dash.
         .args(["--json", "--"])
         .arg(file)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| {
-            format!("could not run vinowhisper-transcribe ({err}); vinowhisper-setup links it")
-        })?;
+        .stderr(Stdio::null());
+    // SAFETY: prctl only, which is async-signal-safe. An import must not outlive the window:
+    // nothing would be left to cancel it. The signal follows this thread, which waits on it.
+    unsafe {
+        command.pre_exec(|| {
+            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))
+                .map_err(std::io::Error::from)
+        });
+    }
+    let mut child = command.spawn().map_err(|err| {
+        format!("could not run vinowhisper-transcribe ({err}); vinowhisper-setup links it")
+    })?;
     on_event(ImportEvent::Started(child.id()));
     let mut outcome = None;
     if let Some(stdout) = child.stdout.take() {
@@ -600,6 +628,7 @@ pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<Path
             }
         }
     }
+    on_event(ImportEvent::Ending);
     let status = child.wait().map_err(|err| err.to_string())?;
     outcome.unwrap_or_else(|| Err(format!("vinowhisper-transcribe stopped ({status})")))
 }
@@ -891,6 +920,15 @@ mod tests {
                 "Waiting for a summary"
             ]
         );
+    }
+
+    #[test]
+    fn the_file_dialog_filters_by_extension_in_either_case_not_by_wildcard_mime() {
+        let globs = media_globs();
+        for wanted in ["*.mp3", "*.MP3", "*.mp4", "*.mkv", "*.wav", "*.M4A"] {
+            assert!(globs.iter().any(|glob| glob == wanted), "{wanted}");
+        }
+        assert!(globs.iter().all(|glob| glob.starts_with("*.")));
     }
 
     #[test]

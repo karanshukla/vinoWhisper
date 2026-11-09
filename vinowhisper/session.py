@@ -62,6 +62,16 @@ def _open_private(path: Path, mode: str) -> IO:
 _SOURCE_LABELS = {"output": "system audio", "mic": "microphone"}
 
 
+# The transcript's text format, for every writer: bundle.py and vinoSearch parse both lines.
+def transcript_header(started: datetime, source: str, device: str) -> str:
+    return f"vinoWhisper transcript, {started:%Y-%m-%d %H:%M}, {source}, {device}\n\n"
+
+
+def stamp(seconds: float) -> str:
+    whole = int(seconds)
+    return f"[{whole // 60:02d}:{whole % 60:02d}] "
+
+
 class TranscriptWriter:
     def __init__(
         self,
@@ -149,8 +159,7 @@ class TranscriptWriter:
         file.flush()
 
     def _stamp(self) -> str:
-        seconds = int(self._clock() - self._started_at)
-        return f"[{seconds // 60:02d}:{seconds % 60:02d}] "
+        return stamp(self._clock() - self._started_at)
 
     def _open(self) -> IO:
         target = self._target
@@ -166,8 +175,7 @@ class TranscriptWriter:
         fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.fstat(self._file.fileno()).st_size:
             self._file.write("\n")
-        stamp = f"{self._started:%Y-%m-%d %H:%M}"
-        self._file.write(f"vinoWhisper transcript, {stamp}, {self._source}, {self._device}\n\n")
+        self._file.write(transcript_header(self._started, self._source, self._device))
         return self._file
 
 

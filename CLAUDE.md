@@ -426,9 +426,15 @@ file". The choices that answer the issue's open questions:
   They do not restart it: the server holds one model, chosen in `language.json`.
 - ffmpeg first, `gst-launch-1.0` second, stdlib `wave` for 16 kHz WAV. `distro.MEDIA_DECODER`
   has a package per family; only Fedora's (`ffmpeg-free`) is checked.
-- **Never run on the NPU, or with real speech, or on a desktop.** Built against a stub
-  server and egui_kittest. The GStreamer pipeline has never run at all. First thing to
-  do on the laptop: a real recording with a known text, for speed and for where cuts land.
+- **Run on a CPU with real speech (2026-11-09), never on the NPU or a desktop.** 8.5 min
+  of LibriSpeech in 25.7 s (20x) on a 4-core cloud Xeon, 6.5-7.4% raw WER, mostly spelling;
+  table in `docs/sessions.md`. Both decoders ran. The window has only been rendered
+  headlessly (egui_kittest with wgpu on lavapipe), which is how a header overlap at 340 px
+  was found; below 560 px the button is a plus.
+- A piece is retried twice (the server may restart mid-import), the file is hashed before
+  decoding, the import child dies with the window, and `--yes` setup never installs ffmpeg.
+- The file dialog filters by extension globs: a portal looks MIME types up by name, so
+  `audio/*` may match nothing. Not checked on Plasma.
 - Found on the way, not fixed: `TranscriptWriter._bundle` attests a live Canary session
   as Whisper (it calls `config.model_id`, and `Ready` carries no model).
 

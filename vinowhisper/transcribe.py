@@ -16,7 +16,7 @@ from typing import IO, Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, bundle, config, distro, summary
+from . import __version__, audio, bundle, config, distro, session, summary
 from .client import TranscriptionClient
 from .dictate import clean
 from .paragraphs import ParagraphBreaker
@@ -26,6 +26,9 @@ _FRAME_BYTES = FRAME_SAMPLES * audio.BYTES_PER_SAMPLE
 _PAUSE_FRAMES = max(1, round(config.SEGMENT_PAUSE_S * 10))
 _PAD_FRAMES = max(1, round(config.TRIM_PAD_S * 10))
 _EMPTY = np.zeros(0, dtype=np.float32)
+
+PIECE_ATTEMPTS = 3
+PIECE_RETRY_PAUSE_S = 2.0
 
 FFMPEG = "ffmpeg"
 GSTREAMER = "gst-launch-1.0"
@@ -158,7 +161,9 @@ def _piped_frames(path: Path, argv: list[str]) -> Iterator[np.ndarray]:
         if status != 0:
             errors.seek(0)
             said = errors.read().decode("utf-8", "replace").strip().splitlines()
-            reason = said[-1] if said else f"{argv[0]} exited with status {status}"
+            # gst-launch's first ERROR line has the cause; ffmpeg's last line does.
+            named = [line.rsplit(": ", 1)[-1] for line in said if line.startswith("ERROR: from")]
+            reason = (named or said[-1:] or [f"{argv[0]} exited with status {status}"])[0]
             raise TranscribeError(f"could not decode {path.name}: {reason}")
 
 
@@ -226,7 +231,7 @@ class Segmenter:
 
 class Transcript:
     def __init__(self, started: datetime, source: str, device: str) -> None:
-        self._parts = [f"vinoWhisper transcript, {started:%Y-%m-%d %H:%M}, {source}, {device}\n\n"]
+        self._parts = [session.transcript_header(started, source, device)]
         self._breaker = ParagraphBreaker()
         self._quiet_from_s = 0.0
         self.words = 0
@@ -241,20 +246,15 @@ class Transcript:
             # No word times: a break inside a piece is stamped by its place among the words.
             at_s = piece.start_s + span * index / len(words)
             if self._breaker.word(word):
-                self._parts.append("\n\n" + _stamp(at_s) + word)
+                self._parts.append("\n\n" + session.stamp(at_s) + word)
             elif self.words == 0:
-                self._parts.append(_stamp(at_s) + word)
+                self._parts.append(session.stamp(at_s) + word)
             else:
                 self._parts.append(" " + word)
             self.words += 1
 
     def text(self) -> str:
         return "".join(self._parts) + "\n"
-
-
-def _stamp(seconds: float) -> str:
-    whole = int(seconds)
-    return f"[{whole // 60:02d}:{whole % 60:02d}] "
 
 
 def file_sha256(path: Path) -> tuple[str, int]:
@@ -295,6 +295,35 @@ def check_server(health: dict, model: str | None, language: str | None, task: st
     )
 
 
+def _same_speech(health: dict, now: dict) -> bool:
+    return all(health.get(key) == now.get(key) for key in ("model", "language", "task"))
+
+
+# A long import should survive the server restarting or one request failing.
+def _decode_piece(client: _Client, samples: np.ndarray, health: dict) -> str:
+    for attempt in range(PIECE_ATTEMPTS):
+        try:
+            return client.transcribe(samples, background=True)[0]
+        except requests.RequestException as exc:
+            if attempt == PIECE_ATTEMPTS - 1:
+                if isinstance(exc, requests.HTTPError):
+                    raise TranscribeError(
+                        f"the server failed on a piece {PIECE_ATTEMPTS} times ({exc}); "
+                        "nothing was saved\n"
+                        "  journalctl --user -u vinowhisper-server has the reason"
+                    ) from exc
+                raise
+            time.sleep(PIECE_RETRY_PAUSE_S)
+            # Blocks while a restarted server loads its model.
+            if not _same_speech(health, client.wait_ready()):
+                raise TranscribeError(
+                    "the server's speech model or language changed during the import; "
+                    "nothing was saved\n"
+                    "  run it again to transcribe the whole file one way"
+                ) from exc
+    raise AssertionError("unreachable")
+
+
 def _free_bundle_path(directory: Path, started: datetime) -> Path:
     stem = started.strftime("%Y-%m-%d-%H%M%S")
     path = directory / f"{stem}{bundle.SUFFIX}"
@@ -332,6 +361,8 @@ def transcribe_file(
     )
 
     started = now().astimezone()
+    # Before the decode: the file may be moved or deleted while a long one runs.
+    digest, size = file_sha256(path)
     duration_s = probe_duration_s(path, which)
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)
@@ -344,7 +375,7 @@ def transcribe_file(
         for piece in pieces:
             if piece.samples.size:
                 samples, _ = audio.normalize(piece.samples, config.TARGET_RMS, config.MAX_GAIN)
-                text, _ = client.transcribe(samples, background=True)
+                text = _decode_piece(client, samples, health)
                 transcript.piece(piece, clean(text).split())
             decoded_s = piece.end_s
             emit(
@@ -368,7 +399,6 @@ def transcribe_file(
     if transcript.words == 0:
         raise TranscribeError(f"no speech found in {path.name}; nothing was saved")
 
-    digest, size = file_sha256(path)
     language_ran = str(health.get("language") or "") or None
     task_ran = str(health.get("task") or "") or None
     attestation = bundle.new_attestation(
@@ -443,16 +473,6 @@ def _json_lines(record: dict) -> None:
     print(json.dumps(record), flush=True)
 
 
-def _queue_summary() -> None:
-    if not summary.auto_enabled():
-        return
-    # Unreachable is fine: the server picks up unsummarised sessions when it next starts.
-    try:
-        TranscriptionClient().summarise()
-    except requests.RequestException:
-        return
-
-
 def _interrupt(signum: int, frame: object) -> None:
     raise KeyboardInterrupt
 
@@ -488,7 +508,8 @@ def main(argv: list[str] | None = None) -> int:
 
     emit: Callable[[dict], None] = _json_lines if args.json else _Human(sys.stderr)
     signal.signal(signal.SIGTERM, _interrupt)
-    path = args.file.expanduser().resolve()
+    # absolute(), not resolve(): a link is named as the user named it.
+    path = args.file.expanduser().absolute()
     directory = args.output.expanduser() if args.output is not None else None
     try:
         saved = transcribe_file(
@@ -513,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.json:
         print(saved)
     if directory is None:
-        _queue_summary()
+        summary.queue_auto()
     return 0
 
 

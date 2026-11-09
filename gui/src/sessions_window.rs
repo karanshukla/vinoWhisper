@@ -74,6 +74,8 @@ type Importer =
 
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
+// Under this the header and the import banner drop what does not fit.
+const NARROW_BELOW: f32 = 560.0;
 const LIST_MAX_WIDTH: f32 = 760.0;
 // Narrower than the list: this is for reading.
 const READING_MAX_WIDTH: f32 = 640.0;
@@ -140,6 +142,7 @@ impl SessionsWindow {
                     match event {
                         ImportEvent::Chosen(name) => import.name = name,
                         ImportEvent::Started(pid) => import.pid = Some(pid),
+                        ImportEvent::Ending => import.pid = None,
                         ImportEvent::Progress {
                             position_s,
                             duration_s,
@@ -206,7 +209,8 @@ impl SessionsWindow {
                 let cancel = ui
                     .add_enabled(!import.cancelled, Button::ghost("Cancel").small())
                     .clicked();
-                if let Some(total) = import.duration_s.filter(|total| *total > 0.0) {
+                let roomy = ui.ctx().content_rect().width() >= NARROW_BELOW;
+                if let Some(total) = import.duration_s.filter(|total| roomy && *total > 0.0) {
                     widgets::progress(ui, (import.position_s / total) as f32, 96.0);
                 }
                 cancel
@@ -224,7 +228,7 @@ impl SessionsWindow {
             Ok(path) => widgets::banner(
                 ui,
                 Tone::Info,
-                "Imported. It's at the top of the list, and is summarised like any session.",
+                "Imported. It's in the list, and is summarised like any session.",
                 |ui| {
                     let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
                     let read = ui.add(Button::secondary("Transcript").small());
@@ -1280,10 +1284,22 @@ impl SessionsWindow {
                             if ui.add(Button::ghost("Settings")).clicked() {
                                 forward::open_settings("sessions");
                             }
-                            let import = ui.add_enabled(
-                                state.import.is_none(),
-                                Button::secondary("Import audio or video…"),
-                            );
+                            // The label runs under the title in a narrow window: a plus there.
+                            let name = "Import audio or video…";
+                            let idle = state.import.is_none();
+                            let import = if ctx.content_rect().width() < NARROW_BELOW {
+                                ui.add_enabled_ui(idle, |ui| {
+                                    widgets::icon_button(
+                                        ui,
+                                        ButtonKind::Secondary,
+                                        Icon::Plus,
+                                        name,
+                                    )
+                                })
+                                .inner
+                            } else {
+                                ui.add_enabled(idle, Button::secondary(name))
+                            };
                             if import.clicked() {
                                 self.import(ctx);
                             }
@@ -2135,9 +2151,7 @@ mod tests {
             under.window.state.lock().unwrap().imported.is_some()
         });
         harness.run();
-        harness.get_by_label(
-            "Imported. It's at the top of the list, and is summarised like any session.",
-        );
+        harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
         // The list is read again by the window's next frame, not by this test.
         assert!(harness.state().window.state.lock().unwrap().relist);
         harness.get_by_role_and_label(Role::Button, "Transcript of the import");
@@ -2239,6 +2253,18 @@ mod tests {
                 .is_none()
         );
         assert!(harness.query_by_label_contains("Imported.").is_none());
+    }
+
+    #[test]
+    fn a_narrow_window_keeps_import_as_a_named_plus_button() {
+        let mut harness = harness(true);
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.set_size(egui::vec2(340.0, 560.0));
+        harness.run();
+        // Same name for a screen reader; the text label would run under the title.
+        harness.get_by_role_and_label(Role::Button, "Import audio or video…");
+        assert!(harness.query_by_label("Import audio or video…").is_some());
+        harness.get_by_role_and_label(Role::Heading, "Saved sessions");
     }
 
     fn opener_answering(

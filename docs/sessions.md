@@ -53,8 +53,9 @@ Open in… and Read aloud work on it as on any session.
   work), else `gst-launch-1.0` with `decodebin`. With neither, only 16-bit 16 kHz WAV
   is read, and anything else fails with the install command for the distro. The
   doctor's `file decoder` line and setup's optional step name the package. The audio
-  is streamed, never held whole in memory. **Only the ffmpeg path has been run**
-  (2026-11-09, mp4 and WAV); the GStreamer pipeline is untested.
+  is streamed, never held whole in memory. Both decoders have been run (2026-11-09:
+  WAV, mp3 and mp4, and a file name with quotes, a backslash and `!` through
+  GStreamer). GStreamer needs its libav plugin for AAC and most video files.
 - **No overlap and no stitching.** Captions decode overlapping windows because they
   have a latency target; a file has none. The file is cut into pieces of 15 to 29.5 s
   (`FILE_PIECE_MIN_S`, `MAX_WINDOW_S`), each cut at the quietest 0.3 s in that span,
@@ -76,13 +77,29 @@ Open in… and Read aloud work on it as on any session.
   because captions decode back to back and a strict priority would starve the file.
   Summaries wait for an import as they do for captions.
 - **Cancelling saves nothing.** Nothing is written until the whole file is decoded.
-  A file with no speech saves nothing either.
+  A file with no speech saves nothing either. Closing the sessions window cancels
+  an import it started.
+- **A piece is tried three times.** If a request fails, the command waits for the
+  server (a restarted one loads its model first) and sends the piece again. If the
+  server came back with another model or language, it stops instead of mixing two.
+- **The file is hashed before decoding**, so moving or deleting it during a long
+  import does not lose the transcript.
 - `-o DIR` saves somewhere else; such a session is not listed or summarised.
 
-**Not measured on the NPU.** Built and tested against a stub server (no NPU here),
-so the speed claim is arithmetic: a 12 s caption window decodes in 0.70 s, and
-longer pieces should do better per second of audio. The piece length, and whether
-cuts land well on real speech, want a real recording and a known text.
+**Measured on a CPU, not yet on the NPU** (2026-11-09, n=1: a 4-core cloud Xeon at
+2.3 GHz, OpenVINO 2026.4.1, the prebuilt `OpenVINO/whisper-small.en-fp16-ov`). 8.5
+minutes of LibriSpeech (73 utterances from one reader, 1,150 words, joined with
+0.4 s gaps):
+
+| File | Time | Speed | Pieces | WER |
+|---|---|---|---|---|
+| mp3, 64 kbit/s | 25.7 s | 20x real time | 23, of 10 to 28 s | 7.4% |
+| mp4 video, AAC | 25.4 s | 20x real time | 23, of 16 to 29 s | 6.5% |
+
+The WER is raw word matching against LibriSpeech's spelled-out text, so most of it
+is spelling ("mister" for "Mr", "Kaliko" for "Calico", quote marks). The real
+misses were about 15 words, including the last five of the file. No error sat at
+a cut. The NPU should be faster again; that run still needs the laptop.
 
 ## The bundle: `.vwsession`
 

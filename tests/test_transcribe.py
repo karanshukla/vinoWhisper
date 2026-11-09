@@ -292,6 +292,96 @@ def test_a_flag_the_server_is_not_running_is_refused_with_how_to_switch(tmp_path
     assert saved.exists()
 
 
+def test_a_file_moved_away_during_the_import_is_still_saved(tmp_path):
+    """The hash is taken before decoding: a long import must not be lost at the last step."""
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    expected = bundle.sha256(path.read_bytes())
+    client = FakeClient()
+    decode = client.transcribe
+
+    def moved_meanwhile(samples, background=False):
+        path.unlink(missing_ok=True)
+        return decode(samples, background)
+
+    client.transcribe = moved_meanwhile
+    saved, _ = run(path, client, tmp_path)
+    assert bundle.read(saved).session["file"]["sha256"] == expected
+
+
+class Flaky(FakeClient):
+    def __init__(self, failures, error=None, **kwargs):
+        super().__init__(**kwargs)
+        self.failures = failures
+        self.error = error or requests.ConnectionError("server went away")
+        self.readies = 0
+
+    def wait_ready(self):
+        self.readies += 1
+        return self.health
+
+    def transcribe(self, samples, background=False):
+        if self.failures:
+            self.failures -= 1
+            raise self.error
+        return super().transcribe(samples, background)
+
+
+@pytest.fixture
+def no_pause(monkeypatch):
+    monkeypatch.setattr(transcribe, "PIECE_RETRY_PAUSE_S", 0.0)
+
+
+def test_a_piece_is_tried_again_after_the_server_comes_back(tmp_path, no_pause):
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    client = Flaky(failures=2)
+    saved, _ = run(path, client, tmp_path)
+    assert bundle.read(saved).transcript.endswith("said this.\n")
+    # Once at the start, then once before each retry (it blocks while a model loads).
+    assert client.readies == 3
+
+
+def test_a_server_that_stays_down_ends_the_import(tmp_path, no_pause):
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    with pytest.raises(requests.ConnectionError):
+        run(path, Flaky(failures=transcribe.PIECE_ATTEMPTS), tmp_path)
+    assert not (tmp_path / "sessions").exists()
+
+
+def test_a_server_error_is_not_called_unreachable(tmp_path, no_pause):
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    client = Flaky(failures=transcribe.PIECE_ATTEMPTS, error=requests.HTTPError("500 Server Error"))
+    with pytest.raises(
+        transcribe.TranscribeError, match="server failed on a piece.*\n.*journalctl"
+    ):
+        run(path, client, tmp_path)
+
+
+def test_a_model_switched_mid_import_stops_it_instead_of_mixing_two(tmp_path, no_pause):
+    """Half a file in English and half through another model is worse than no file."""
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    client = Flaky(failures=1)
+    first = client.wait_ready
+
+    def switched():
+        first()
+        if client.readies > 1:
+            return {**client.health, "language": "fr"}
+        return client.health
+
+    client.wait_ready = switched
+    with pytest.raises(transcribe.TranscribeError, match="changed during the import"):
+        run(path, client, tmp_path)
+
+
+def test_a_link_keeps_the_name_the_user_gave_it(command, tmp_path, capsys):
+    real = write_wav(tmp_path / "0f3a9c.bin.wav", speech(1.0))
+    link = tmp_path / "lecture.wav"
+    link.symlink_to(real)
+    assert transcribe.main([str(link)]) == 0
+    saved = Path(capsys.readouterr().out.strip())
+    assert bundle.read(saved).session["source"] == "lecture.wav"
+
+
 # ── the command ──────────────────────────────────────────────────────────────
 
 
@@ -301,7 +391,7 @@ def command(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribe, "TranscriptionClient", lambda: client)
     monkeypatch.setattr(transcribe.shutil, "which", no_tools)
     kicked = []
-    monkeypatch.setattr(transcribe, "_queue_summary", lambda: kicked.append(True))
+    monkeypatch.setattr(transcribe.summary, "queue_auto", lambda: kicked.append(True))
     client.kicked = kicked
     return client
 

@@ -288,6 +288,18 @@ def auto_enabled(path: Path | None = None) -> bool:
     return not (isinstance(raw, dict) and raw.get("auto") is False)
 
 
+def queue_auto() -> None:
+    import requests
+
+    from .client import TranscriptionClient
+
+    if not auto_enabled():
+        return
+    # Unreachable is fine: the server picks up unsummarised sessions when it next starts.
+    with contextlib.suppress(requests.RequestException):
+        TranscriptionClient().summarise()
+
+
 def load_state(path: Path | None = None, clock: Callable[[], float] = time.time) -> dict:
     path = path or config.SESSIONS_STATE_FILE
     try:
