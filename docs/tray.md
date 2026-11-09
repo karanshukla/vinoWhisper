@@ -46,7 +46,7 @@ distro's `cargo` package), either of these builds it locally:
 
 ```bash
 vinowhisper-setup --gui        # sees the checkout and offers `cargo build`
-./scripts/install.sh --gui     # the bootstrap installer, same result
+./scripts/install.sh --gui     # the bootstrap installer; rebuilds both on every run
 ```
 
 Or by hand:
@@ -54,6 +54,8 @@ Or by hand:
 ```bash
 cargo build --release --locked --manifest-path tray/Cargo.toml
 install -Dm755 tray/target/release/vinowhisper-tray ~/.local/bin/vinowhisper-tray
+cargo build --release --locked --manifest-path gui/Cargo.toml
+install -Dm755 gui/target/release/vinowhisper-gui ~/.local/bin/vinowhisper-gui
 vinowhisper-tray --install --autostart   # launcher, icon, tray at login
 ```
 

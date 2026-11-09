@@ -41,7 +41,7 @@ vinoWhisper installer.
   --yes         pass --yes to vinowhisper-setup: no prompts, sudo included
   --dry-run     print what would happen, change nothing
   --no-setup    stop after `uv sync`, do not run the setup wizard
-  --gui         also build the overlay: captions, dictation, tray (needs cargo)
+  --gui         also build the overlay and the settings window (needs cargo)
 EOF
 }
 
@@ -193,6 +193,10 @@ main() {
             run cargo build --release --locked --manifest-path "$INSTALL_DIR/tray/Cargo.toml"
             run install -Dm755 "$INSTALL_DIR/tray/target/release/vinowhisper-tray" \
                 "$HOME/.local/bin/vinowhisper-tray"
+            # The settings and sessions window; the wizard keeps one already installed.
+            run cargo build --release --locked --manifest-path "$INSTALL_DIR/gui/Cargo.toml"
+            run install -Dm755 "$INSTALL_DIR/gui/target/release/vinowhisper-gui" \
+                "$HOME/.local/bin/vinowhisper-gui"
             # The shortcut portal needs the launcher entry
             run "$HOME/.local/bin/vinowhisper-tray" --install --autostart
         else
