@@ -352,3 +352,63 @@ def test_summaries_only_open_saved_sessions_in_the_transcripts_folder(
         response = client.post("/summaries", json={"paths": [raw]})
         assert response.status_code == 400, raw
     assert client.post("/summaries", json={}).status_code == 202
+
+
+def test_a_file_piece_waits_for_a_live_decode_and_then_runs(client, fake, monkeypatch):
+    """A file's pieces (vinowhisper-transcribe) let captions and dictation finish first."""
+    import threading
+
+    monkeypatch.setattr(config, "BACKGROUND_YIELD_S", 5.0)
+    monkeypatch.setattr(server, "_live_in_flight", 1)
+    threading.Timer(0.2, server._mark_live, args=(-1,)).start()
+    started = server.time.monotonic()
+    response = client.post(
+        "/transcribe", data=pcm(1), headers={"X-Vinowhisper-Priority": "background"}
+    )
+    assert response.get_data(as_text=True) == "ab"
+    assert 0.15 <= server.time.monotonic() - started < 2.0
+    assert server._live_in_flight == 0 and server._npu_in_flight == 0
+
+
+def test_characterization_a_file_piece_only_waits_so_long(client, fake, monkeypatch):
+    """characterization: the wait behind live work is bounded, not a strict priority.
+
+    Captions decode back to back, so there is a live request in flight nearly all
+    the time. Waiting for none would starve a file for as long as captions run;
+    after BACKGROUND_YIELD_S the piece queues at the model's lock like anything else.
+    """
+    monkeypatch.setattr(config, "BACKGROUND_YIELD_S", 0.2)
+    monkeypatch.setattr(server, "_live_in_flight", 1)
+    response = client.post(
+        "/transcribe", data=pcm(1), headers={"X-Vinowhisper-Priority": "background"}
+    )
+    assert response.get_data(as_text=True) == "ab"
+    # Still counted as someone else's live request, untouched.
+    assert server._live_in_flight == 1
+
+
+def test_captions_and_dictation_never_wait(client, fake, monkeypatch):
+    monkeypatch.setattr(config, "BACKGROUND_YIELD_S", 30.0)
+    monkeypatch.setattr(server, "_live_in_flight", 1)
+    started = server.time.monotonic()
+    assert client.post("/transcribe", data=pcm(1)).get_data(as_text=True) == "ab"
+    assert server.time.monotonic() - started < 2.0
+    assert server._live_in_flight == 1
+
+
+def test_health_says_when_captions_or_dictation_are_in_use(client, fake, monkeypatch):
+    """What vinowhisper-transcribe reads to cut shorter pieces; a file's own pieces don't count."""
+    monkeypatch.setattr(server, "cleaner", server.llm.CleanupModel())
+    monkeypatch.setattr(server.cleaner, "warm", lambda: None)
+    monkeypatch.setattr(server, "_last_live_at", float("-inf"))
+    assert client.get("/health").get_json()["live_active"] is False
+    client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Priority": "background"})
+    assert client.get("/health").get_json()["live_active"] is False
+    client.post("/transcribe", data=pcm(1)).get_data()
+    assert client.get("/health").get_json()["live_active"] is True
+
+    monkeypatch.setattr(server, "_last_live_at", server.time.monotonic() - config.LIVE_RECENT_S - 1)
+    assert client.get("/health").get_json()["live_active"] is False
+    # The dictation key going down counts before any audio has been sent.
+    client.post("/cleanup/warm")
+    assert client.get("/health").get_json()["live_active"] is True

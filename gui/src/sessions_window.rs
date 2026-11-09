@@ -11,8 +11,8 @@ use vino_ui::widgets::{self, Button, ButtonKind, ChipKind, Tone};
 
 use crate::forward;
 use crate::sessions::{
-    self, ExportRequest, Exported, Format, Listing, OpenIn, Opened, Part, Piece, Scope,
-    SummaryLine, Target,
+    self, ExportRequest, Exported, Format, ImportEvent, Listing, OpenIn, Opened, Part, Piece,
+    Scope, SummaryLine, Target,
 };
 use crate::speak::{self, Reading};
 use vinowhisper_settings::Settings;
@@ -39,6 +39,20 @@ struct SessionsState {
     exported: Option<Result<Exported, String>>,
     opening: bool,
     opened: Option<Result<Opened, String>>,
+    import: Option<Import>,
+    imported: Option<Result<PathBuf, String>>,
+    // An import added a session: the next frame lists again.
+    relist: bool,
+}
+
+// A file being transcribed into a session; `name` is empty until the dialog answers.
+#[derive(Clone, Default)]
+struct Import {
+    name: String,
+    position_s: f64,
+    duration_s: Option<f64>,
+    pid: Option<u32>,
+    cancelled: bool,
 }
 
 #[derive(Clone)]
@@ -54,8 +68,14 @@ type Exporter = Arc<dyn Fn(&ExportRequest) -> Result<Option<Exported>, String> +
 // Exports a kept copy and hands it to an app; Ok(None) when the app chooser was closed.
 type Opener = Arc<dyn Fn(&ExportRequest) -> Result<Option<Opened>, String> + Send + Sync>;
 
+// Asks which file and transcribes it, reporting as it goes; Ok(None) when the dialog was closed.
+type Importer =
+    Arc<dyn Fn(&mut dyn FnMut(ImportEvent)) -> Result<Option<PathBuf>, String> + Send + Sync>;
+
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
+// Under this the header and the import banner drop what does not fit.
+const NARROW_BELOW: f32 = 560.0;
 const LIST_MAX_WIDTH: f32 = 760.0;
 // Narrower than the list: this is for reading.
 const READING_MAX_WIDTH: f32 = 640.0;
@@ -78,6 +98,7 @@ struct SessionsWindow {
     open_in: OpenIn,
     settings_path: PathBuf,
     opener: Opener,
+    importer: Importer,
 }
 
 impl SessionsWindow {
@@ -98,6 +119,136 @@ impl SessionsWindow {
             open_in: OpenIn::default(),
             settings_path: Settings::path(),
             opener: Arc::new(sessions::open_in),
+            importer: Arc::new(sessions::import_with_dialog),
+        }
+    }
+
+    fn import(&self, ctx: &egui::Context) {
+        let state = Arc::clone(&self.state);
+        {
+            let mut state = state.lock().unwrap();
+            if state.import.is_some() {
+                return;
+            }
+            state.import = Some(Import::default());
+            state.imported = None;
+        }
+        let importer = Arc::clone(&self.importer);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = importer(&mut |event| {
+                let mut locked = state.lock().unwrap();
+                if let Some(import) = locked.import.as_mut() {
+                    match event {
+                        ImportEvent::Chosen(name) => import.name = name,
+                        ImportEvent::Started(pid) => import.pid = Some(pid),
+                        ImportEvent::Ending => import.pid = None,
+                        ImportEvent::Progress {
+                            position_s,
+                            duration_s,
+                        } => {
+                            import.position_s = position_s;
+                            import.duration_s = duration_s;
+                        }
+                        ImportEvent::Done(_) | ImportEvent::Failed(_) => {}
+                    }
+                }
+                drop(locked);
+                ctx.request_repaint();
+            });
+            let mut locked = state.lock().unwrap();
+            let cancelled = locked.import.take().is_some_and(|import| import.cancelled);
+            locked.imported = match result {
+                Ok(Some(path)) => Some(Ok(path)),
+                // Closing the dialog, or Cancel, is not a failure to report.
+                Ok(None) => None,
+                Err(_) if cancelled => None,
+                Err(why) => Some(Err(why)),
+            };
+            locked.relist = matches!(locked.imported, Some(Ok(_)));
+            drop(locked);
+            ctx.request_repaint();
+        });
+    }
+
+    fn cancel_import(&self) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(import) = state.import.as_mut() {
+            import.cancelled = true;
+            if let Some(pid) = import.pid {
+                sessions::cancel_import(pid);
+            }
+        }
+    }
+
+    fn import_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
+        if let Some(import) = &state.import {
+            ui.add_space(12.0);
+            if import.name.is_empty() {
+                a11y::live(&widgets::small(ui, "Waiting for the file dialog."));
+                return;
+            }
+            let text = if import.cancelled {
+                format!("Stopping {}.", import.name)
+            } else {
+                match import.duration_s {
+                    Some(total) => format!(
+                        "Transcribing {}: {} of {}.",
+                        import.name,
+                        sessions::stamp(import.position_s as u64),
+                        sessions::stamp(total as u64)
+                    ),
+                    None => format!(
+                        "Transcribing {}: {} so far.",
+                        import.name,
+                        sessions::stamp(import.position_s as u64)
+                    ),
+                }
+            };
+            let cancel = widgets::banner(ui, Tone::Info, &text, |ui| {
+                let cancel = ui
+                    .add_enabled(!import.cancelled, Button::ghost("Cancel").small())
+                    .clicked();
+                let roomy = ui.ctx().content_rect().width() >= NARROW_BELOW;
+                if let Some(total) = import.duration_s.filter(|total| roomy && *total > 0.0) {
+                    widgets::progress(ui, (import.position_s / total) as f32, 96.0);
+                }
+                cancel
+            });
+            if cancel {
+                self.cancel_import();
+            }
+            return;
+        }
+        let Some(result) = &state.imported else {
+            return;
+        };
+        ui.add_space(12.0);
+        let dismissed = match result {
+            Ok(path) => widgets::banner(
+                ui,
+                Tone::Info,
+                "Imported. It's in the list, and is summarised like any session.",
+                |ui| {
+                    let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
+                    let read = ui.add(Button::secondary("Transcript").small());
+                    if a11y::for_what(read, "of the import").clicked() {
+                        self.open(
+                            ui.ctx(),
+                            Target {
+                                path: path.clone(),
+                                part: Part::Transcript,
+                                at_s: None,
+                            },
+                        );
+                    }
+                    dismissed
+                },
+            ),
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Import didn't work: {why}")),
+        };
+        if dismissed {
+            self.state.lock().unwrap().imported = None;
         }
     }
 
@@ -500,6 +651,7 @@ impl SessionsWindow {
         };
         self.export_notice(ui, state);
         self.open_notice(ui, state);
+        self.import_notice(ui, state);
         if listing.as_ref().is_some_and(|l| !l.model_ready) {
             ui.add_space(12.0);
             widgets::banner(
@@ -1132,6 +1284,25 @@ impl SessionsWindow {
                             if ui.add(Button::ghost("Settings")).clicked() {
                                 forward::open_settings("sessions");
                             }
+                            // The label runs under the title in a narrow window: a plus there.
+                            let name = "Import audio or video…";
+                            let idle = state.import.is_none();
+                            let import = if ctx.content_rect().width() < NARROW_BELOW {
+                                ui.add_enabled_ui(idle, |ui| {
+                                    widgets::icon_button(
+                                        ui,
+                                        ButtonKind::Secondary,
+                                        Icon::Plus,
+                                        name,
+                                    )
+                                })
+                                .inner
+                            } else {
+                                ui.add_enabled(idle, Button::secondary(name))
+                            };
+                            if import.clicked() {
+                                self.import(ctx);
+                            }
                         });
                     });
                 }
@@ -1236,7 +1407,8 @@ impl eframe::App for SessionsWindow {
             self.save_transcripts = Settings::load().save_transcripts;
         }
         self.focused = focused;
-        if regained || !self.listed_once {
+        let relist = std::mem::take(&mut self.state.lock().unwrap().relist);
+        if regained || relist || !self.listed_once {
             self.listed_once = true;
             self.refresh(ctx);
         }
@@ -1938,6 +2110,161 @@ mod tests {
         harness.get_by_label("Stop reading").click();
         harness.run();
         assert!(harness.state().window.reading.is_none());
+    }
+
+    fn importer_answering(
+        harness: &mut Harness<'static, Under>,
+        events: Vec<ImportEvent>,
+        answer: Result<Option<PathBuf>, String>,
+    ) {
+        harness.state_mut().window.importer = Arc::new(move |on_event| {
+            for event in events.clone() {
+                on_event(event);
+            }
+            answer.clone()
+        });
+    }
+
+    fn importing(name: &str, position_s: f64, duration_s: Option<f64>) -> Import {
+        Import {
+            name: name.to_owned(),
+            position_s,
+            duration_s,
+            ..Import::default()
+        }
+    }
+
+    #[test]
+    fn import_audio_transcribes_the_file_picked_and_offers_its_transcript() {
+        let mut harness = harness(true);
+        importer_answering(
+            &mut harness,
+            vec![ImportEvent::Chosen("lecture.mp3".to_owned())],
+            Ok(Some("/t/c.vwsession".into())),
+        );
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
+            .click();
+        until(&mut harness, |under| {
+            under.window.state.lock().unwrap().imported.is_some()
+        });
+        harness.run();
+        harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
+        // The list is read again by the window's next frame, not by this test.
+        assert!(harness.state().window.state.lock().unwrap().relist);
+        harness.get_by_role_and_label(Role::Button, "Transcript of the import");
+        assert_eq!(
+            harness.state().window.state.lock().unwrap().imported,
+            Some(Ok(PathBuf::from("/t/c.vwsession")))
+        );
+    }
+
+    #[test]
+    fn an_import_under_way_says_how_far_it_is_and_cannot_be_started_twice() {
+        let mut harness = harness(true);
+        {
+            let mut state = harness.state_mut().window.state.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            state.import = Some(importing("lecture.mp3", 750.0, Some(2700.0)));
+        }
+        harness.run();
+        harness.get_by_label("Transcribing lecture.mp3: 12:30 of 45:00.");
+        let button = harness.get_by_role_and_label(Role::Button, "Import audio or video…");
+        assert!(button.accesskit_node().is_disabled());
+
+        // Without ffprobe the length is not known.
+        harness.state_mut().window.state.lock().unwrap().import =
+            Some(importing("lecture.mp3", 750.0, None));
+        harness.run();
+        harness.get_by_label("Transcribing lecture.mp3: 12:30 so far.");
+
+        // Before the dialog answers there is no file to name.
+        harness.state_mut().window.state.lock().unwrap().import = Some(Import::default());
+        harness.run();
+        harness.get_by_label("Waiting for the file dialog.");
+    }
+
+    #[test]
+    fn cancel_marks_the_import_and_its_ending_is_not_reported_as_a_failure() {
+        let mut harness = harness(true);
+        {
+            let mut state = harness.state_mut().window.state.lock().unwrap();
+            state.listing = Some(Ok(listing()));
+            // No pid: nothing real to signal.
+            state.import = Some(importing("lecture.mp3", 10.0, Some(60.0)));
+        }
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Cancel")
+            .click();
+        harness.run();
+        harness.get_by_label("Stopping lecture.mp3.");
+        assert!(
+            harness
+                .state()
+                .window
+                .state
+                .lock()
+                .unwrap()
+                .import
+                .as_ref()
+                .unwrap()
+                .cancelled
+        );
+    }
+
+    #[test]
+    fn a_failed_import_says_why_and_a_closed_dialog_says_nothing() {
+        let mut harness = harness(true);
+        importer_answering(
+            &mut harness,
+            vec![ImportEvent::Chosen("quiet.wav".to_owned())],
+            Err("no speech found in quiet.wav; nothing was saved".to_owned()),
+        );
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
+            .click();
+        until(&mut harness, |under| {
+            under.window.state.lock().unwrap().imported.is_some()
+        });
+        harness.run();
+        harness.get_by_label("Import didn't work: no speech found in quiet.wav; nothing was saved");
+        assert!(!harness.state().window.state.lock().unwrap().relist);
+        harness
+            .get_by_role_and_label(Role::Button, "Dismiss")
+            .click();
+        harness.run();
+
+        importer_answering(&mut harness, Vec::new(), Ok(None));
+        harness
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
+            .click();
+        until(&mut harness, |under| {
+            under.window.state.lock().unwrap().import.is_none()
+        });
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Import didn't work")
+                .is_none()
+        );
+        assert!(harness.query_by_label_contains("Imported.").is_none());
+    }
+
+    #[test]
+    fn a_narrow_window_keeps_import_as_a_named_plus_button() {
+        let mut harness = harness(true);
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.set_size(egui::vec2(340.0, 560.0));
+        harness.run();
+        // Same name for a screen reader; the text label would run under the title.
+        harness.get_by_role_and_label(Role::Button, "Import audio or video…");
+        assert!(harness.query_by_label("Import audio or video…").is_some());
+        harness.get_by_role_and_label(Role::Heading, "Saved sessions");
     }
 
     fn opener_answering(

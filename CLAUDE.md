@@ -409,6 +409,41 @@ server); Whisper stays the default by the user's choice. Full write-up and numbe
   instead of a Whisper export when it is selected.
 - Not yet: any long run on a live caption session, or dictation with it.
 
+## File transcription (#162), added 2026-11-09
+
+`vinowhisper-transcribe FILE` and **Import audio or video…** in the sessions window turn a
+recording into an ordinary `.vwsession`. Full write-up in `docs/sessions.md`, "From a
+file". The choices that answer the issue's open questions:
+
+- **No overlap, no stitcher.** Pieces of 15 to 29.5 s, cut at the quietest 0.3 s in
+  that span (`transcribe.Segmenter`), each decoded once. Only digital silence is skipped.
+- **The attestation gains `session.file`** (name, sha256, bytes) and `session.source`
+  is the file name; additive, so the format is still `vinowhisper-session/1`.
+- **Background priority is bounded.** Pieces carry `X-Vinowhisper-Priority: background`
+  and wait for an in-flight caption or dictation decode, 5 s at most, because captions
+  decode back to back.
+- **Pieces shrink to 6-12 s while captions or dictation are in use** (`/health`
+  `live_active`, 10 s of memory), so a caption cycle waits behind one window's decode at
+  most. On the CPU run it cost 36% more time and no accuracy (7.0% against 7.4% WER).
+- **`--model/--language/--task` check the running server and refuse on a mismatch.**
+  They do not restart it: the server holds one model, chosen in `language.json`.
+- ffmpeg first, `gst-launch-1.0` second, stdlib `wave` for 16 kHz WAV. `distro.MEDIA_DECODER`
+  has a package per family; only Fedora's (`ffmpeg-free`) is checked.
+- **Run on a CPU with real speech (2026-11-09), never on the NPU or a desktop.** 8.5 min
+  of LibriSpeech in 25.7 s (20x) on a 4-core cloud Xeon, 6.5-7.4% raw WER, mostly spelling;
+  table in `docs/sessions.md`. Both decoders ran. The window has only been rendered
+  headlessly (egui_kittest with wgpu on lavapipe), which is how a header overlap at 340 px
+  was found; below 560 px the button is a plus.
+- A piece is retried twice (the server may restart mid-import), the file is hashed before
+  decoding, the import child dies with the window, and `--yes` setup never installs ffmpeg.
+- The file dialog filters by extension globs: a portal looks MIME types up by name, so
+  `audio/*` may match nothing. Not checked on Plasma.
+- **Two tests in `tests/test_transcribe.py` run the real ffmpeg when it is installed**, and
+  skip when it is not. Kept on purpose (user's call, 2026-11-09) as the one exception to
+  "anything that would shell out is monkeypatched": they caught ffmpeg's downmix level.
+- Found on the way, not fixed: `TranscriptWriter._bundle` attests a live Canary session
+  as Whisper (it calls `config.model_id`, and `Ready` carries no model).
+
 ## Architecture
 
 ```
@@ -439,6 +474,7 @@ vinowhisper/
   ui.py           RichRenderer, the pinned status bar
   paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
   session.py      --record writer, --transcript writer (TranscriptWriter), vinowhisper-session
+  transcribe.py   vinowhisper-transcribe: a file decoded, cut at pauses, into a .vwsession
   bundle.py       the .vwsession zip: read, atomic write, attestation, verify
   summary.py      chunked summaries, the server's background Summariser, crash recovery
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)

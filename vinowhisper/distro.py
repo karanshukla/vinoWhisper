@@ -16,6 +16,8 @@ AUDIO_PULSE = "pulse-tools"
 NPU_DRIVER = "npu-driver"
 NPU_COMPILER = "npu-compiler"
 GPU_RUNTIME = "gpu-runtime"
+# Optional: vinowhisper-transcribe decodes files with it. Only Fedora's name is checked.
+MEDIA_DECODER = "media-decoder"
 
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
@@ -117,6 +119,7 @@ _FAMILIES: dict[str, Family] = {
         name="fedora",
         install="sudo dnf install -y",
         packages={
+            MEDIA_DECODER: ("ffmpeg-free",),
             AUDIO_PIPEWIRE: ("pipewire-utils",),
             AUDIO_PULSE: ("pulseaudio-utils",),
             # Fedora has no "level-zero"; both of these pull in oneapi-level-zero themselves.
@@ -135,6 +138,7 @@ _FAMILIES: dict[str, Family] = {
         name="debian",
         install="sudo apt install -y",
         packages={
+            MEDIA_DECODER: ("ffmpeg",),
             AUDIO_PIPEWIRE: ("pipewire-bin",),
             AUDIO_PULSE: ("pulseaudio-utils",),
             GPU_RUNTIME: ("intel-opencl-icd", "libze1", "libze-intel-gpu1"),
@@ -152,6 +156,7 @@ _FAMILIES: dict[str, Family] = {
         name="arch",
         install="sudo pacman -S --needed",
         packages={
+            MEDIA_DECODER: ("ffmpeg",),
             AUDIO_PIPEWIRE: ("pipewire",),
             AUDIO_PULSE: ("libpulse",),
             GPU_RUNTIME: ("intel-compute-runtime", "level-zero-loader"),
@@ -168,6 +173,7 @@ _FAMILIES: dict[str, Family] = {
         name="suse",
         install="sudo zypper install -y",
         packages={
+            MEDIA_DECODER: ("ffmpeg",),
             AUDIO_PIPEWIRE: ("pipewire-tools",),
             AUDIO_PULSE: ("pulseaudio-utils",),
             # Tumbleweed has no "intel-compute-runtime"; level-zero carries the loader.
@@ -191,6 +197,7 @@ _FAMILIES: dict[str, Family] = {
         name="alpine",
         install="sudo apk add",
         packages={
+            MEDIA_DECODER: ("ffmpeg",),
             AUDIO_PIPEWIRE: ("pipewire-tools",),
             AUDIO_PULSE: ("pulseaudio-utils",),
         },
@@ -203,6 +210,7 @@ _FAMILIES: dict[str, Family] = {
         name="gentoo",
         install="sudo emerge --ask=n",
         packages={
+            MEDIA_DECODER: ("media-video/ffmpeg",),
             AUDIO_PIPEWIRE: ("media-video/pipewire",),
             AUDIO_PULSE: ("media-sound/pulseaudio-daemon",),
             GPU_RUNTIME: ("dev-libs/intel-compute-runtime", "dev-libs/level-zero"),
@@ -215,6 +223,7 @@ _FAMILIES: dict[str, Family] = {
         name="void",
         install="sudo xbps-install -Sy",
         packages={
+            MEDIA_DECODER: ("ffmpeg",),
             AUDIO_PIPEWIRE: ("pipewire",),
             AUDIO_PULSE: ("pulseaudio-utils",),
             GPU_RUNTIME: ("intel-compute-runtime", "level-zero"),
@@ -232,6 +241,7 @@ _FAMILIES: dict[str, Family] = {
             ),
             NPU_DRIVER: ("hardware.cpu.intel.npu.enable = true; (NixOS 25.11 and later).",),
             GPU_RUNTIME: ("hardware.graphics.extraPackages = [ pkgs.intel-compute-runtime ];",),
+            MEDIA_DECODER: ("environment.systemPackages = [ pkgs.ffmpeg ];",),
         },
     ),
 }

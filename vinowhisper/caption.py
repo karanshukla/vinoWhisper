@@ -1,5 +1,4 @@
 import argparse
-import contextlib
 import json
 import os
 import signal
@@ -405,11 +404,7 @@ def main() -> int:
 
 
 def _queue_summary() -> None:
-    if not summary.auto_enabled():
-        return
-    # Unreachable is fine: the server picks up unsummarised sessions when it next starts.
-    with contextlib.suppress(requests.RequestException):
-        TranscriptionClient().summarise()
+    summary.queue_auto()
 
 
 if __name__ == "__main__":
