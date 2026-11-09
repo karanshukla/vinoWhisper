@@ -207,3 +207,15 @@ def test_universal_blue_images_are_fedora(fake_os_release):
     for distro_id in ("bazzite", "aurora", "bluefin"):
         path = fake_os_release(ID=distro_id, PRETTY_NAME=distro_id)
         assert distro.detect(path).family == "fedora", distro_id
+
+
+def test_the_file_decoder_has_a_package_in_every_family(tmp_path):
+    """Optional (vinowhisper-transcribe). Only Fedora's name has been checked on a machine."""
+    fedora = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")
+    assert distro.install_command(distro.MEDIA_DECODER, fedora) == "sudo dnf install -y ffmpeg-free"
+    for family in ("debian", "arch", "suse", "alpine", "gentoo", "void"):
+        info = distro.Distro(id=family, name=family, version="1", family=family)
+        assert "ffmpeg" in (distro.install_command(distro.MEDIA_DECODER, info) or "")
+    nixos = distro.Distro(id="nixos", name="NixOS", version="25.11", family="nixos")
+    assert distro.install_command(distro.MEDIA_DECODER, nixos) is None
+    assert "pkgs.ffmpeg" in "\n".join(distro.remediation(distro.MEDIA_DECODER, nixos).notes)

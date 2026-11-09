@@ -10,6 +10,10 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+### 🚀 Features
+
+- **Transcribe an audio or video file into a saved session** (#162). `vinowhisper-transcribe FILE`, or **Import audio…** in the sessions window, decodes the file with ffmpeg (or GStreamer) and runs it through the server faster than real time. The result is an ordinary session: summary, export, Open in… and Read aloud work on it. Captions and dictation keep priority while it runs. `vinowhisper-doctor` and `vinowhisper-setup` name the ffmpeg package for your distro. Details in `docs/sessions.md`.
+
 ## [1.5.0] - 2026-11-08
 
 1.4.0 is skipped: that version was published and withdrawn on 2026-11-05 (it became 1.3.1) and PyPI won't take it again.

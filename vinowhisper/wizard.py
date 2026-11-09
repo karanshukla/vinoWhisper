@@ -27,6 +27,7 @@ COMMANDS = (
     "cleanup",
     "session",
     "canary",
+    "transcribe",
 )
 
 # Keep in step with scripts/convert_model.sh.
@@ -142,6 +143,25 @@ class Wizard:
                 return Outcome(None, "capture tool added to the next boot; reboot, then re-run")
             return Outcome(True, "capture tool installed")
         return Outcome(None, "no capture tool yet — captions cannot run without one")
+
+    def check_decoder(self) -> Outcome:
+        from . import transcribe
+
+        for tool in (transcribe.FFMPEG, transcribe.GSTREAMER):
+            if shutil.which(tool):
+                return Outcome(True, f"{tool} found; vinowhisper-transcribe can read files")
+        self.say("  vinowhisper-transcribe turns a recording into a saved session.")
+        self.say("  It needs ffmpeg (or GStreamer) to read anything but 16 kHz WAV.")
+        command = distro.install_command(distro.MEDIA_DECODER, self.distro)
+        if command is None:
+            for line in distro.remediation(distro.MEDIA_DECODER, self.distro).lines():
+                self.say(line)
+            return Outcome(None, "install ffmpeg by hand to transcribe files")
+        if self.run(command.split(), "install ffmpeg?"):
+            if distro.install_needs_reboot(self.distro):
+                return Outcome(None, "ffmpeg added to the next boot; reboot to transcribe files")
+            return Outcome(True, "ffmpeg installed")
+        return Outcome(None, f"skipped; `{command}` adds it any time")
 
     def check_device(self) -> Outcome:
         try:
@@ -511,6 +531,7 @@ class Wizard:
 
         self.step("Python version", self.check_python)
         self.step("Audio capture", self.check_audio)
+        self.step("File transcription (optional)", self.check_decoder, optional=True)
         self.step("Inference device", self.check_device)
         self.step("Model export", self.check_model)
         self.step("Language", self.save_language)

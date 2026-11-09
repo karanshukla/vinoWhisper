@@ -259,12 +259,17 @@ pub fn paragraph_at(paragraphs: &[(Option<u64>, String)], at_s: u64) -> Option<u
         .next_back()
 }
 
-fn command() -> PathBuf {
+// Beside this binary when it is installed there, else from PATH.
+fn sibling(name: &str) -> PathBuf {
     std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-session")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
         .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from("vinowhisper-session"))
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn command() -> PathBuf {
+    sibling("vinowhisper-session")
 }
 
 fn run(args: &[&OsStr]) -> Result<String, String> {
@@ -474,7 +479,6 @@ pub fn file_uri_path(uri: &str) -> Option<PathBuf> {
 }
 
 pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
-    use ashpd::desktop::ResponseError;
     use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
     let name = suggested
         .file_name()
@@ -496,6 +500,11 @@ pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
             .await?
             .response()
     });
+    chosen(asked)
+}
+
+fn chosen(asked: Result<ashpd::desktop::file_chooser::SelectedFiles, ashpd::Error>) -> Chosen {
+    use ashpd::desktop::ResponseError;
     match asked {
         Ok(files) => match files
             .uris()
@@ -503,11 +512,126 @@ pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
             .and_then(|uri| file_uri_path(uri.as_str()))
         {
             Some(path) => Chosen::Path(path),
-            None => Chosen::NoPortal("the save dialog gave no local file".to_owned()),
+            None => Chosen::NoPortal("the file dialog gave no local file".to_owned()),
         },
         Err(ashpd::Error::Response(ResponseError::Cancelled)) => Chosen::Cancelled,
         Err(err) => Chosen::NoPortal(err.to_string()),
     }
+}
+
+pub fn open_dialog() -> Chosen {
+    use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
+    let asked = async_io::block_on(async {
+        SelectedFiles::open_file()
+            .title("Import audio")
+            .accept_label("Import")
+            .modal(true)
+            .multiple(false)
+            .filter(
+                FileFilter::new("Audio and video")
+                    .mimetype("audio/*")
+                    .mimetype("video/*"),
+            )
+            .filter(FileFilter::new("All files").glob("*"))
+            .send()
+            .await?
+            .response()
+    });
+    chosen(asked)
+}
+
+// What an import reports while `vinowhisper-transcribe --json` runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportEvent {
+    // The file picked in the dialog, by name.
+    Chosen(String),
+    // The child's pid, which Cancel signals.
+    Started(u32),
+    Progress {
+        position_s: f64,
+        duration_s: Option<f64>,
+    },
+    Done(PathBuf),
+    Failed(String),
+}
+
+pub fn parse_import_line(line: &str) -> Option<ImportEvent> {
+    let record: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    match record.get("event")?.as_str()? {
+        "Progress" => Some(ImportEvent::Progress {
+            position_s: record.get("position_s")?.as_f64()?,
+            duration_s: record.get("duration_s").and_then(|d| d.as_f64()),
+        }),
+        "Done" => Some(ImportEvent::Done(PathBuf::from(
+            record.get("path")?.as_str()?,
+        ))),
+        "Error" => Some(ImportEvent::Failed(
+            record.get("message")?.as_str()?.to_owned(),
+        )),
+        _ => None,
+    }
+}
+
+pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<PathBuf, String> {
+    use std::io::BufRead;
+    let mut child = Command::new(sibling("vinowhisper-transcribe"))
+        // After "--": a file name may start with a dash.
+        .args(["--json", "--"])
+        .arg(file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| {
+            format!("could not run vinowhisper-transcribe ({err}); vinowhisper-setup links it")
+        })?;
+    on_event(ImportEvent::Started(child.id()));
+    let mut outcome = None;
+    if let Some(stdout) = child.stdout.take() {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            match parse_import_line(&line) {
+                Some(ImportEvent::Done(path)) => outcome = Some(Ok(path)),
+                Some(ImportEvent::Failed(why)) => outcome = Some(Err(why)),
+                Some(event) => on_event(event),
+                None => {}
+            }
+        }
+    }
+    let status = child.wait().map_err(|err| err.to_string())?;
+    outcome.unwrap_or_else(|| Err(format!("vinowhisper-transcribe stopped ({status})")))
+}
+
+pub fn cancel_import(pid: u32) {
+    use rustix::process::{Pid, Signal, kill_process};
+    if let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) {
+        let _ = kill_process(pid, Signal::TERM);
+    }
+}
+
+// Asks which file (the open dialog) and transcribes it; Ok(None) when the user cancelled.
+pub fn import_with_dialog(
+    on_event: &mut dyn FnMut(ImportEvent),
+) -> Result<Option<PathBuf>, String> {
+    let file = match open_dialog() {
+        Chosen::Path(file) => file,
+        Chosen::Cancelled => return Ok(None),
+        Chosen::NoPortal(why) => {
+            eprintln!("[vinowhisper-gui] no file dialog: {why}");
+            return Err(
+                "there's no file dialog on this desktop; run `vinowhisper-transcribe FILE` in a terminal"
+                    .to_owned(),
+            );
+        }
+    };
+    let name = file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    on_event(ImportEvent::Chosen(name));
+    import(&file, on_event).map(Some)
 }
 
 pub fn format_for(open_in: OpenIn) -> Format {
@@ -767,6 +891,40 @@ mod tests {
                 "Waiting for a summary"
             ]
         );
+    }
+
+    #[test]
+    fn an_import_reads_what_vinowhisper_transcribe_prints() {
+        assert_eq!(
+            parse_import_line(
+                r#"{"event": "Progress", "position_s": 15.3, "duration_s": 75.0, "elapsed_s": 0.1, "words": 8}"#
+            ),
+            Some(ImportEvent::Progress {
+                position_s: 15.3,
+                duration_s: Some(75.0)
+            })
+        );
+        // No ffprobe: the length is not known, only how far it has got.
+        assert_eq!(
+            parse_import_line(r#"{"event": "Progress", "position_s": 15.3, "duration_s": null}"#),
+            Some(ImportEvent::Progress {
+                position_s: 15.3,
+                duration_s: None
+            })
+        );
+        assert_eq!(
+            parse_import_line(r#"{"event": "Done", "path": "/t/a.vwsession", "words": 32}"#),
+            Some(ImportEvent::Done("/t/a.vwsession".into()))
+        );
+        assert_eq!(
+            parse_import_line(r#"{"event": "Error", "message": "no speech found in a.mp3"}"#),
+            Some(ImportEvent::Failed("no speech found in a.mp3".to_owned()))
+        );
+        assert_eq!(
+            parse_import_line(r#"{"event": "Ready", "device": "NPU"}"#),
+            None
+        );
+        assert_eq!(parse_import_line("not json"), None);
     }
 
     #[test]

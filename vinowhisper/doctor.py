@@ -361,6 +361,23 @@ def _audio_tools() -> list[Result]:
     return results
 
 
+def _media_decoder() -> Result:
+    from . import transcribe
+
+    for tool in (transcribe.FFMPEG, transcribe.GSTREAMER):
+        if shutil.which(tool):
+            return Result(
+                OK, "file decoder", f"{tool} (vinowhisper-transcribe reads files with it)"
+            )
+    return Result(
+        WARN,
+        "file decoder",
+        "neither ffmpeg nor gst-launch-1.0 is installed, so vinowhisper-transcribe reads "
+        "only 16 kHz WAV files; captions and dictation do not need it\n"
+        + "\n".join(distro.remediation(distro.MEDIA_DECODER).lines()),
+    )
+
+
 def _sink() -> list[Result]:
     try:
         sink = capture.default_sink()
@@ -488,6 +505,7 @@ def collect(probe: bool = True) -> list[Result]:
     results += _speech_model()
     results += _server()
     results += _audio_tools()
+    results.append(_media_decoder())
     results += _sink()
     if probe:
         results += _levels()

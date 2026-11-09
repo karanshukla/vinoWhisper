@@ -97,6 +97,27 @@ _vinowhisper() {
                 mapfile -t COMPREPLY < <(compgen -f -X '!*.vwsession' -- "$cur")
             fi
             ;;
+        vinowhisper-transcribe)
+            case $prev in
+                --model)
+                    mapfile -t COMPREPLY < <(compgen -W "whisper-small canary-1b-v2" -- "$cur")
+                    ;;
+                --task)
+                    mapfile -t COMPREPLY < <(compgen -W "transcribe translate" -- "$cur")
+                    ;;
+                -o | --output)
+                    _vinowhisper_dirs "$cur"
+                    ;;
+                *)
+                    if [[ $cur == -* ]]; then
+                        mapfile -t COMPREPLY < <(compgen -W "
+                            --model --language --task --output --json --version --help" -- "$cur")
+                    else
+                        mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+                    fi
+                    ;;
+            esac
+            ;;
         vinowhisper-setup|vinowhisper-server)
             if [[ $prev == --device ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "auto NPU GPU CPU" -- "$cur")
@@ -128,3 +149,4 @@ complete -F _vinowhisper vinowhisper-setup
 complete -F _vinowhisper vinowhisper-cleanup
 complete -F _vinowhisper vinowhisper-session
 complete -F _vinowhisper vinowhisper-canary
+complete -F _vinowhisper vinowhisper-transcribe

@@ -12,6 +12,7 @@ from werkzeug.serving import make_server
 
 from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
 from .canary import CanaryTranscriber
+from .client import BACKGROUND, PRIORITY_HEADER
 from .transcriber import BaseTranscriber, WhisperTranscriber
 
 app = Flask(__name__)
@@ -28,6 +29,8 @@ _in_flight = 0
 # Captions and dictation only: what a background summary gives way to.
 _last_npu_use_at = 0.0
 _npu_in_flight = 0
+# Captions and dictation decoding right now: what a file's piece waits behind.
+_live_in_flight = 0
 
 
 def _mark_activity(delta: int = 0) -> None:
@@ -72,7 +75,8 @@ def transcribe() -> Response:
             "limit the streamer callback supports"
         )
 
-    stream = _track_in_flight(transcriber.transcribe_stream(samples), npu=True)
+    background = request.headers.get(PRIORITY_HEADER) == BACKGROUND
+    stream = _track_in_flight(transcriber.transcribe_stream(samples), npu=True, live=not background)
     return Response(stream_with_context(stream), mimetype="text/plain; charset=utf-8")
 
 
@@ -168,16 +172,38 @@ def _error(message: str, status: int = 400) -> Response:
     return response
 
 
-def _track_in_flight(stream: Iterator[str], npu: bool = False) -> Iterator[str]:
+def _mark_live(delta: int) -> None:
+    global _live_in_flight
+    with _activity_lock:
+        _live_in_flight += delta
+
+
+def _wait_for_live(timeout_s: float) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        with _activity_lock:
+            if _live_in_flight <= 0:
+                return
+        time.sleep(0.05)
+
+
+def _track_in_flight(stream: Iterator[str], npu: bool = False, live: bool = True) -> Iterator[str]:
     _mark_activity(+1)
     if npu:
         _mark_npu_use(+1)
+    if npu and live:
+        _mark_live(+1)
     try:
+        if npu and not live:
+            # Bounded: captions decode back to back, and a file must still get its turn.
+            _wait_for_live(config.BACKGROUND_YIELD_S)
         yield from stream
     finally:
         _mark_activity(-1)
         if npu:
             _mark_npu_use(-1)
+        if npu and live:
+            _mark_live(-1)
 
 
 def _idle_watchdog(timeout_s: float) -> None:

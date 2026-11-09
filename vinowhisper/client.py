@@ -16,6 +16,9 @@ from . import config
 
 # The host part is never resolved: every http:// request in the session goes to the socket.
 BASE_URL = "http://vinowhisper"
+# A file being transcribed: the server lets captions and dictation go first.
+PRIORITY_HEADER = "X-Vinowhisper-Priority"
+BACKGROUND = "background"
 
 
 class _UnixConnection(HTTPConnection):
@@ -115,12 +118,15 @@ class TranscriptionClient:
         response.raise_for_status()
         return response.json()
 
-    def transcribe(self, samples: np.ndarray) -> tuple[str, float | None]:
+    def transcribe(self, samples: np.ndarray, background: bool = False) -> tuple[str, float | None]:
         started_at = time.monotonic()
+        headers = {"Content-Type": "application/octet-stream"}
+        if background:
+            headers[PRIORITY_HEADER] = BACKGROUND
         response = self._session.post(
             f"{BASE_URL}/transcribe",
             data=samples.astype("<f4", copy=False).tobytes(),
-            headers={"Content-Type": "application/octet-stream"},
+            headers=headers,
             stream=True,
             timeout=(config.CONNECT_TIMEOUT_S, config.REQUEST_TIMEOUT_S),
         )

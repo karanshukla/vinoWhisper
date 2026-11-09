@@ -182,6 +182,8 @@ vinowhisper-caption --record ~/sess       # save the session for replay
 vinowhisper-caption --plain > out.txt     # no status bar (implied when piping)
 vinowhisper-caption --json                # one event per line, what the overlay reads
 
+vinowhisper-transcribe lecture.mp3        # a file into a saved session, no playback
+
 vinowhisper-setup --language fr           # French (de, es, auto): sets up the multilingual model
 vinowhisper-setup --language auto --task translate   # foreign speech, captioned in English
 

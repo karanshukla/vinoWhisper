@@ -92,17 +92,22 @@ def new_attestation(
     task: str | None,
     device: str | None,
     model_id: str | None,
+    file: dict | None = None,
 ) -> dict:
+    session: dict = {
+        "started": started.isoformat(timespec="seconds") if started else None,
+        "duration_s": duration_s,
+        "source": source_label,
+        "language": language or None,
+        "task": task or None,
+    }
+    if file is not None:
+        # Only on a session made from a file (vinowhisper-transcribe), never a live one.
+        session["file"] = file
     return {
         "format": FORMAT,
         "generator": {"name": "vinoWhisper", "version": __version__},
-        "session": {
-            "started": started.isoformat(timespec="seconds") if started else None,
-            "duration_s": duration_s,
-            "source": source_label,
-            "language": language or None,
-            "task": task or None,
-        },
+        "session": session,
         "files": {TRANSCRIPT: _whisper_entry(model_id, device)},
     }
 

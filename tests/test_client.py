@@ -39,6 +39,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         received = self.rfile.read(int(self.headers["Content-Length"]))
         self.server.received.append(received)
+        self.server.priorities.append(self.headers.get(client.PRIORITY_HEADER))
         text = f"{len(received)} bytes, café".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -70,6 +71,7 @@ def server(runtime_dir):
     path.parent.mkdir()
     instance = _Server(str(path), _Handler)
     instance.received = []
+    instance.priorities = []
     thread = threading.Thread(target=instance.serve_forever, daemon=True)
     thread.start()
     yield instance
@@ -87,6 +89,13 @@ def test_transcribe_streams_over_the_socket(server):
     assert text == "6400 bytes, café"
     assert first_piece_s is not None
     assert server.received == [samples.astype("<f4").tobytes()]
+
+
+def test_only_a_file_piece_is_marked_background(server):
+    samples = np.zeros(1600, dtype=np.float32)
+    TranscriptionClient().transcribe(samples)
+    TranscriptionClient().transcribe(samples, background=True)
+    assert server.priorities == [None, "background"]
 
 
 def test_an_explicit_socket_path_wins(server, monkeypatch):

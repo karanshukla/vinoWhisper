@@ -419,3 +419,22 @@ def test_run_all_fails_when_any_step_fails(monkeypatch, capsys):
     assert wiz.run_all() == 1
     assert wiz.failed == ["Model export"]
     assert "vinowhisper-doctor" in capsys.readouterr().out
+
+
+def test_the_file_decoder_step_installs_ffmpeg_or_is_skipped_without_failing(monkeypatch):
+    instance = wizard.Wizard(assume_yes=True)
+    instance.distro = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")
+    ran = []
+    monkeypatch.setattr(wizard.shutil, "which", lambda name: None)
+    monkeypatch.setattr(instance, "execute", lambda argv, env=None: ran.append(argv) or True)
+    assert instance.check_decoder().ok is True
+    assert ran == [["sudo", "dnf", "install", "-y", "ffmpeg-free"]]
+
+    declined = wizard.Wizard(dry_run=True)
+    declined.distro = instance.distro
+    outcome = declined.check_decoder()
+    assert outcome.ok is None and "ffmpeg-free" in outcome.summary
+
+    monkeypatch.setattr(wizard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert instance.check_decoder().ok is True
+    assert len(ran) == 1

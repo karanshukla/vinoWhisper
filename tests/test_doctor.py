@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from vinowhisper import config, devices, doctor, failures, integrity
+from vinowhisper import config, devices, distro, doctor, failures, integrity
 
 
 @pytest.fixture
@@ -210,3 +210,19 @@ def test_replacements_check_names_the_error():
     assert result.status == doctor.WARN
     assert "'a'" in result.detail
     assert str(config.REPLACEMENTS_FILE) in result.detail
+
+
+def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):
+    """Captions and dictation never use it, so it must not fail the doctor."""
+    fedora = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")
+    monkeypatch.setattr(distro, "detect", lambda *args, **kwargs: fedora)
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    result = doctor._media_decoder()
+    assert result.status == doctor.WARN
+    assert "sudo dnf install -y ffmpeg-free" in result.detail
+
+    monkeypatch.setattr(
+        doctor.shutil, "which", lambda name: name if name == "gst-launch-1.0" else None
+    )
+    result = doctor._media_decoder()
+    assert result.status == doctor.OK and "gst-launch-1.0" in result.detail

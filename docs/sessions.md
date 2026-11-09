@@ -35,6 +35,55 @@ sessions whose summary was deleted on purpose (they are not summarised again).
 `~/.config/vinowhisper/summaries.json`, `{"auto": true}` by default) pauses the
 automatic runs. Summarising one session by hand still works when it is off.
 
+## From a file: `vinowhisper-transcribe`
+
+Issue #162, built 2026-11-09. A recording you already have (a voice memo, a downloaded
+lecture, a call) becomes a session without playing it:
+
+```
+vinowhisper-transcribe FILE [--model …] [--language …] [--task …] [-o DIR] [--json]
+```
+
+or **Import audio…** in the sessions window, which opens the desktop's file dialog,
+runs the same command with `--json` and shows how far it has got, with Cancel. The
+result is an ordinary bundle in the transcripts folder, so the summary, export,
+Open in… and Read aloud work on it as on any session.
+
+- **Decoding** is `ffmpeg` (16 kHz mono float, first audio stream, so video files
+  work), else `gst-launch-1.0` with `decodebin`. With neither, only 16-bit 16 kHz WAV
+  is read, and anything else fails with the install command for the distro. The
+  doctor's `file decoder` line and setup's optional step name the package. The audio
+  is streamed, never held whole in memory. **Only the ffmpeg path has been run**
+  (2026-11-09, mp4 and WAV); the GStreamer pipeline is untested.
+- **No overlap and no stitching.** Captions decode overlapping windows because they
+  have a latency target; a file has none. The file is cut into pieces of 15 to 29.5 s
+  (`FILE_PIECE_MIN_S`, `MAX_WINDOW_S`), each cut at the quietest 0.3 s in that span,
+  so each second is decoded once and a cut falls in a pause when the audio has one.
+  The cut needs no threshold. Only stretches under `SILENCE_RMS_THRESHOLD` (digital
+  silence) are skipped; quiet speech is always sent. Each piece is normalised like a
+  caption window and cleaned like a dictation (repeat loops, `[BLANK_AUDIO]`).
+- **Stamps** are positions in the file. A paragraph starts after 2.5 s of silence
+  or at a sentence end past 70 words, as in captions. The model gives no word times,
+  so a break inside a piece is stamped by where its words fall in the piece, which
+  can be a few seconds off.
+- **The flags check, they do not switch.** The server holds one speech model. If
+  `--model`, `--language` or `--task` differ from what it is running, the command
+  stops and says to change it under Settings → Speech; it never transcribes French
+  with the English model. Without flags it uses whatever the server runs.
+- **Captions and dictation go first.** Each piece is marked
+  `X-Vinowhisper-Priority: background`, and the server holds it while a caption or
+  dictation decode is in flight, for at most 5 s (`BACKGROUND_YIELD_S`): bounded,
+  because captions decode back to back and a strict priority would starve the file.
+  Summaries wait for an import as they do for captions.
+- **Cancelling saves nothing.** Nothing is written until the whole file is decoded.
+  A file with no speech saves nothing either.
+- `-o DIR` saves somewhere else; such a session is not listed or summarised.
+
+**Not measured on the NPU.** Built and tested against a stub server (no NPU here),
+so the speed claim is arithmetic: a 12 s caption window decodes in 0.70 s, and
+longer pieces should do better per second of audio. The piece length, and whether
+cuts land well on real speech, want a real recording and a known text.
+
 ## The bundle: `.vwsession`
 
 A zip with a fixed layout, like `.odt` and `.epub`:
@@ -83,6 +132,18 @@ AI-generated), and its hashes show an edit made afterwards
 it is provenance, not proof. Bundled leftovers and backfilled transcripts carry
 `null` where something isn't known (language, model revision).
 
+A session made from a file has one more key, and its `source` is the file's name;
+`started` is when it was imported, and `duration_s` is the audio's length:
+
+```json
+"session": {"started": "…", "duration_s": 2530, "source": "lecture.mp3", "language": "en",
+            "task": "transcribe",
+            "file": {"name": "lecture.mp3", "sha256": "…", "bytes": 40481234}}
+```
+
+`file` is absent on a live session. It is an addition inside `session`, so the
+format stays `vinowhisper-session/1`.
+
 ## How a summary is made
 
 `vinowhisper/summary.py`, SmolLM3-3B in the server, the model dictation cleanup
@@ -130,7 +191,7 @@ window's **Sessions** page keeps the summary setting and a button that opens it,
 That switch writes `~/.local/share/applications/io.github.karanshukla.vinowhisper.sessions.desktop`
 (`Exec=vinowhisper-gui --sessions`), off until turned on, the way vinoSearch adds its search
 window; the file being there is the setting, and `vinowhisper-tray --uninstall` removes it.
-The window lists every bundle (date, length, source, title or state). From there you can read the transcript or the summary (key points link to their stamp in the
+The window lists every bundle (date, length, source, title or state), and **Import audio…** adds one from a file (above). From there you can read the transcript or the summary (key points link to their stamp in the
 transcript), summarise again, delete the summary, delete the session, show it in
 the file manager, export it, copy the part on screen, or have vinoSpeak read it aloud. It drives `vinowhisper-session`:
 
