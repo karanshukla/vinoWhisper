@@ -523,7 +523,7 @@ pub fn open_dialog() -> Chosen {
     use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
     let asked = async_io::block_on(async {
         SelectedFiles::open_file()
-            .title("Import audio")
+            .title("Import audio or video")
             .accept_label("Import")
             .modal(true)
             .multiple(false)

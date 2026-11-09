@@ -44,7 +44,7 @@ lecture, a call) becomes a session without playing it:
 vinowhisper-transcribe FILE [--model …] [--language …] [--task …] [-o DIR] [--json]
 ```
 
-or **Import audio…** in the sessions window, which opens the desktop's file dialog,
+or **Import audio or video…** in the sessions window, which opens the desktop's file dialog,
 runs the same command with `--json` and shows how far it has got, with Cancel. The
 result is an ordinary bundle in the transcripts folder, so the summary, export,
 Open in… and Read aloud work on it as on any session.
@@ -191,7 +191,7 @@ window's **Sessions** page keeps the summary setting and a button that opens it,
 That switch writes `~/.local/share/applications/io.github.karanshukla.vinowhisper.sessions.desktop`
 (`Exec=vinowhisper-gui --sessions`), off until turned on, the way vinoSearch adds its search
 window; the file being there is the setting, and `vinowhisper-tray --uninstall` removes it.
-The window lists every bundle (date, length, source, title or state), and **Import audio…** adds one from a file (above). From there you can read the transcript or the summary (key points link to their stamp in the
+The window lists every bundle (date, length, source, title or state), and **Import audio or video…** adds one from a file (above). From there you can read the transcript or the summary (key points link to their stamp in the
 transcript), summarise again, delete the summary, delete the session, show it in
 the file manager, export it, copy the part on screen, or have vinoSpeak read it aloud. It drives `vinowhisper-session`:
 

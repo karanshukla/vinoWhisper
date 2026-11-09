@@ -1282,7 +1282,7 @@ impl SessionsWindow {
                             }
                             let import = ui.add_enabled(
                                 state.import.is_none(),
-                                Button::secondary("Import audio…"),
+                                Button::secondary("Import audio or video…"),
                             );
                             if import.clicked() {
                                 self.import(ctx);
@@ -2129,7 +2129,7 @@ mod tests {
         harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
         harness.run();
         harness
-            .get_by_role_and_label(Role::Button, "Import audio…")
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
             .click();
         until(&mut harness, |under| {
             under.window.state.lock().unwrap().imported.is_some()
@@ -2157,7 +2157,7 @@ mod tests {
         }
         harness.run();
         harness.get_by_label("Transcribing lecture.mp3: 12:30 of 45:00.");
-        let button = harness.get_by_role_and_label(Role::Button, "Import audio…");
+        let button = harness.get_by_role_and_label(Role::Button, "Import audio or video…");
         assert!(button.accesskit_node().is_disabled());
 
         // Without ffprobe the length is not known.
@@ -2212,7 +2212,7 @@ mod tests {
         harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
         harness.run();
         harness
-            .get_by_role_and_label(Role::Button, "Import audio…")
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
             .click();
         until(&mut harness, |under| {
             under.window.state.lock().unwrap().imported.is_some()
@@ -2227,7 +2227,7 @@ mod tests {
 
         importer_answering(&mut harness, Vec::new(), Ok(None));
         harness
-            .get_by_role_and_label(Role::Button, "Import audio…")
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
             .click();
         until(&mut harness, |under| {
             under.window.state.lock().unwrap().import.is_none()

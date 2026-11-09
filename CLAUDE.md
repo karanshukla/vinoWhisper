@@ -411,7 +411,7 @@ server); Whisper stays the default by the user's choice. Full write-up and numbe
 
 ## File transcription (#162), added 2026-11-09
 
-`vinowhisper-transcribe FILE` and **Import audio…** in the sessions window turn a
+`vinowhisper-transcribe FILE` and **Import audio or video…** in the sessions window turn a
 recording into an ordinary `.vwsession`. Full write-up in `docs/sessions.md`, "From a
 file". The choices that answer the issue's open questions:
 
