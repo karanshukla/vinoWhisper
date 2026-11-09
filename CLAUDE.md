@@ -438,6 +438,9 @@ file". The choices that answer the issue's open questions:
   decoding, the import child dies with the window, and `--yes` setup never installs ffmpeg.
 - The file dialog filters by extension globs: a portal looks MIME types up by name, so
   `audio/*` may match nothing. Not checked on Plasma.
+- **Two tests in `tests/test_transcribe.py` run the real ffmpeg when it is installed**, and
+  skip when it is not. Kept on purpose (user's call, 2026-11-09) as the one exception to
+  "anything that would shell out is monkeypatched": they caught ffmpeg's downmix level.
 - Found on the way, not fixed: `TranscriptWriter._bundle` attests a live Canary session
   as Whisper (it calls `config.model_id`, and `Ready` carries no model).
 
