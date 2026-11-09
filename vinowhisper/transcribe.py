@@ -179,12 +179,15 @@ class Segmenter:
     def __init__(
         self, min_s: float = config.FILE_PIECE_MIN_S, max_s: float = config.MAX_WINDOW_S
     ) -> None:
-        self._max_frames = int(max_s * 10)
-        self._min_frames = min(int(min_s * 10), self._max_frames)
+        self.limit(min_s, max_s)
         self._frames: list[np.ndarray] = []
         self._levels: list[float] = []
         self._held = 0
         self._start = 0
+
+    def limit(self, min_s: float, max_s: float) -> None:
+        self._max_frames = int(max_s * 10)
+        self._min_frames = min(int(min_s * 10), self._max_frames)
 
     def add(self, chunk: np.ndarray) -> list[Piece]:
         out: list[Piece] = []
@@ -196,12 +199,16 @@ class Segmenter:
         return out
 
     def finish(self) -> list[Piece]:
-        if not self._frames:
-            return []
-        return [self._take(len(self._frames))]
+        out: list[Piece] = []
+        while self._held >= self._max_frames * FRAME_SAMPLES and len(self._frames) > 1:
+            out.append(self._take(self._cut_index()))
+        if self._frames:
+            out.append(self._take(len(self._frames)))
+        return out
 
     def _cut_index(self) -> int:
-        levels = self._levels
+        # No further than the limit: it may have shrunk under a buffer already longer.
+        levels = self._levels[: self._max_frames]
         last = len(levels) - _PAUSE_FRAMES
         first = min(self._min_frames, last)
         best, best_level = len(levels), float("inf")
@@ -324,6 +331,18 @@ def _decode_piece(client: _Client, samples: np.ndarray, health: dict) -> str:
     raise AssertionError("unreachable")
 
 
+# Shorter pieces while captions or dictation are in use, so neither waits long behind one.
+def _pace(segmenter: Segmenter, client: _Client) -> None:
+    try:
+        busy = bool(client.wait_ready().get("live_active"))
+    except requests.RequestException:
+        return
+    if busy:
+        segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
+    else:
+        segmenter.limit(config.FILE_PIECE_MIN_S, config.MAX_WINDOW_S)
+
+
 def _free_bundle_path(directory: Path, started: datetime) -> Path:
     stem = started.strftime("%Y-%m-%d-%H%M%S")
     path = directory / f"{stem}{bundle.SUFFIX}"
@@ -367,6 +386,8 @@ def transcribe_file(
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)
     segmenter = Segmenter()
+    if health.get("live_active"):
+        segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
     decoded_s = 0.0
     working_since = time.monotonic()
 
@@ -377,6 +398,7 @@ def transcribe_file(
                 samples, _ = audio.normalize(piece.samples, config.TARGET_RMS, config.MAX_GAIN)
                 text = _decode_piece(client, samples, health)
                 transcript.piece(piece, clean(text).split())
+                _pace(segmenter, client)
             decoded_s = piece.end_s
             emit(
                 {

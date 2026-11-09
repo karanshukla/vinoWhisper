@@ -131,6 +131,20 @@ def test_quiet_speech_is_still_sent():
     assert piece.samples.size == quiet.size
 
 
+def test_a_tightened_limit_applies_to_audio_already_buffered():
+    """Captions can start mid-import, with most of a long piece already held."""
+    segmenter = transcribe.Segmenter()
+    audio = speech(40.0)
+    pieces = []
+    for index, chunk in enumerate(pcm.chunks(audio, transcribe.FRAME_SAMPLES)):
+        if index == 250:
+            segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
+        pieces += segmenter.add(chunk)
+    pieces += segmenter.finish()
+    assert sum(piece.samples.size for piece in pieces) == audio.size
+    assert all(piece.samples.size <= config.FILE_PIECE_BUSY_MAX_S * RATE for piece in pieces)
+
+
 # ── decoding ─────────────────────────────────────────────────────────────────
 
 
@@ -225,6 +239,29 @@ def test_a_file_becomes_a_session_the_sessions_window_can_read(tmp_path):
     assert progress[-1]["position_s"] == pytest.approx(44.0, abs=0.1)
     assert progress[-1]["duration_s"] == pytest.approx(44.0, abs=0.1)
     assert records[-1]["path"] == str(saved) and records[-1]["words"] == 9
+
+
+def test_pieces_are_short_while_captions_or_dictation_are_in_use(tmp_path):
+    """A caption cycle then never waits behind more than one caption window's decode."""
+    path = write_wav(tmp_path / "talk.wav", speech(60.0))
+    busy = {"device": "NPU", "language": "en", "task": "transcribe", "live_active": True}
+    client = FakeClient(health=busy)
+    run(path, client, tmp_path)
+    assert all(size <= config.FILE_PIECE_BUSY_MAX_S * RATE for size, _ in client.seen)
+
+    # Captions stop part-way: the pieces go back to full length.
+    client = FakeClient(health=dict(busy))
+    decode = client.transcribe
+
+    def captions_end(samples, background=False):
+        client.health["live_active"] = False
+        return decode(samples, background)
+
+    client.transcribe = captions_end
+    run(path, client, tmp_path)
+    sizes = [size for size, _ in client.seen]
+    assert sizes[0] <= config.FILE_PIECE_BUSY_MAX_S * RATE
+    assert max(sizes[1:]) >= config.FILE_PIECE_MIN_S * RATE
 
 
 def test_a_live_session_has_no_file_entry():
@@ -336,8 +373,7 @@ def test_a_piece_is_tried_again_after_the_server_comes_back(tmp_path, no_pause):
     client = Flaky(failures=2)
     saved, _ = run(path, client, tmp_path)
     assert bundle.read(saved).transcript.endswith("said this.\n")
-    # Once at the start, then once before each retry (it blocks while a model loads).
-    assert client.readies == 3
+    assert len(client.seen) == 1
 
 
 def test_a_server_that_stays_down_ends_the_import(tmp_path, no_pause):

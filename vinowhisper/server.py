@@ -31,6 +31,7 @@ _last_npu_use_at = 0.0
 _npu_in_flight = 0
 # Captions and dictation decoding right now: what a file's piece waits behind.
 _live_in_flight = 0
+_last_live_at = float("-inf")
 
 
 def _mark_activity(delta: int = 0) -> None:
@@ -87,6 +88,7 @@ def health() -> Response:
             "status": "ok",
             "version": __version__,
             **transcriber.describe(),
+            "live_active": live_active(),
             "cleanup": cleaner.describe(),
             "summaries": summariser.describe(),
         }
@@ -130,6 +132,7 @@ def clean() -> Response:
 def warm() -> Response:
     # The dictation key is down: a summary mid-chunk would hold the model.
     _mark_npu_use()
+    _mark_live()
     cleaner.warm()
     response = jsonify(cleaner.describe())
     response.status_code = 202
@@ -172,10 +175,16 @@ def _error(message: str, status: int = 400) -> Response:
     return response
 
 
-def _mark_live(delta: int) -> None:
-    global _live_in_flight
+def _mark_live(delta: int = 0) -> None:
+    global _live_in_flight, _last_live_at
     with _activity_lock:
         _live_in_flight += delta
+        _last_live_at = time.monotonic()
+
+
+def live_active() -> bool:
+    with _activity_lock:
+        return _live_in_flight > 0 or time.monotonic() - _last_live_at < config.LIVE_RECENT_S
 
 
 def _wait_for_live(timeout_s: float) -> None:

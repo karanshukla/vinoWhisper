@@ -244,6 +244,12 @@ SPEECH_MIN_CHUNKS = 2
 FILE_PIECE_MIN_S = 15.0
 # How long a file's piece waits for captions or a dictation already decoding.
 BACKGROUND_YIELD_S = 5.0
+# While captions or dictation are in use, a file is cut shorter: no piece then costs
+# them more than one caption window's decode.
+FILE_PIECE_BUSY_MIN_S = 6.0
+FILE_PIECE_BUSY_MAX_S = 12.0
+# Captions or a dictation within this long count as in use.
+LIVE_RECENT_S = 10.0
 
 WINDOW_S = 12.0
 

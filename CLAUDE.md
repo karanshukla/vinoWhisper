@@ -422,6 +422,9 @@ file". The choices that answer the issue's open questions:
 - **Background priority is bounded.** Pieces carry `X-Vinowhisper-Priority: background`
   and wait for an in-flight caption or dictation decode, 5 s at most, because captions
   decode back to back.
+- **Pieces shrink to 6-12 s while captions or dictation are in use** (`/health`
+  `live_active`, 10 s of memory), so a caption cycle waits behind one window's decode at
+  most. On the CPU run it cost 36% more time and no accuracy (7.0% against 7.4% WER).
 - **`--model/--language/--task` check the running server and refuse on a mismatch.**
   They do not restart it: the server holds one model, chosen in `language.json`.
 - ffmpeg first, `gst-launch-1.0` second, stdlib `wave` for 16 kHz WAV. `distro.MEDIA_DECODER`

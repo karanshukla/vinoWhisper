@@ -75,6 +75,11 @@ Open in… and Read aloud work on it as on any session.
   `X-Vinowhisper-Priority: background`, and the server holds it while a caption or
   dictation decode is in flight, for at most 5 s (`BACKGROUND_YIELD_S`): bounded,
   because captions decode back to back and a strict priority would starve the file.
+  While either has been used in the last 10 s (`/health`'s `live_active`), the file is
+  cut into 6 to 12 s pieces instead, so a caption cycle waits behind at most one
+  caption window's decode. The pieces grow back when captions stop. Measured on the
+  recording below with every piece short (2026-11-09, CPU): 57 pieces, 34.9 s against
+  25.7 s, and 7.0% WER against 7.4%, so it costs time and no accuracy.
   Summaries wait for an import as they do for captions.
 - **Cancelling saves nothing.** Nothing is written until the whole file is decoded.
   A file with no speech saves nothing either. Closing the sessions window cancels

@@ -394,3 +394,21 @@ def test_captions_and_dictation_never_wait(client, fake, monkeypatch):
     assert client.post("/transcribe", data=pcm(1)).get_data(as_text=True) == "ab"
     assert server.time.monotonic() - started < 2.0
     assert server._live_in_flight == 1
+
+
+def test_health_says_when_captions_or_dictation_are_in_use(client, fake, monkeypatch):
+    """What vinowhisper-transcribe reads to cut shorter pieces; a file's own pieces don't count."""
+    monkeypatch.setattr(server, "cleaner", server.llm.CleanupModel())
+    monkeypatch.setattr(server.cleaner, "warm", lambda: None)
+    monkeypatch.setattr(server, "_last_live_at", float("-inf"))
+    assert client.get("/health").get_json()["live_active"] is False
+    client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Priority": "background"})
+    assert client.get("/health").get_json()["live_active"] is False
+    client.post("/transcribe", data=pcm(1)).get_data()
+    assert client.get("/health").get_json()["live_active"] is True
+
+    monkeypatch.setattr(server, "_last_live_at", server.time.monotonic() - config.LIVE_RECENT_S - 1)
+    assert client.get("/health").get_json()["live_active"] is False
+    # The dictation key going down counts before any audio has been sent.
+    client.post("/cleanup/warm")
+    assert client.get("/health").get_json()["live_active"] is True
