@@ -166,6 +166,45 @@ A session made from a file has one more key, and its `source` is the file's name
 `file` is absent on a live session. It is an addition inside `session`, so the
 format stays `vinowhisper-session/1`.
 
+A live session of system audio also names what was sending it
+([#156](https://github.com/karanshukla/vinoWhisper/issues/156), 2026-11-09), in the
+order first seen:
+
+```json
+"session": {"…": "…", "source": "system audio",
+            "playing": [{"app": "Mozilla Firefox", "title": "How NPUs work - YouTube",
+                         "artist": "Some Channel"},
+                        {"app": "Some Game"}]}
+```
+
+`vinowhisper/playing.py` asks the session bus for MPRIS players whose
+`PlaybackStatus` is `Playing` (through `busctl`, which systemd ships, so no new
+dependency) and PipeWire for output streams that are running. A player gives its
+name, title and artist; an app making sound with no player gives its name alone.
+With `--target`, only that application counts.
+
+- **Only `app`, `title` and `artist` are kept**, each cleaned of control characters
+  and cut at 200. The track's URL, its art and its id are never read into the entry:
+  a URL can carry a private link or a token, and the art is a path under your home.
+  A title is still a title: a session of a video named after something private says
+  so. Browsers hide titles from private windows themselves.
+- It is sampled when words are committed, at most every 30 s, off the caption
+  loop's thread, so it names what was being captioned and a slow player cannot hold
+  a cycle up. At most 12 entries.
+- `playing` is absent when nothing was seen, on microphone sessions, on files, with no
+  session bus, and on a transcript bundled after a crash. Like
+  `file`, it is an addition inside `session`.
+- The sessions window shows it beside the source, an export carries it as
+  `playing`, and a summary states it in a `_Playing: …_` line above the closing
+  line. That line is written by the code from the attestation. The model never
+  sees it: a title is not something it heard, and it is text a web page chose.
+
+Checked 2026-11-09 against two fake MPRIS players on a real session bus (one
+playing, one paused): the playing one was named, the paused one was not, and the
+URL stayed out. **Not yet run on the laptop**: whether Chrome's and Firefox's
+`Identity` match their PipeWire `application.name` closely enough to pair up
+(matching is "one name contains the other") needs real browsers.
+
 ## How a summary is made
 
 `vinowhisper/summary.py`, SmolLM3-3B in the server, the model dictation cleanup
@@ -199,7 +238,8 @@ uses ([tray.md](tray.md), "LLM cleanup").
   key points where the session offers them (never fewer than one per chunk, so a long
   session's middle is kept), each ending in `[MM:SS]`, and a closing line saying it is
   machine-written and that the transcript is the record. The date, length and model
-  are in the attestation.
+  are in the attestation. When the attestation names what was playing, a
+  `_Playing: …_` line sits above the closing one (see "Attestation").
 - One failure is retried quietly on the next run. After three (`MAX_FAILURES`) the
   session stops being retried and the notification says so. A missing model stops
   the queue without counting a failure; the sessions window says to download it.

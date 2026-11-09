@@ -129,7 +129,7 @@ class _Clock:
         return self.now
 
 
-def _transcript(target, clock=None, source="output"):
+def _transcript(target, clock=None, source="output", tracker=None):
     from datetime import datetime
 
     return session.TranscriptWriter(
@@ -137,7 +137,38 @@ def _transcript(target, clock=None, source="output"):
         source,
         clock=clock or _Clock(),
         now=lambda: datetime(2026, 9, 29, 14, 2, 7),
+        tracker=tracker,
     )
+
+
+def test_what_was_playing_is_sampled_as_words_arrive_and_attested(tmp_path):
+    from vinowhisper import playing
+
+    polled = []
+    video = {"app": "Firefox", "title": "How NPUs work"}
+    tracker = playing.Tracker(
+        sample=lambda target: polled.append(1) or [video], clock=lambda: 0.0, threaded=False
+    )
+    writer = _transcript(tmp_path, tracker=tracker)
+    writer.event(events.Ready(device="NPU"))
+    writer.event(events.Silence(elapsed_s=2.5, rms=0.0, sink_muted=False))
+    assert not polled
+    writer.event(_cycle(["Hello."]))
+    writer.event(events.Stopped())
+
+    read = bundle.read(writer.path)
+    assert read.session["playing"] == [video]
+    assert session._describe(writer.path, {"declined": [], "failures": {}})["playing"] == (
+        "How NPUs work (Firefox)"
+    )
+
+
+def test_a_session_with_nothing_seen_playing_has_no_playing_key(tmp_path):
+    writer = _transcript(tmp_path)
+    writer.event(_cycle(["Hello."]))
+    writer.event(events.Stopped())
+    assert "playing" not in bundle.read(writer.path).session
+    assert session._describe(writer.path, {"declined": [], "failures": {}})["playing"] is None
 
 
 def _text(path):

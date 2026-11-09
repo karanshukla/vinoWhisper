@@ -242,6 +242,7 @@ struct SettingsWindow {
     speech_note: Option<String>,
     summaries: Summaries,
     summaries_dirty: bool,
+    settings_dirty: bool,
     // The sessions window's app menu entry: where it goes, whether it is there, and why
     // the last change failed.
     apps_data: PathBuf,
@@ -311,6 +312,7 @@ impl SettingsWindow {
             in_app_menu: false,
             app_menu_error: None,
             summaries_dirty: false,
+            settings_dirty: false,
             model_ready: Arc::new(Mutex::new(None)),
             updater: updater(),
         }
@@ -961,6 +963,19 @@ impl SettingsWindow {
         if let Some(Ok(status)) = &canary_state.status {
             changed |= self.model_rows(ui, Tool::Canary, status, &canary_state);
         }
+        widgets::group_label(ui, "Dictation");
+        widgets::group(ui, |ui| {
+            Row::new("Pause media")
+                .help(
+                    "Pauses music and video that is playing while you dictate, and resumes it \
+                     after. Players that ignore the desktop's media controls keep playing.",
+                )
+                .show(ui, |ui, _| {
+                    self.settings_dirty |=
+                        widgets::switch(ui, &mut self.settings.pause_media, "Pause media")
+                            .changed();
+                });
+        });
         changed
     }
 }
@@ -1259,6 +1274,7 @@ impl SettingsWindow {
                     }
                 });
             });
+        saved_settings |= std::mem::take(&mut self.settings_dirty);
         (saved_settings, saved_speech)
     }
 }
@@ -1498,6 +1514,18 @@ mod tests {
         harness.get_by_role_and_label(Role::ComboBox, "Speech model");
         harness.get_by_role_and_label(Role::ComboBox, "Language");
         harness.get_by_role_and_label(Role::Switch, "Translate to English");
+        harness.get_by_role_and_label(Role::Heading, "Dictation");
+    }
+
+    #[test]
+    fn pausing_media_is_a_switch_that_is_off_and_marks_the_settings_to_save() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness.run();
+        let switch = harness.get_by_role_and_label(Role::Switch, "Pause media");
+        assert_eq!(switch.accesskit_node().toggled(), Some(Toggled::False));
+        switch.click();
+        harness.run();
+        assert!(harness.state().window.settings.pause_media);
     }
 
     #[test]

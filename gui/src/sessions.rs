@@ -82,6 +82,8 @@ pub struct Entry {
     pub started: Option<String>,
     pub duration_s: Option<u64>,
     pub source: Option<String>,
+    /// What was sending the audio, already worded by vinowhisper-session.
+    pub playing: Option<String>,
     pub summary: bool,
     pub title: Option<String>,
     pub declined: bool,

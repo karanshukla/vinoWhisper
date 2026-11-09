@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 from . import bundle, config, llm
+from . import playing as now_playing
 from .llm import Preempted
 
 # About 2,000 tokens of English, inside MAX_PROMPT_LEN=3072 with the prompt around it.
@@ -251,6 +252,7 @@ def summarise(
     task: str | None = None,
     fallback_title: str = "Session summary",
     limit: int = CHUNK_CHARS,
+    playing: list[dict] | None = None,
 ) -> str:
     name = language_name(language, task)
     parts = chunks(transcript, limit)
@@ -277,7 +279,13 @@ def summarise(
     title = generate(TITLE_PROMPT.format(language=name), notes, TITLE_TOKENS, "#")
     overview = generate(OVERVIEW_PROMPT.format(language=name), notes, OVERVIEW_TOKENS, "")
     lines = "\n".join(points)
-    return f"# {_title(title, fallback_title)}\n\n{_overview(overview)}\n\n{lines}\n\n{FOOTER}\n"
+    # Stated from the attestation, never shown to the model: a title is not something it heard.
+    heard = now_playing.label(now_playing.valid(playing))
+    source = f"_Playing: {heard}_\n\n" if heard else ""
+    return (
+        f"# {_title(title, fallback_title)}\n\n{_overview(overview)}\n\n{lines}\n\n"
+        f"{source}{FOOTER}\n"
+    )
 
 
 def auto_enabled(path: Path | None = None) -> bool:
@@ -602,6 +610,7 @@ class Summariser:
                 language,
                 task,
                 fallback_title=f"Session of {str(started)[:16].replace('T', ' ')}",
+                playing=session.session.get("playing"),
             )
         except Preempted:
             return "preempted"

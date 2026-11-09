@@ -290,6 +290,31 @@ Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
 Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
 "Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.
 
+### Pausing media while you dictate
+
+Added 2026-11-09, from [issue #163](https://github.com/karanshukla/vinoWhisper/issues/163).
+Off by default: **Pause media** on the settings window's Speech page, stored as
+`pause_media` in `gui.json`.
+
+On the key's press the tray lists `org.mpris.MediaPlayer2.*` on the session bus and
+calls `Pause` on each player whose `PlaybackStatus` is `Playing`, remembering which.
+When the dictation is over (typed, nothing heard, cancelled or failed, and after the
+paste) it calls `Play` on those only, and only on the ones still `Paused`: a player
+you stopped, started or closed yourself in the meantime is left alone. Quitting the
+tray mid-dictation resumes them first.
+
+- A player that ignores MPRIS keeps playing, as before.
+- It runs on one thread of its own (`tray/src/media.rs`), so the pause never delays
+  the recording and a resume cannot overtake its pause. Each call gives up after 1 s.
+- Hands-free stops itself after silence, which music in the room prevented; with
+  this on, it can.
+- Dictation only. Captions from the microphone do not pause anything.
+
+Checked 2026-11-09 against two fake players on a real session bus: the playing one
+was paused and resumed, the already-paused one was never touched. **Not yet run on
+the laptop**, so real browsers and the timing against the microphone's first 90-290ms
+are unmeasured.
+
 ### Cleaning up what you say
 
 Optional, off by default (beta). Turn on **Clean up dictation** on the settings

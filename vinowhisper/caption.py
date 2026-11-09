@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from . import __version__, audio, bundle, capture, config, events, session, style, summary
+from . import __version__, audio, bundle, capture, config, events, playing, session, style, summary
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
@@ -345,7 +345,11 @@ def main() -> int:
     plain = args.plain or args.debug or not sys.stdout.isatty()
     json_out = JsonRenderer() if args.json else None
     writer = session.SessionWriter(args.record) if args.record else None
-    transcript = session.TranscriptWriter(args.transcript, args.source) if args.transcript else None
+    transcript = None
+    if args.transcript:
+        # The mic hears the room, not a player, so only system audio is worth naming.
+        tracker = playing.Tracker(args.target) if args.source == "output" else None
+        transcript = session.TranscriptWriter(args.transcript, args.source, tracker=tracker)
     try:
         stream = caption_events(
             source=args.source,

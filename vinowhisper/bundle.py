@@ -93,6 +93,7 @@ def new_attestation(
     device: str | None,
     model_id: str | None,
     file: dict | None = None,
+    playing: list[dict] | None = None,
 ) -> dict:
     session: dict = {
         "started": started.isoformat(timespec="seconds") if started else None,
@@ -104,6 +105,9 @@ def new_attestation(
     if file is not None:
         # Only on a session made from a file (vinowhisper-transcribe), never a live one.
         session["file"] = file
+    if playing:
+        # What was sending the audio (#156): app, title, artist. Absent when nothing was seen.
+        session["playing"] = playing
     return {
         "format": FORMAT,
         "generator": {"name": "vinoWhisper", "version": __version__},
@@ -255,6 +259,7 @@ def from_transcript(
     task: str | None = None,
     device: str | None = None,
     model_id: str | None = None,
+    playing: list[dict] | None = None,
 ) -> Bundle:
     text = transcript.read_text(encoding="utf-8")
     header = _HEADER.match(text.split("\n", 1)[0])
@@ -266,7 +271,7 @@ def from_transcript(
     if duration_s is None:
         duration_s = last_stamp_s(text)
     attestation = new_attestation(
-        started, duration_s, source_label, language, task, device, model_id
+        started, duration_s, source_label, language, task, device, model_id, playing=playing
     )
     return Bundle(bundle_path_for(transcript), text, attestation)
 

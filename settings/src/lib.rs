@@ -505,6 +505,8 @@ pub struct Settings {
     pub hide_after_silence_s: u64,
     pub save_transcripts: bool,
     pub open_in: OpenIn,
+    /// Pause MPRIS players that are playing while dictating, and resume them after (#163).
+    pub pause_media: bool,
 }
 
 impl Default for Settings {
@@ -518,6 +520,7 @@ impl Default for Settings {
             hide_after_silence_s: DEFAULT_HIDE_AFTER_SILENCE_S,
             save_transcripts: false,
             open_in: OpenIn::default(),
+            pause_media: false,
         }
     }
 }
@@ -644,6 +647,7 @@ mod tests {
             hide_after_silence_s: 40,
             save_transcripts: true,
             open_in: OpenIn::TextEditor,
+            pause_media: true,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -780,6 +784,15 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"open_in": "text_editor"}"#).unwrap();
         assert_eq!(Settings::load_from(&path).open_in, OpenIn::TextEditor);
+    }
+
+    #[test]
+    fn pausing_media_is_off_until_the_file_says_so() {
+        assert!(!Settings::default().pause_media);
+        let path = scratch("pause-media");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"pause_media": true}"#).unwrap();
+        assert!(Settings::load_from(&path).pause_media);
     }
 
     #[test]

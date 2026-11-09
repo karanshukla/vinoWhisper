@@ -41,6 +41,7 @@ use crate::dictator::Dictator;
 use crate::idle::{self, IdleTimer};
 use crate::install;
 use crate::ipc::{self, Request};
+use crate::media::Media;
 use crate::paint::{self, Painter};
 use crate::paste::Paster;
 use crate::protocol::{Dictate, Event};
@@ -192,6 +193,7 @@ pub struct App {
     dictate_program: Option<PathBuf>,
     clipboard: Option<Clipboard>,
     paster: Paster,
+    media: Media,
     lingering: Option<u64>,
     idle: bool,
     idle_timer: Option<IdleTimer>,
@@ -355,6 +357,7 @@ pub fn run(options: Options) -> Result<(), String> {
         dictator_generation: 0,
         clipboard,
         paster,
+        media: Media::new(),
         lingering: None,
         idle: false,
         idle_timer: None,
@@ -517,6 +520,7 @@ impl App {
         self.overlay = None;
         self.pill = None;
         self.dictator = None;
+        self.media.finish();
         if self.session.is_none() {
             self.signal.stop();
             return;
@@ -901,6 +905,9 @@ impl App {
     }
 
     fn dictate(&mut self, action: Option<Action>) {
+        if action == Some(Action::Start) && self.settings.pause_media {
+            self.media.pause();
+        }
         match action {
             Some(Action::Start) => self.tell_dictator("start"),
             Some(Action::HandsFree) => self.tell_dictator("hands-free"),
@@ -914,6 +921,12 @@ impl App {
             None => {}
         }
         self.show_pill();
+    }
+
+    fn resume_media(&mut self) {
+        if !self.dictation.is_busy() {
+            self.media.resume();
+        }
     }
 
     pub fn clipboard_mut(&mut self) -> Option<&mut Clipboard> {
@@ -953,6 +966,7 @@ impl App {
     }
 
     fn show_pill(&mut self) {
+        self.resume_media();
         if let Some(message) = self.dictation.take_announcement() {
             announce::announce(message);
         }
