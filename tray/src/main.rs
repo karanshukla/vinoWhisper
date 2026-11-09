@@ -8,6 +8,7 @@ mod icon;
 mod idle;
 mod install;
 mod ipc;
+mod media;
 mod paint;
 mod paste;
 mod protocol;
