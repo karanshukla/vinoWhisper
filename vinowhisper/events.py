@@ -10,6 +10,7 @@ class Ready:
     server_version: str = ""
     language: str = ""
     task: str = ""
+    model: str = ""
 
 
 @dataclass(frozen=True)

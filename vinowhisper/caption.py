@@ -61,6 +61,7 @@ def caption_events(
         server_version=str(health.get("version", "")),
         language=str(health.get("language", "")),
         task=str(health.get("task", "")),
+        model=str(health.get("model", "")),
     )
 
     stitcher = Stitcher()

@@ -176,6 +176,12 @@ def model_id(multilingual: bool = False) -> str:
     return MULTILINGUAL_MODEL_ID if multilingual else MODEL_ID
 
 
+def served_model_id(model: str, language: str, task: str) -> str:
+    if model == CANARY_MODEL:
+        return CANARY_MODEL_ID
+    return model_id(is_multilingual(language or DEFAULT_LANGUAGE, task or DEFAULT_TASK))
+
+
 def model_dir(device_kind: str, multilingual: bool = False, model: str = DEFAULT_MODEL) -> Path:
     npu = device_kind.upper() == "NPU"
     if model == CANARY_MODEL:
