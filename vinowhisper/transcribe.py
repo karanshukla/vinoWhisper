@@ -274,11 +274,11 @@ def file_sha256(path: Path) -> tuple[str, int]:
 
 
 def model_id_for(health: dict) -> str:
-    if health.get("model") == config.CANARY_MODEL:
-        return config.CANARY_MODEL_ID
-    language = str(health.get("language") or config.DEFAULT_LANGUAGE)
-    task = str(health.get("task") or config.DEFAULT_TASK)
-    return config.model_id(config.is_multilingual(language, task))
+    return config.served_model_id(
+        str(health.get("model") or ""),
+        str(health.get("language") or ""),
+        str(health.get("task") or ""),
+    )
 
 
 def check_server(health: dict, model: str | None, language: str | None, task: str | None) -> None:

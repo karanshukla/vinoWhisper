@@ -92,6 +92,7 @@ class TranscriptWriter:
         self._device = "?"
         self._language = ""
         self._task = ""
+        self._model = ""
         self._bundle_on_close = False
         self._breaker = ParagraphBreaker()
         self._file: IO | None = None
@@ -104,6 +105,7 @@ class TranscriptWriter:
         if isinstance(event, events.Ready):
             self._device = event.device
             self._language, self._task = event.language, event.task
+            self._model = event.model
             self._started_at = self._clock()
             self._started = self._now()
         elif isinstance(event, events.Cycle):
@@ -142,9 +144,7 @@ class TranscriptWriter:
                 task=task,
                 device=None if self._device == "?" else self._device,
                 playing=self._tracker.entries() if self._tracker else None,
-                model_id=config.model_id(
-                    config.is_multilingual(language or "en", task or config.DEFAULT_TASK)
-                ),
+                model_id=config.served_model_id(self._model, self._language, self._task),
             )
 
     def _words(self, words: list[str]) -> None:

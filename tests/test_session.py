@@ -353,6 +353,19 @@ def test_a_finished_session_becomes_a_bundle_with_its_provenance(tmp_path):
     assert len(entry["revision"]) == 40
 
 
+def test_a_canary_session_is_attested_as_canary(tmp_path):
+    clock = _Clock()
+    writer = _transcript(tmp_path, clock)
+    writer.event(
+        events.Ready(device="NPU", language="en", task="transcribe", model=config.CANARY_MODEL)
+    )
+    writer.event(_cycle(["Hello."]))
+    writer.event(events.Stopped(flushed=[]))
+
+    entry = bundle.read(writer.path).attestation["files"][bundle.TRANSCRIPT]
+    assert entry["model"] == config.CANARY_MODEL_ID
+
+
 def test_a_named_file_target_is_never_bundled(tmp_path):
     target = tmp_path / "talks.txt"
     writer = _transcript(target)

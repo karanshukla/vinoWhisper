@@ -441,8 +441,8 @@ file". The choices that answer the issue's open questions:
 - **Two tests in `tests/test_transcribe.py` run the real ffmpeg when it is installed**, and
   skip when it is not. Kept on purpose (user's call, 2026-11-09) as the one exception to
   "anything that would shell out is monkeypatched": they caught ffmpeg's downmix level.
-- Found on the way, not fixed: `TranscriptWriter._bundle` attests a live Canary session
-  as Whisper (it calls `config.model_id`, and `Ready` carries no model).
+- Fixed 2026-11-09: a live Canary session used to be attested as Whisper. `Ready` now
+  carries the server's `model`, and `config.served_model_id` names it for both paths.
 
 ## What was playing (#156) and pausing media (#163), added 2026-11-09
 
@@ -824,6 +824,13 @@ bisection above (5.5.4 verified failing), and the 5.10.0 fix for CVE-2026-9856
 is outside every optimum-intel's range. The pin moves when optimum-intel
 supports >= 5.6 *and* someone re-runs the `generate()` bisection on an NPU,
 not before. The narrowed-exposure argument in the paragraph above still holds.
+
+**2026-11-09: a third advisory, same position.** Dependabot's three open alerts are
+these two plus [GHSA-x9r9-c232-4q39](https://github.com/advisories/GHSA-x9r9-c232-4q39)
+(`load_custom_generate()` writes a repo's `custom_generate/generate.py` to the module
+cache before the trust check; affects <= 5.8.1, no patched version listed). Also past
+optimum-intel's cap, and the export never calls `load_custom_generate`. The Canary export
+runs its own transformers 5.22.2 (PEP 723) and is not in `uv.lock`.
 
 **2026-10-02: the default model's source is pinned and checked.** optimum-cli
 has no `--revision` (optimum-intel 2.2.0), so `vinowhisper.source` downloads
