@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from vinowhisper import config, devices, vocabulary
-from vinowhisper.canary import CanaryTranscriber
 from vinowhisper.transcriber import WhisperTranscriber
 
 
@@ -154,8 +153,94 @@ def test_the_prompt_comes_out_of_the_answers_token_budget(pipeline, monkeypatch)
     assert biased == config.WHISPER_MAX_TOKENS - 100 - config.MAX_TOKENS_MARGIN < plain
 
 
-def test_canary_takes_no_vocabulary():
-    assert vocabulary.unsupported("CPU", config.CANARY_MODEL)
-    assert vocabulary.unsupported("NPU", config.WHISPER_MODEL)
-    assert vocabulary.unsupported("GPU", config.WHISPER_MODEL) is None
-    assert CanaryTranscriber._generate.__defaults__ == (False,)
+def test_only_whisper_off_the_npu_takes_the_prompt():
+    assert vocabulary.unprompted("CPU", config.CANARY_MODEL)
+    assert vocabulary.unprompted("NPU", config.WHISPER_MODEL)
+    assert vocabulary.unprompted("GPU", config.WHISPER_MODEL) is None
+
+
+TERMS = ["Cresswell", "Estafania", "Neverbend", "Southey", "Poyser", "Kubernetes", "Wayland"]
+
+
+@pytest.mark.parametrize(
+    ("heard", "typed"),
+    [
+        ("added Creswell, avoiding", "added Cresswell, avoiding"),
+        ("Donna Estefania, who", "Donna Estafania, who"),
+        ("misses Neverbent.", "misses Neverbend."),
+        ("inserting Sothey's reply", "inserting Southey's reply"),
+        ("said Poiser", "said Poyser"),
+    ],
+)
+def test_a_near_miss_spelling_becomes_the_listed_term(heard, typed):
+    """These are what Canary and Whisper wrote for LibriSpeech names, 2026-11-10."""
+    assert vocabulary.correct(heard, TERMS) == typed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the wayward poster",  # a different first letter, or too far
+        "Kubernetes and Wayland",  # already right
+        "south of the poise",  # short words are left alone
+        "Cooper Netties",  # two words for one term: the decoder prompt's job
+    ],
+)
+def test_words_that_are_not_a_near_miss_are_left_alone(text):
+    assert vocabulary.correct(text, TERMS) == text
+
+
+def test_characterization_short_and_multi_word_terms_are_never_fuzzy_matched():
+    """characterization: a term under five letters has real words one letter away
+    ("Vino"/"vine"), and a multi-word term would need words joined before comparing.
+    Both are exact-only here; loosening either trades missed names for changed words,
+    with no way for the user to see what was changed."""
+    assert vocabulary.correct("a vine and a fine Saoirse Ronin", ["Vino", "Saoirse Ronan"]) == (
+        "a vine and a fine Saoirse Ronin"
+    )
+
+
+def _echo_pipeline(monkeypatch, tmp_path, prompted, plain):
+    calls = []
+
+    class Pipeline:
+        def __init__(self, model_dir, device, **kwargs):
+            pass
+
+        def get_tokenizer(self):
+            return _Tokenizer()
+
+        def generate(self, samples, streamer, **kwargs):
+            calls.append(kwargs)
+            streamer(prompted if "hotwords" in kwargs else plain)
+
+    genai = ModuleType("openvino_genai")
+    genai.WhisperPipeline = Pipeline
+    monkeypatch.setitem(sys.modules, "openvino_genai", genai)
+    monkeypatch.setattr(config, "FAILED_DEVICES_FILE", tmp_path / "failed-devices.json")
+    monkeypatch.setattr(config, "model_dir", lambda kind, multilingual: tmp_path)
+    monkeypatch.setattr(WhisperTranscriber, "_check_export", lambda self, kind, model_dir: None)
+    config.VOCABULARY_FILE.write_text("Prynne\nKubernetes\n")
+    return calls
+
+
+def test_a_decode_that_is_only_listed_terms_over_noise_falls_back_to_the_plain_one(
+    monkeypatch, tmp_path
+):
+    """Measured 2026-11-10: on noise the prompted decoder wrote "Prynne," where the
+    plain one wrote "you" (7 of 45 clips, none with this check)."""
+    calls = _echo_pipeline(monkeypatch, tmp_path, " Prynne,", " you")
+    assert _decode(_transcriber(monkeypatch, "CPU")) == " you"
+    assert len(calls) == 2
+
+
+def test_a_listed_term_spoken_alone_is_kept(monkeypatch, tmp_path):
+    calls = _echo_pipeline(monkeypatch, tmp_path, " Kubernetes.", " Cooper Netties.")
+    assert _decode(_transcriber(monkeypatch, "CPU")) == " Kubernetes."
+    assert len(calls) == 2
+
+
+def test_ordinary_speech_is_decoded_once(monkeypatch, tmp_path):
+    calls = _echo_pipeline(monkeypatch, tmp_path, " I deployed Kubernetes today.", " unused")
+    assert _decode(_transcriber(monkeypatch, "CPU")) == " I deployed Kubernetes today."
+    assert len(calls) == 1

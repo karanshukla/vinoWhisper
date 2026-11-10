@@ -197,16 +197,12 @@ def _vocabulary() -> list[Result]:
         kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
     except devices.DeviceError:
         kind = "NPU"
-    reason = vocabulary.unsupported(kind, config.load_language()[2])
+    reason = vocabulary.unprompted(kind, config.load_language()[2])
+    status = WARN if problem else OK
     if reason is not None:
-        return [
-            Result(
-                WARN,
-                label,
-                f"{summary}, not used: {reason}. replacements.json still applies.",
-            )
-        ]
-    return [Result(WARN if problem else OK, label, f"{summary}, given to dictation on {kind}")]
+        # Still worth having: near-miss spellings are corrected after the decode.
+        return [Result(status, label, f"{summary}, spelling correction only: {reason}")]
+    return [Result(status, label, f"{summary}, given to dictation on {kind} and used to correct")]
 
 
 def _models() -> list[Result]:

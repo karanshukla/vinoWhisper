@@ -221,19 +221,20 @@ def test_vocabulary_check_says_where_it_is_used(monkeypatch):
     config.VOCABULARY_FILE.write_text("Kubernetes\nvinoWhisper\n")
     monkeypatch.setattr(devices, "available", lambda: [devices.Device("CPU", "CPU")])
     result = doctor._vocabulary()[0]
-    assert (result.status, result.detail) == (doctor.OK, "2 terms, given to dictation on CPU")
+    assert (result.status, result.detail) == (
+        doctor.OK,
+        "2 terms, given to dictation on CPU and used to correct",
+    )
 
 
-def test_characterization_vocabulary_on_the_npu_is_a_warning_not_a_silent_no_op(monkeypatch):
-    """characterization: OpenVINO GenAI's NPU pipeline asserts that hotwords and
-    initial_prompt are unset (pipeline_static.cpp, checked at 2026.4.1.0 and master
-    2026-11-10), so the server leaves the vocabulary out there. Reporting OK would tell
-    someone their list is working when no decode ever sees it."""
+def test_vocabulary_on_the_npu_says_it_only_corrects_spelling(monkeypatch):
+    """The NPU pipeline refuses a decoder prompt, so the list is not given to Whisper
+    there. Saying "given to dictation" would claim a decode that never happens."""
     config.VOCABULARY_FILE.write_text("Kubernetes\n")
     monkeypatch.setattr(devices, "available", lambda: [devices.Device("NPU", "NPU")])
     result = doctor._vocabulary()[0]
-    assert result.status == doctor.WARN
-    assert "not used" in result.detail
+    assert result.status == doctor.OK
+    assert "spelling correction only" in result.detail
     assert "NPU" in result.detail
 
 

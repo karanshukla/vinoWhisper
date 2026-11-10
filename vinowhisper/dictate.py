@@ -15,7 +15,7 @@ from typing import Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, cleanup, config, replacements
+from . import __version__, audio, cleanup, config, replacements, vocabulary
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
@@ -233,6 +233,7 @@ class _Decoder:
         warmup: _Warmup,
         emit: Emit,
         table: dict[str, str] | None = None,
+        terms: list[str] | None = None,
     ) -> None:
         self.texts: list[str] = []
         self.error: Exception | None = None
@@ -240,6 +241,7 @@ class _Decoder:
         self._warmup = warmup
         self._emit = emit
         self._table = table or {}
+        self._terms = terms or []
         self._live = True
         self._gate = threading.Lock()
         self._pending: queue.Queue[tuple[np.ndarray, int | None, int, float] | None] = queue.Queue()
@@ -260,13 +262,13 @@ class _Decoder:
     def joined(self) -> str:
         # Replacements run on the joined text, not per piece, so a phrase split
         # across two segments still matches.
-        return replacements.apply(self.spoken(), self._table)
+        return self.apply_replacements(self.spoken())
 
     def apply_replacements(self, text: str) -> str:
-        return replacements.apply(text, self._table)
+        return replacements.apply(vocabulary.correct(text, self._terms), self._table)
 
     def joined_with(self, tail: str) -> str:
-        return replacements.apply(clean(" ".join([*self.texts, tail])), self._table)
+        return self.apply_replacements(clean(" ".join([*self.texts, tail])))
 
     def submit(self, samples: np.ndarray) -> None:
         self.behind_job = self._busy or not self._pending.empty()
@@ -425,7 +427,9 @@ class Dictation:
         self._unsettled = []
         self._cleaner.prepare()
         self._segmenter = _Segmenter(keep=bool(os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")))
-        self._decoder = _Decoder(self._client, warmup, self._emit, replacements.load())
+        self._decoder = _Decoder(
+            self._client, warmup, self._emit, replacements.load(), vocabulary.load()
+        )
         recording = self._recorder(self._tap)
         try:
             recording.__enter__()

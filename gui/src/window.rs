@@ -1008,8 +1008,9 @@ impl SettingsWindow {
         let full = self.vocabulary.len() >= vocabulary::MAX_TERMS;
         let help = match &self.vocabulary_error {
             Some(error) => error.clone(),
-            None => "Names and jargon Whisper should expect when you dictate. Used on a GPU or \
-                     CPU: the NPU cannot take a word list yet, and Canary never does."
+            None => "Names and jargon to expect when you dictate. A near-miss spelling is \
+                     corrected to the term as written here; Whisper on a GPU or CPU is also \
+                     told to listen for them."
                 .to_owned(),
         };
         let tone = if self.vocabulary_error.is_some() {

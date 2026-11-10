@@ -186,6 +186,7 @@ class WhisperTranscriber(BaseTranscriber):
     model = config.WHISPER_MODEL
     _vocabulary_stamp: tuple[int, int] | None | bool = False
     _hotwords: tuple[str, int] | None = None
+    _terms: list[str] = []
 
     def _default_model_dir(self, kind: str) -> Path:
         return config.model_dir(kind, self.multilingual)
@@ -242,12 +243,13 @@ class WhisperTranscriber(BaseTranscriber):
 
     def hotwords(self) -> tuple[str, int] | None:
         kind = self.selection.kind if self.selection else "?"
-        if self._pipeline is None or vocabulary.unsupported(kind, self.model):
+        if self._pipeline is None or vocabulary.unprompted(kind, self.model):
             return None
         stamp = vocabulary.stamp()
         if stamp != self._vocabulary_stamp:
             self._vocabulary_stamp = stamp
-            self._hotwords = self._fit(vocabulary.load()) if stamp else None
+            self._terms = vocabulary.load() if stamp else []
+            self._hotwords = self._fit(self._terms)
         return self._hotwords
 
     def _fit(self, terms: list[str]) -> tuple[str, int] | None:
@@ -283,13 +285,30 @@ class WhisperTranscriber(BaseTranscriber):
         options: dict[str, str] = dict(self.generate_options())
         limit = config.max_new_tokens(samples.size / config.SAMPLE_RATE_HZ, self.multilingual)
         hotwords = self.hotwords() if biased else None
-        if hotwords is not None:
-            # The prompt and the answer share the decoder's positions.
-            options["hotwords"] = hotwords[0]
-            limit = min(limit, config.WHISPER_MAX_TOKENS - hotwords[1] - config.MAX_TOKENS_MARGIN)
+        if hotwords is None:
+            pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            return
+        heard: list[str] = []
+
+        def collect(piece: str) -> bool:
+            heard.append(piece)
+            return False
+
+        # The prompt and the answer share the decoder's positions.
+        room = config.WHISPER_MAX_TOKENS - hotwords[1] - config.MAX_TOKENS_MARGIN
         pipeline.generate(  # type: ignore[attr-defined]
             samples,
-            streamer=streamer,
-            max_new_tokens=limit,
+            streamer=collect,
+            max_new_tokens=min(limit, room),
+            hotwords=hotwords[0],
             **options,
         )
+        text = "".join(heard)
+        # On noise the prompt answers with its own terms; a plain decode says whether
+        # anything like them was spoken.
+        if vocabulary.only_terms(text, self._terms):
+            biased_text, heard[:] = text, []
+            pipeline.generate(samples, streamer=collect, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            if vocabulary.echoes(biased_text, "".join(heard)):
+                text = "".join(heard)
+        streamer(text)
