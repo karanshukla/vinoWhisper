@@ -844,6 +844,15 @@ def test_cleanup_sees_the_text_before_replacements_and_replacements_still_apply(
     assert records[-1]["text"] == "HELLO there"
 
 
+def test_the_vocabulary_corrects_spelling_before_replacements_run(monkeypatch):
+    """A replacement keyed on the listed spelling has to see it, so correction goes first."""
+    monkeypatch.setattr(dictate.vocabulary, "load", lambda: ["Hellow"])
+    monkeypatch.setattr(dictate.replacements, "load", lambda: {"hellow": "HELLOW!"})
+    cleaner = FakeCleaner(lambda text: _outcome(text), wants=False)
+    records = _run_cleaned(cleaner)
+    assert records[-1]["text"] == "um HELLOW! there"
+
+
 def test_an_inactive_cleaner_costs_no_event_and_no_call():
     cleaner = FakeCleaner(None)
     records = _run_cleaned(cleaner)

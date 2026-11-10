@@ -36,7 +36,7 @@ use smithay_client_toolkit::{delegate_registry, registry_handlers};
 use crate::announce;
 use crate::captions::{Captions, Phase};
 use crate::clipboard::Clipboard;
-use crate::dictation::{Action, Dictation, Recent};
+use crate::dictation::{Action, Dictation, Recent, Spacing};
 use crate::dictator::Dictator;
 use crate::idle::{self, IdleTimer};
 use crate::install;
@@ -85,6 +85,7 @@ pub enum Command {
     ClearRecent,
     ConfigureShortcut,
     OpenSettings,
+    OpenVocabulary,
     SetAutostart(bool),
     Shortcut(shortcut::State),
     DictateKey {
@@ -188,6 +189,7 @@ pub struct App {
 
     dictation: Dictation,
     recent: Recent,
+    spacing: Spacing,
     dictator: Option<Dictator>,
     dictator_generation: u64,
     dictate_program: Option<PathBuf>,
@@ -353,6 +355,7 @@ pub fn run(options: Options) -> Result<(), String> {
         shortcut_state: shortcut::State::Pending,
         dictation: Dictation::new(),
         recent: Recent::default(),
+        spacing: Spacing::default(),
         dictator: None,
         dictator_generation: 0,
         clipboard,
@@ -404,7 +407,8 @@ impl App {
             Command::CopyRecent(id) => self.copy_recent(id),
             Command::ClearRecent => self.recent.clear(),
             Command::ConfigureShortcut => self.shortcut.configure(),
-            Command::OpenSettings => self.open_settings(),
+            Command::OpenSettings => self.open_settings(&[]),
+            Command::OpenVocabulary => self.open_settings(&["--page".into(), "speech".into()]),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
@@ -447,6 +451,7 @@ impl App {
                 if result.is_ok() {
                     self.clear_clipboard_after_paste();
                 }
+                self.spacing.pasted(result.is_ok(), Instant::now());
                 self.dictation.pasted(result);
                 self.dictate(None);
             }
@@ -619,8 +624,8 @@ impl App {
         true
     }
 
-    fn open_settings(&mut self) {
-        if spawn_settings(&[]).is_err() {
+    fn open_settings(&mut self, args: &[String]) {
+        if spawn_settings(args).is_err() {
             self.flash(NO_SETTINGS_WINDOW);
         }
     }
@@ -908,12 +913,22 @@ impl App {
         if action == Some(Action::Start) && self.settings.pause_media {
             self.media.pause();
         }
+        if action == Some(Action::Start) {
+            self.spacing.started(Instant::now());
+        }
         match action {
             Some(Action::Start) => self.tell_dictator("start"),
             Some(Action::HandsFree) => self.tell_dictator("hands-free"),
             Some(Action::Stop) => self.tell_dictator("stop"),
             Some(Action::Paste(text)) => match &mut self.clipboard {
-                Some(clipboard) => clipboard.set(&text, &self.qh),
+                Some(clipboard) => {
+                    let lead = self.spacing.lead(&text);
+                    if self.settings.smart_spacing && !lead.is_empty() {
+                        clipboard.set(&format!("{lead}{text}"), &self.qh);
+                    } else {
+                        clipboard.set(&text, &self.qh);
+                    }
+                }
                 None => self
                     .dictation
                     .pasted(Err("this desktop gives no clipboard access".into())),

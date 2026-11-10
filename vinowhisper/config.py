@@ -103,6 +103,10 @@ LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
 REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
 
+# One term per line, given to Whisper's decoder as a prompt for dictation (issue #161).
+VOCABULARY_FILE = _config_home() / "vinowhisper/vocabulary.txt"
+VOCABULARY_MAX_TOKENS = 120
+
 # Written by the settings window; the API key is never in it (see cleanup.SECRET_ATTRIBUTES).
 CLEANUP_FILE = _config_home() / "vinowhisper/cleanup.json"
 CLEANUP_MODEL_ID = "arankays/SmolLM3-3B-int4-cw-ov"

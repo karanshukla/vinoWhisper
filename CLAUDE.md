@@ -457,6 +457,37 @@ file". The choices that answer the issue's open questions:
   run on the laptop.** Write-ups: `docs/sessions.md` "Attestation", `docs/tray.md`
   "Pausing media while you dictate".
 
+## Vocabulary (#161) and spacing (#120), added 2026-11-10
+
+`~/.config/vinowhisper/vocabulary.txt`, one term per line, dictation only. Write-up and
+table in `docs/tray.md`, "A personal vocabulary".
+
+- **Two mechanisms.** `vocabulary.correct` (in `vinowhisper-dictate`, before
+  replacements) fixes near-miss spellings on every device and model. Whisper on a GPU
+  or CPU also gets the list as `hotwords` (`X-Vinowhisper-Vocabulary` header; the server
+  reads the file).
+- **The NPU gets correction only.** `pipeline_static.cpp` still asserts `hotwords` and
+  `initial_prompt` unset (2026.4.1.0 and master). That is OpenVINO's wrapper, not the
+  NPU: our own Whisper decode loop on the NPU (as `canary.py` does) would lift it, and
+  nobody has tried. `test_characterization_the_npu_never_gets_the_prompt` pins it.
+- Measured on a CPU (LibriSpeech, 47 spoken names): Whisper 28 right, 39 with correction
+  alone, 47 with a 20-term prompt; Canary 35, 45 with correction. Term-free speech
+  3.23% to 3.36% WER with the prompt.
+- The prompt is capped at 120 tokens (~30 names): 200 tokens scored worse than no list
+  on the name utterances, and OpenVINO GenAI does not trim (past 448 positions it
+  returns garbage, no error).
+- **The prompt makes Whisper write a listed name on noise** (7 of 45 clips). A decode
+  that is only listed terms is re-run plain and dropped if the two differ; 0 of 45 after.
+- **Boosting Canary's logits was tried and dropped**: 35 to 37 of 47, and a bonus on a
+  word's first piece broke "Southey". It needs a beam search.
+- **Canary on a CPU with AVX512_BF16 returned empty text** (OpenVINO picks bfloat16);
+  `canary.py` now asks for f32 on the CPU. Found on a cloud Xeon; this laptop's CPU has
+  no BF16, so it never showed here.
+- Never run on an NPU, a GPU, a microphone, or in a real dictation.
+- `smart_spacing` in `gui.json` (Speech page, off by default): a space before a
+  dictation whose key press comes within 30 s of the last successful paste
+  (`dictation::Spacing`). A guess, since focus is invisible. Unit tests only.
+
 ## Architecture
 
 ```
@@ -481,6 +512,7 @@ vinowhisper/
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
+  vocabulary.py   vocabulary.txt: spelling correction toward listed terms, and Whisper's hotwords prompt
   cleanup.py      LLM cleanup of a dictation: prompt, the deletion-only checks, breaker,
                   vinowhisper-cleanup (model status|fetch|delete)
   llm.py          the local cleanup model: pins, download, LLMPipeline in the server

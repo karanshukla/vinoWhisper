@@ -317,6 +317,35 @@ was paused and resumed, the already-paused one was never touched. **Not yet run 
 the laptop**, so real browsers and the timing against the microphone's first 90-290ms
 are unmeasured.
 
+### A space between dictations
+
+Added 2026-11-10, from [issue #120](https://github.com/karanshukla/vinoWhisper/issues/120).
+Off by default: **Space between dictations** on the settings window's Speech page,
+stored as `smart_spacing` in `gui.json`.
+
+Two dictations in a row into the same field come out as `First sentence.Second
+sentence.`, because each paste is only its own text. With the setting on, the tray
+types a space first when all of these hold:
+
+- the previous dictation was typed (not left on the clipboard after a failed paste),
+- the key for this one went down less than 30 seconds after that paste,
+- the previous text ended in something other than whitespace, and this one starts
+  with a letter or a digit.
+
+The 30 seconds run from the last paste to the next key press, not to the next paste,
+so a long second dictation still follows the first. One space at most, and none
+before text that opens with punctuation.
+
+**It is a guess.** Wayland does not say what has focus and the tray cannot read the
+field (see "Where the text goes is not checked" below), so it cannot tell that you
+clicked into another field between the two. If you did, that field gets a leading
+space. That is why it is off by default. The space is part of what goes on the
+clipboard, so a paste that fails leaves it there too. Recent dictations and the pill
+show the text without it. The cleanup model never sees the previous dictation.
+
+The rule is `Spacing` in `tray/src/dictation.rs` and has unit tests. Not run in a
+live session yet.
+
 ### Cleaning up what you say
 
 Optional, off by default (beta). Turn on **Clean up dictation** on the settings
@@ -553,8 +582,9 @@ maps what Whisper writes to what you want typed:
 {"open vino": "OpenVINO", "vino whisper": "vinoWhisper", "k8s": "Kubernetes"}
 ```
 
-It is post-processing because on the NPU `initial_prompt` is refused outright
-(CLAUDE.md, Known gotchas), so the model cannot be biased toward a vocabulary.
+It is post-processing, so it works on every device and with both speech models.
+On a GPU or CPU the decoder can also be told which words to expect: see "A personal
+vocabulary" below.
 Matching is case-insensitive and on whole words, so "vino" leaves "vinous"
 alone, with the longest key first and any punctuation left where it was
 ("open vino." becomes "OpenVINO."). Spaces inside a key match any run of
@@ -569,6 +599,126 @@ Captions are left out on purpose. They go through the stitcher, which compares
 words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
+
+**A personal vocabulary, added 2026-11-10**, from [issue #161](https://github.com/karanshukla/vinoWhisper/issues/161).
+Replacements fix a word after the model got it wrong, and only when it gets it wrong
+the same way each time. `~/.config/vinowhisper/vocabulary.txt` lists the words to
+expect instead, one term per line:
+
+```
+# names and jargon; blank lines and lines starting with # are skipped
+Kubernetes
+vinoWhisper
+Saoirse Ronan
+```
+
+Edit the file, use the list under **Vocabulary** on the settings window's Speech
+page, or pick **Add to dictionary…** under the tray's Recent dictations, which opens
+that page. An edit applies to the next dictation. Dictation only: captions and file
+transcription do not use it.
+
+The list is used in two ways, and which you get depends on the device and model:
+
+| | Whisper on GPU or CPU | Whisper on the NPU | Canary, any device |
+|---|---|---|---|
+| Spelling correction after the decode | yes | yes | yes |
+| Given to the decoder as a prompt | yes | no | no |
+
+**Spelling correction** (`vocabulary.correct`, in `vinowhisper-dictate`) runs
+everywhere. A word that is one letter off a listed term of five to seven letters, or
+up to two letters off a longer one, and starts with the same letter, is replaced by
+the term as you wrote it: "Creswell" becomes "Cresswell", "Sothey's" becomes
+"Southey's". It runs before `replacements.json`. Terms under five letters and terms
+of more than one word are matched exactly only, so they are never "corrected" into.
+A name the model splits into two words ("Cooper Netties") is out of its reach.
+It has no dictionary, so a real word that close to a term is rewritten too: with
+"Poyser" listed, "poser" becomes "Poyser", and with "Claude" listed, "clause" does.
+None turned up in the 12,961 words measured below, but a term that sits one letter
+from a word you use is better left to `replacements.json`.
+
+**The decoder prompt** is Whisper's `hotwords`, and OpenVINO GenAI's NPU pipeline
+refuses it: `pipeline_static.cpp` asserts that both `hotwords` and `initial_prompt`
+are unset (read at 2026.4.1.0 and on master, 2026-11-10). That is a limit of
+OpenVINO's wrapper, not of the NPU. Lifting it here would mean driving Whisper's
+decoder ourselves on the NPU, as `canary.py` does for Canary; that has not been
+tried. `vinowhisper-doctor` reports `vocabulary` with which of the two is in use.
+
+How the prompt is passed, where it is:
+
+- `vinowhisper-dictate` marks its requests with an `X-Vinowhisper-Vocabulary`
+  header and the server reads the file, again whenever it changes. Captions decode
+  every 0.7 s, so they would pay for the prompt on every window, and a term the
+  prompt talked the decoder into would be committed to a transcript that cannot
+  take it back.
+- **As `hotwords`, a comma-separated list.** `hotwords` and `initial_prompt` become
+  the same decoder tokens for audio up to 30 s (`context_tokens.cpp`: both go after
+  `<|startofprev|>`; `initial_prompt` only on the first 30 s chunk). Six utterances
+  decoded with each gave the same text, and every dictation piece is under 30 s.
+- **At most 120 tokens**, which is about 30 names (the test names took four tokens
+  each), of at most 100 terms of 64 characters. Terms past the token limit are left
+  out, in file order, and the server's journal says how many were used. The prompt
+  shares Whisper's 448 decoder positions with the answer and OpenVINO GenAI does not
+  trim it: a prompt of 899 tokens returned `, Qu, Qu` with no error. The answer's
+  token limit is lowered by the prompt's length.
+- **A decode that is nothing but listed terms is checked.** On noise the prompted
+  decoder writes a term from the list ("Prynne,") where the plain one writes "you".
+  So such a decode is run again without the prompt, and if the two are not alike
+  (`vocabulary.ECHO_SIMILARITY`) the plain one is used. A term really spoken alone
+  survives when the plain decode sounds like it ("Cooper Netties"); that case has a
+  unit test and has not been tried with real audio.
+
+Measured 2026-11-10 on a CPU (whisper-small.en fp16 and Canary 1B v2 fp16, OpenVINO
+2026.4.1, a 4-core cloud Xeon), on 700 utterances of LibriSpeech test-clean (every
+second one of the first 1,400; 85.7 minutes). The vocabulary was 15 proper names
+from the reference text, picked by how rarely Whisper's tokenizer has seen them
+(three or more tokens each) and not by what a model got wrong, plus five terms that
+are never spoken (Kubernetes, vinoWhisper, OpenVINO, PipeWire, Wayland). The names
+are spoken 47 times.
+
+| Model and what the list does | Names right, of 47 | WER, utterances with a name | WER, the rest (12,961 words) |
+|---|---|---|---|
+| Whisper, no list | 28 | 6.32% | 3.23% |
+| Whisper, correction only (the NPU's case) | 39 | | unchanged |
+| Whisper, prompt, 20 terms (80 tokens) | 47 | 4.30% | 3.36% |
+| Whisper, prompt, 59 terms (200 tokens) | 45 | 6.75% | 3.26% |
+| Canary, no list | 35 | | |
+| Canary, correction only | 45 | | |
+
+Canary was run on the 42 utterances with a name only. The correction rows are the
+no-list transcripts passed through `vocabulary.correct`, so they say what the NPU
+would type without having run on one.
+
+What that says:
+
+- **Correction alone gets most of the way**, and costs nothing: across the 700
+  Whisper transcripts it changed 12 utterances, every one a listed name. The one
+  time it wrote a name the reference does not have, the reference has a typo
+  ("LEOCADI"). What it cannot reach is a name the model hears as other words.
+- **The prompt gets the rest**, 47 of 47, and is not free. Speech with none of the
+  terms gets slightly worse, because the prompt changes the decoder's path on about
+  one utterance in seven. Most of those are spelling ("gray"/"grey", "ten"/"10") in
+  both directions, and a few are damage: "utter a sigh" became "atturriSai", in the
+  camel case of the tech terms on the list.
+- **A longer prompt is worse, not better.** At 200 tokens two names were lost
+  again, the utterances with a name scored worse than with no list, and the mean
+  decode went from 0.80 s to 1.18 s. At 321 tokens (100 terms, 350 utterances) noise
+  produced runs of "impenetrable, impenetrable". That is why the limit is 120.
+- **Noise:** of 45 clips of white and brown noise, hum and half-second word
+  fragments, the 20-term prompt wrote a listed name on 7. With the check above, 0.
+- A term that is not spoken was never written into speech (0 of 700).
+
+**Tried and not adopted: boosting Canary's logits.** Canary's decode loop is ours,
+so pieces that carry on spelling a listed term can be given a bonus at each step.
+With a bonus of 4 or 8 on continuations it took the 47 names from 35 to 36 or 37,
+and a bonus on the first piece of a word turned "Southey" into "Southie": greedy
+decoding cannot take a piece back once the rest of the name fails to follow. The
+names Canary misses are ones it starts spelling differently, which is what
+correction after the fact fixes. Doing it properly needs a beam search.
+
+Not measured: anything on an NPU or a GPU, a microphone, real dictation, or the
+multilingual model. LibriSpeech is read audiobook speech, and the names are spelled
+the way the books spell them; your own names and jargon may behave differently. One
+corpus, one machine.
 
 #### LLM cleanup (beta)
 

@@ -380,6 +380,75 @@ impl Summaries {
     }
 }
 
+/// Terms the dictation decoder is told to expect (#161), one per line. The server reads
+/// the same file (vocabulary.py), so the rules for a line match it.
+pub mod vocabulary {
+    use std::io;
+    use std::path::{Path, PathBuf};
+
+    pub const MAX_TERMS: usize = 100;
+    pub const MAX_TERM_CHARS: usize = 64;
+
+    pub fn path() -> PathBuf {
+        super::config_home().join("vinowhisper/vocabulary.txt")
+    }
+
+    fn term(line: &str) -> Option<String> {
+        let term = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let usable = !term.is_empty()
+            && !term.starts_with('#')
+            && !term.contains("<|")
+            && term.chars().count() <= MAX_TERM_CHARS;
+        usable.then_some(term)
+    }
+
+    fn same(a: &str, b: &str) -> bool {
+        a.to_lowercase() == b.to_lowercase()
+    }
+
+    pub fn load_from(path: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut terms: Vec<String> = Vec::new();
+        for found in text.lines().filter_map(term) {
+            if !terms.iter().any(|held| same(held, &found)) {
+                terms.push(found);
+            }
+        }
+        terms.truncate(MAX_TERMS);
+        terms
+    }
+
+    /// Appends the term, keeping comments and order. `Ok(false)` when it is not a usable
+    /// term, is already listed, or the list is full.
+    pub fn add_to(path: &Path, new: &str) -> io::Result<bool> {
+        let Some(new) = term(new) else {
+            return Ok(false);
+        };
+        let held = load_from(path);
+        if held.len() >= MAX_TERMS || held.iter().any(|term| same(term, &new)) {
+            return Ok(false);
+        }
+        let mut text = std::fs::read_to_string(path).unwrap_or_default();
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&new);
+        text.push('\n');
+        super::write_text(path, &text)?;
+        Ok(true)
+    }
+
+    pub fn remove_from(path: &Path, old: &str) -> io::Result<()> {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let kept: String = text
+            .lines()
+            .filter(|line| term(line).is_none_or(|held| !same(&held, old)))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        super::write_text(path, &kept)
+    }
+}
+
 pub fn transcripts_dir() -> PathBuf {
     data_home().join("vinowhisper/transcripts")
 }
@@ -507,6 +576,9 @@ pub struct Settings {
     pub open_in: OpenIn,
     /// Pause MPRIS players that are playing while dictating, and resume them after (#163).
     pub pause_media: bool,
+    /// A space before a dictation typed straight after another one (#120). A guess: the
+    /// tray cannot see which field has focus.
+    pub smart_spacing: bool,
 }
 
 impl Default for Settings {
@@ -521,6 +593,7 @@ impl Default for Settings {
             save_transcripts: false,
             open_in: OpenIn::default(),
             pause_media: false,
+            smart_spacing: false,
         }
     }
 }
@@ -583,11 +656,15 @@ pub fn home() -> PathBuf {
 // Renamed over the file, so a reader or a crash never sees half of one: every
 // loader reads a broken file as defaults, silently.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    let text = serde_json::to_string_pretty(value).map_err(io::Error::other)? + "\n";
+    write_text(path, &text)
+}
+
+fn write_text(path: &Path, text: &str) -> io::Result<()> {
     // Through a symlink, so a dotfiles-managed link stays a link.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let text = serde_json::to_string_pretty(value).map_err(io::Error::other)? + "\n";
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let partial = dir.join(format!(".{name}.{}.partial", std::process::id()));
     let written = std::fs::File::create(&partial).and_then(|mut file| {
@@ -648,6 +725,7 @@ mod tests {
             save_transcripts: true,
             open_in: OpenIn::TextEditor,
             pause_media: true,
+            smart_spacing: true,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -793,6 +871,63 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"pause_media": true}"#).unwrap();
         assert!(Settings::load_from(&path).pause_media);
+    }
+
+    #[test]
+    fn the_vocabulary_is_one_term_per_line_read_the_way_the_server_reads_it() {
+        let path = scratch("vocabulary").with_file_name("vocabulary.txt");
+        assert!(vocabulary::load_from(&path).is_empty());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "# names\nKubernetes\n\n  vino   Whisper \nkubernetes\n<|endoftext|>\n",
+        )
+        .unwrap();
+        assert_eq!(vocabulary::load_from(&path), ["Kubernetes", "vino Whisper"]);
+    }
+
+    #[test]
+    fn adding_a_term_appends_it_once_and_keeps_the_comments() {
+        let path = scratch("vocabulary-add").with_file_name("vocabulary.txt");
+        assert!(vocabulary::add_to(&path, " Saoirse  Ronan ").unwrap());
+        assert!(!vocabulary::add_to(&path, "saoirse ronan").unwrap());
+        assert!(!vocabulary::add_to(&path, "  ").unwrap());
+        assert!(!vocabulary::add_to(&path, "# not a term").unwrap());
+        std::fs::write(&path, "# mine\nSaoirse Ronan").unwrap();
+        assert!(vocabulary::add_to(&path, "Kubernetes").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# mine\nSaoirse Ronan\nKubernetes\n"
+        );
+    }
+
+    #[test]
+    fn a_full_vocabulary_takes_no_more() {
+        let path = scratch("vocabulary-full").with_file_name("vocabulary.txt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let full: String = (0..vocabulary::MAX_TERMS)
+            .map(|n| format!("t{n}\n"))
+            .collect();
+        std::fs::write(&path, full).unwrap();
+        assert!(!vocabulary::add_to(&path, "one more").unwrap());
+    }
+
+    #[test]
+    fn removing_a_term_drops_every_spelling_of_it_and_nothing_else() {
+        let path = scratch("vocabulary-remove").with_file_name("vocabulary.txt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "# mine\nKubernetes\nSaoirse\nkubernetes\n").unwrap();
+        vocabulary::remove_from(&path, "Kubernetes").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# mine\nSaoirse\n");
+    }
+
+    #[test]
+    fn spacing_between_dictations_is_off_until_the_file_says_so() {
+        assert!(!Settings::default().smart_spacing);
+        let path = scratch("smart-spacing");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"smart_spacing": true}"#).unwrap();
+        assert!(Settings::load_from(&path).smart_spacing);
     }
 
     #[test]

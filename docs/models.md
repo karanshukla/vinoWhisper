@@ -48,6 +48,7 @@ Traps found building it:
 
 - **The feature extractor counts `len // 160` frames as real, one fewer than it computes** (1200 of 1201 for 12 s). Without that mask the encoder's output moves by up to 2.5 and decoding degrades.
 - **The CPU plugin can't compile the INT8 IR** (`m_element_type.is_static()`, OpenVINO 2026.4.0), hence the fp16 export for CPU/GPU.
+- **On a CPU with AVX512_BF16 the fp16 export returned no text at all** (2026-11-10, a cloud Xeon, OpenVINO 2026.4.1): the CPU plugin picks bfloat16 there and the decoder's first token is end-of-text. `canary.py` asks for `INFERENCE_PRECISION_HINT=f32` on the CPU. The Core 5 320 has no BF16, so it never showed on the laptop.
 - **INT4 channel-wise on the encoder was no faster than INT8 on the NPU** and changed tokens.
 
 ## Measured 2026-11-06 (NPU, Core 5 320, OpenVINO 2026.4.0)

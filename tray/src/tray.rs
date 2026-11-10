@@ -145,6 +145,15 @@ fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
             .into(),
         );
     }
+    submenu.push(MenuItem::Separator);
+    submenu.push(
+        StandardItem {
+            label: "Add to dictionary…".into(),
+            activate: Box::new(|tray: &mut Tray| tray.send(Command::OpenVocabulary)),
+            ..Default::default()
+        }
+        .into(),
+    );
     SubMenu {
         label: "Recent dictations".into(),
         icon_name: MenuIcon::Recent.name().into(),
@@ -536,7 +545,7 @@ mod tests {
     #[test]
     fn an_empty_history_says_none_yet_and_offers_no_clear() {
         let item = recent_menu(&Recent::default());
-        assert_eq!(submenu_labels(&item), ["None yet"]);
+        assert_eq!(submenu_labels(&item), ["None yet", "Add to dictionary…"]);
         let MenuItem::SubMenu(menu) = &item else {
             panic!("a submenu");
         };
@@ -547,13 +556,13 @@ mod tests {
     }
 
     #[test]
-    fn the_history_lists_newest_first_with_clear_last() {
+    fn the_history_lists_newest_first_then_clear_and_the_dictionary() {
         let mut recent = Recent::default();
         recent.push("first");
         recent.push("second");
         assert_eq!(
             submenu_labels(&recent_menu(&recent)),
-            ["second", "first", "Clear"]
+            ["second", "first", "Clear", "Add to dictionary…"]
         );
     }
 

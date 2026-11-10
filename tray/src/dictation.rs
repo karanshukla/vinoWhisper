@@ -114,6 +114,46 @@ impl Recent {
     }
 }
 
+pub const SPACING_WINDOW: Duration = Duration::from_secs(30);
+
+// Whether a dictation follows another closely enough to need a space between them (#120).
+// The tray cannot see what has focus, so this is a guess from timing alone.
+#[derive(Debug, Default)]
+pub struct Spacing {
+    last: Option<(Instant, char)>,
+    follows: bool,
+    typing: Option<char>,
+}
+
+impl Spacing {
+    // The key press, not the paste: a long dictation still follows the one before it.
+    pub fn started(&mut self, now: Instant) {
+        self.follows = self.last.is_some_and(|(at, end)| {
+            !end.is_whitespace() && now.saturating_duration_since(at) < SPACING_WINDOW
+        });
+    }
+
+    pub fn lead(&mut self, text: &str) -> &'static str {
+        self.typing = text.chars().next_back();
+        let follows = std::mem::take(&mut self.follows);
+        if follows && text.chars().next().is_some_and(char::is_alphanumeric) {
+            " "
+        } else {
+            ""
+        }
+    }
+
+    // A paste that failed left the text on the clipboard, so nothing was typed to follow.
+    pub fn pasted(&mut self, typed: bool, now: Instant) {
+        let end = self.typing.take();
+        self.last = if typed {
+            end.map(|end| (now, end))
+        } else {
+            None
+        };
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pill {
     pub tone: Tone,
@@ -908,6 +948,57 @@ mod tests {
         let shown = preview(text.trim());
         assert_eq!(shown.chars().count(), PREVIEW_CHARS);
         assert!(shown.starts_with('…'));
+    }
+
+    #[test]
+    fn a_dictation_straight_after_another_gets_a_space() {
+        let base = Instant::now();
+        let mut spacing = Spacing::default();
+        spacing.started(base);
+        assert_eq!(spacing.lead("First sentence."), "");
+        spacing.pasted(true, at(1_000, base));
+        spacing.started(at(5_000, base));
+        assert_eq!(spacing.lead("Second sentence."), " ");
+    }
+
+    #[test]
+    fn the_window_runs_from_the_paste_to_the_next_key_press() {
+        let base = Instant::now();
+        let mut spacing = Spacing::default();
+        spacing.lead("One.");
+        spacing.pasted(true, base);
+        spacing.started(base + SPACING_WINDOW - Duration::from_millis(1));
+        assert_eq!(spacing.lead("Two."), " ");
+        spacing.pasted(true, base);
+        spacing.started(base + SPACING_WINDOW);
+        assert_eq!(spacing.lead("Three."), "");
+    }
+
+    #[test]
+    fn no_space_after_a_failed_paste_or_before_punctuation() {
+        let base = Instant::now();
+        let mut spacing = Spacing::default();
+        spacing.lead("One.");
+        spacing.pasted(false, base);
+        spacing.started(at(1_000, base));
+        assert_eq!(spacing.lead("Two."), "");
+        spacing.pasted(true, at(2_000, base));
+        spacing.started(at(3_000, base));
+        assert_eq!(spacing.lead(", and three."), "");
+    }
+
+    #[test]
+    fn no_space_after_text_that_ended_a_line_and_never_two() {
+        let base = Instant::now();
+        let mut spacing = Spacing::default();
+        spacing.lead("One.\n");
+        spacing.pasted(true, base);
+        spacing.started(at(1_000, base));
+        assert_eq!(spacing.lead("Two."), "");
+        spacing.pasted(true, at(2_000, base));
+        spacing.started(at(3_000, base));
+        assert_eq!(spacing.lead("Three."), " ");
+        assert_eq!(spacing.lead("Three."), "");
     }
 
     #[test]

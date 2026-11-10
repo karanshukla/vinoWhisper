@@ -40,6 +40,7 @@ class _Handler(BaseHTTPRequestHandler):
         received = self.rfile.read(int(self.headers["Content-Length"]))
         self.server.received.append(received)
         self.server.priorities.append(self.headers.get(client.PRIORITY_HEADER))
+        self.server.vocabulary.append(self.headers.get(client.VOCABULARY_HEADER))
         text = f"{len(received)} bytes, café".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -72,6 +73,7 @@ def server(runtime_dir):
     instance = _Server(str(path), _Handler)
     instance.received = []
     instance.priorities = []
+    instance.vocabulary = []
     thread = threading.Thread(target=instance.serve_forever, daemon=True)
     thread.start()
     yield instance
@@ -96,6 +98,13 @@ def test_only_a_file_piece_is_marked_background(server):
     TranscriptionClient().transcribe(samples)
     TranscriptionClient().transcribe(samples, background=True)
     assert server.priorities == [None, "background"]
+
+
+def test_only_a_client_made_for_dictation_asks_for_the_vocabulary(server):
+    samples = np.zeros(1600, dtype=np.float32)
+    TranscriptionClient().transcribe(samples)
+    TranscriptionClient(vocabulary=True).transcribe(samples)
+    assert server.vocabulary == [None, "1"]
 
 
 def test_an_explicit_socket_path_wins(server, monkeypatch):

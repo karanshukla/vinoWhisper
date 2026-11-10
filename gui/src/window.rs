@@ -14,7 +14,7 @@ use crate::model::{self, Line, ModelState, Status, Tool};
 use crate::sessions;
 use vinowhisper_settings::{
     Cleanup, CleanupMode, Language, Position, Settings, Source, Speech, SpeechModel, Summaries,
-    Task, TextSize, multilingual_installed,
+    Task, TextSize, multilingual_installed, vocabulary,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -243,6 +243,11 @@ struct SettingsWindow {
     summaries: Summaries,
     summaries_dirty: bool,
     settings_dirty: bool,
+    // vocabulary.txt, written on each add and remove: the server reads it per dictation.
+    vocabulary_path: PathBuf,
+    vocabulary: Vec<String>,
+    new_term: String,
+    vocabulary_error: Option<String>,
     // The sessions window's app menu entry: where it goes, whether it is there, and why
     // the last change failed.
     apps_data: PathBuf,
@@ -272,6 +277,8 @@ impl SettingsWindow {
     fn new(page: Option<Page>) -> Self {
         let mut window = Self::with(page, Settings::load(), Speech::load(), Cleanup::load());
         window.summaries = Summaries::load();
+        window.vocabulary_path = vocabulary::path();
+        window.vocabulary = vocabulary::load_from(&window.vocabulary_path);
         window.in_app_menu = vinowhisper_settings::sessions_entry_shown_in(&window.apps_data);
         window.multilingual = multilingual_installed();
         window.canary = SpeechModel::Canary.installed();
@@ -313,6 +320,10 @@ impl SettingsWindow {
             app_menu_error: None,
             summaries_dirty: false,
             settings_dirty: false,
+            vocabulary_path: PathBuf::new(),
+            vocabulary: Vec::new(),
+            new_term: String::new(),
+            vocabulary_error: None,
             model_ready: Arc::new(Mutex::new(None)),
             updater: updater(),
         }
@@ -975,8 +986,82 @@ impl SettingsWindow {
                         widgets::switch(ui, &mut self.settings.pause_media, "Pause media")
                             .changed();
                 });
+            Row::new("Space between dictations")
+                .help(
+                    "Types a space before a dictation that starts within 30 seconds of the \
+                     last one. A guess: if you changed field in between, the space goes there.",
+                )
+                .show(ui, |ui, _| {
+                    self.settings_dirty |= widgets::switch(
+                        ui,
+                        &mut self.settings.smart_spacing,
+                        "Space between dictations",
+                    )
+                    .changed();
+                });
+            self.vocabulary_rows(ui);
         });
         changed
+    }
+
+    fn vocabulary_rows(&mut self, ui: &mut egui::Ui) {
+        let full = self.vocabulary.len() >= vocabulary::MAX_TERMS;
+        let help = match &self.vocabulary_error {
+            Some(error) => error.clone(),
+            None => "Names and jargon to expect when you dictate. A near-miss spelling is \
+                     corrected to the term as written here; Whisper on a GPU or CPU is also \
+                     told to listen for them."
+                .to_owned(),
+        };
+        let tone = if self.vocabulary_error.is_some() {
+            Tone::Error
+        } else {
+            Tone::Neutral
+        };
+        let mut add = false;
+        Row::new("Vocabulary")
+            .help(&help)
+            .tone(tone)
+            .show(ui, |ui, _| {
+                let enabled = !full && !self.new_term.trim().is_empty();
+                add |= ui.add_enabled(enabled, Button::secondary("Add")).clicked();
+                let field = ui.add_enabled(
+                    !full,
+                    widgets::field(&mut self.new_term, "A name or term", 180.0),
+                );
+                field.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::TextInput, !full, "New term")
+                });
+                add |= field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            });
+        if add {
+            let added = vocabulary::add_to(&self.vocabulary_path, &self.new_term);
+            self.after_vocabulary_change(added.map(|_| ()));
+            self.new_term.clear();
+        }
+        let mut remove = None;
+        for term in &self.vocabulary {
+            Row::new(term).show(ui, |ui, _| {
+                let button = ui.add(Button::ghost("Remove").small());
+                button.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Remove {term}"))
+                });
+                if button.clicked() {
+                    remove = Some(term.clone());
+                }
+            });
+        }
+        if let Some(term) = remove {
+            let removed = vocabulary::remove_from(&self.vocabulary_path, &term);
+            self.after_vocabulary_change(removed);
+        }
+    }
+
+    fn after_vocabulary_change(&mut self, result: std::io::Result<()>) {
+        self.vocabulary_error = result
+            .err()
+            .map(|err| format!("Could not write {}: {err}", self.vocabulary_path.display()));
+        self.vocabulary = vocabulary::load_from(&self.vocabulary_path);
     }
 }
 
@@ -1526,6 +1611,71 @@ mod tests {
         switch.click();
         harness.run();
         assert!(harness.state().window.settings.pause_media);
+    }
+
+    #[test]
+    fn spacing_between_dictations_is_a_switch_that_is_off_until_asked_for() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness.run();
+        let switch = harness.get_by_role_and_label(Role::Switch, "Space between dictations");
+        assert_eq!(switch.accesskit_node().toggled(), Some(Toggled::False));
+        switch.click();
+        harness.run();
+        assert!(harness.state().window.settings.smart_spacing);
+    }
+
+    fn vocabulary_harness(name: &str) -> Harness<'static, Under> {
+        let mut harness = harness(Page::Speech, WIDE);
+        let path = harness.state().window.apps_data.join(name);
+        let _ = std::fs::remove_file(&path);
+        harness.state_mut().window.vocabulary_path = path;
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn a_term_typed_into_the_vocabulary_is_written_to_the_file_and_listed() {
+        let mut harness = vocabulary_harness("vocabulary-add.txt");
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Button, "Add")
+                .is_some_and(|add| add.accesskit_node().is_disabled())
+        );
+        harness
+            .get_by_role_and_label(Role::TextInput, "New term")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "New term")
+            .type_text("Kubernetes");
+        harness.run();
+        assert_eq!(harness.state().window.new_term, "Kubernetes");
+        harness.get_by_role_and_label(Role::Button, "Add").click();
+        harness.run();
+        let path = harness.state().window.vocabulary_path.clone();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Kubernetes\n");
+        harness.get_by_role_and_label(Role::Button, "Remove Kubernetes");
+        assert!(harness.state().window.new_term.is_empty());
+    }
+
+    #[test]
+    fn removing_a_term_takes_it_out_of_the_file() {
+        let mut harness = vocabulary_harness("vocabulary-remove.txt");
+        let path = harness.state().window.vocabulary_path.clone();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "Kubernetes\nSaoirse\n").unwrap();
+        harness.state_mut().window.vocabulary = vocabulary::load_from(&path);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Remove Kubernetes")
+            .click();
+        harness.run();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Saoirse\n");
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Button, "Remove Kubernetes")
+                .is_none()
+        );
     }
 
     #[test]

@@ -18,9 +18,11 @@ class FakeTranscriber:
         self.words = words
         self.raises = raises
         self.seen = None
+        self.biased = None
 
-    def transcribe_stream(self, samples):
+    def transcribe_stream(self, samples, biased=False):
         self.seen = samples
+        self.biased = biased
         yield from self.words
         if self.raises is not None:
             raise self.raises
@@ -52,6 +54,14 @@ def test_a_valid_window_streams_the_words_back(client, fake):
     assert response.get_data(as_text=True) == "ab"
     assert fake.seen.size == SAMPLES_PER_S
     assert fake.seen.flags.writeable
+
+
+def test_only_a_request_that_asks_gets_the_vocabulary(client, fake):
+    """Captions and files send no header, so a vocabulary never reaches their decodes."""
+    client.post("/transcribe", data=pcm(1)).get_data()
+    assert fake.biased is False
+    client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Vocabulary": "1"}).get_data()
+    assert fake.biased is True
 
 
 @pytest.mark.parametrize("body", [b"", b"\0" * 5, b"\0" * 7])

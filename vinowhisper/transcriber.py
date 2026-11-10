@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, devices, failures, ovfetch
+from . import config, devices, failures, ovfetch, vocabulary
 
 _SENTINEL = object()
 
@@ -95,10 +95,12 @@ class BaseTranscriber:
     def _unload(self) -> None:
         self._pipeline = None
 
-    def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
+    def _generate(
+        self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
+    ) -> None:
         raise NotImplementedError
 
-    def transcribe_stream(self, samples: np.ndarray) -> Iterator[str]:
+    def transcribe_stream(self, samples: np.ndarray, biased: bool = False) -> Iterator[str]:
         if self.selection is None:
             raise RuntimeError("call load() before transcribe_stream()")
 
@@ -116,7 +118,7 @@ class BaseTranscriber:
                 with self._lock:
                     lost = ""
                     try:
-                        self._generate(samples, streamer)
+                        self._generate(samples, streamer, biased)
                     except RuntimeError as exc:
                         if not failures.is_device_lost(exc):
                             raise
@@ -135,7 +137,7 @@ class BaseTranscriber:
                     # memory (and on the device) through the reload.
                     if lost:
                         self._reload_after_reset(lost)
-                        self._generate(samples, streamer)
+                        self._generate(samples, streamer, biased)
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)
             finally:
@@ -182,6 +184,9 @@ class BaseTranscriber:
 
 class WhisperTranscriber(BaseTranscriber):
     model = config.WHISPER_MODEL
+    _vocabulary_stamp: tuple[int, int] | None | bool = False
+    _hotwords: tuple[str, int] | None = None
+    _terms: list[str] = []
 
     def _default_model_dir(self, kind: str) -> Path:
         return config.model_dir(kind, self.multilingual)
@@ -236,17 +241,74 @@ class WhisperTranscriber(BaseTranscriber):
             options["language"] = f"<|{self.language}|>"
         return options
 
-    def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
+    def hotwords(self) -> tuple[str, int] | None:
+        kind = self.selection.kind if self.selection else "?"
+        if self._pipeline is None or vocabulary.unprompted(kind, self.model):
+            return None
+        stamp = vocabulary.stamp()
+        if stamp != self._vocabulary_stamp:
+            self._vocabulary_stamp = stamp
+            self._terms = vocabulary.load() if stamp else []
+            self._hotwords = self._fit(self._terms)
+        return self._hotwords
+
+    def _fit(self, terms: list[str]) -> tuple[str, int] | None:
+        tokenizer = self._pipeline.get_tokenizer()  # type: ignore[attr-defined, union-attr]
+        kept: list[str] = []
+        used = 0
+        for term in terms:
+            text = vocabulary.prompt([*kept, term])
+            # The leading space is how OpenVINO GenAI tokenizes it.
+            encoded = tokenizer.encode(" " + text, add_special_tokens=False)
+            count = int(encoded.input_ids.shape[-1])
+            if count > config.VOCABULARY_MAX_TOKENS:
+                break
+            kept.append(term)
+            used = count
+        if len(kept) < len(terms):
+            print(
+                f"[vinowhisper-server] {config.VOCABULARY_FILE}: using the first {len(kept)} "
+                f"of {len(terms)} terms ({config.VOCABULARY_MAX_TOKENS} tokens at most)",
+                file=sys.stderr,
+                flush=True,
+            )
+        return (vocabulary.prompt(kept), used) if kept else None
+
+    def _generate(
+        self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
+    ) -> None:
         if self._pipeline is None:
             self.load()
         pipeline = self._pipeline
         if pipeline is None:
             raise RuntimeError(f"no pipeline on {self.device} after load()")
+        options: dict[str, str] = dict(self.generate_options())
+        limit = config.max_new_tokens(samples.size / config.SAMPLE_RATE_HZ, self.multilingual)
+        hotwords = self.hotwords() if biased else None
+        if hotwords is None:
+            pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            return
+        heard: list[str] = []
+
+        def collect(piece: str) -> bool:
+            heard.append(piece)
+            return False
+
+        # The prompt and the answer share the decoder's positions.
+        room = config.WHISPER_MAX_TOKENS - hotwords[1] - config.MAX_TOKENS_MARGIN
         pipeline.generate(  # type: ignore[attr-defined]
             samples,
-            streamer=streamer,
-            max_new_tokens=config.max_new_tokens(
-                samples.size / config.SAMPLE_RATE_HZ, self.multilingual
-            ),
-            **self.generate_options(),
+            streamer=collect,
+            max_new_tokens=min(limit, room),
+            hotwords=hotwords[0],
+            **options,
         )
+        text = "".join(heard)
+        # On noise the prompt answers with its own terms; a plain decode says whether
+        # anything like them was spoken.
+        if vocabulary.only_terms(text, self._terms):
+            biased_text, heard[:] = text, []
+            pipeline.generate(samples, streamer=collect, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            if vocabulary.echoes(biased_text, "".join(heard)):
+                text = "".join(heard)
+        streamer(text)

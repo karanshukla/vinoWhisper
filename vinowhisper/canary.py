@@ -193,11 +193,13 @@ class CanaryTranscriber(BaseTranscriber):
         core = ov.Core()
         name = selection.device.name
         self._tok = Detokenizer(model_dir / "tokenizer.json")
+        # A CPU with AVX512_BF16 defaults to bfloat16, and the decoder then answers nothing.
+        options = {"INFERENCE_PRECISION_HINT": "f32"} if selection.kind == "CPU" else {}
         self._encoder = core.compile_model(
-            str(model_dir / "encoder.xml"), name
+            str(model_dir / "encoder.xml"), name, options
         ).create_infer_request()
         self._decoder = core.compile_model(
-            str(model_dir / "decoder.xml"), name
+            str(model_dir / "decoder.xml"), name, options
         ).create_infer_request()
         self._pipeline = True
 
@@ -219,7 +221,9 @@ class CanaryTranscriber(BaseTranscriber):
             *(tok.id(p) for p in PROMPT_TAIL),
         ]
 
-    def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
+    def _generate(
+        self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
+    ) -> None:
         if self._pipeline is None:
             self.load()
         pieces = chunks(np.asarray(samples, dtype=np.float32))
