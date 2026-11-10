@@ -631,6 +631,10 @@ the term as you wrote it: "Creswell" becomes "Cresswell", "Sothey's" becomes
 "Southey's". It runs before `replacements.json`. Terms under five letters and terms
 of more than one word are matched exactly only, so they are never "corrected" into.
 A name the model splits into two words ("Cooper Netties") is out of its reach.
+It has no dictionary, so a real word that close to a term is rewritten too: with
+"Poyser" listed, "poser" becomes "Poyser", and with "Claude" listed, "clause" does.
+None turned up in the 12,961 words measured below, but a term that sits one letter
+from a word you use is better left to `replacements.json`.
 
 **The decoder prompt** is Whisper's `hotwords`, and OpenVINO GenAI's NPU pipeline
 refuses it: `pipeline_static.cpp` asserts that both `hotwords` and `initial_prompt`

@@ -200,6 +200,13 @@ def test_characterization_short_and_multi_word_terms_are_never_fuzzy_matched():
     )
 
 
+def test_characterization_a_real_word_one_letter_from_a_term_is_rewritten():
+    """characterization: there is no dictionary to say "clause" is a word, so it is
+    corrected to a listed "Claude". Known and documented (docs/tray.md); telling the
+    two apart needs a word list this project does not ship."""
+    assert vocabulary.correct("the last clause", ["Claude"]) == "the last Claude"
+
+
 def _echo_pipeline(monkeypatch, tmp_path, prompted, plain):
     calls = []
 
