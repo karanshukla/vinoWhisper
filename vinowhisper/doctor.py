@@ -19,6 +19,7 @@ from . import (
     recorder,
     replacements,
     style,
+    vocabulary,
 )
 
 _PROBE_S = 2.0
@@ -180,6 +181,32 @@ def _replacements() -> list[Result]:
     if not config.REPLACEMENTS_FILE.exists():
         return [Result(OK, "replacements", "absent")]
     return [Result(OK, "replacements", f"{len(table)} entries")]
+
+
+def _vocabulary() -> list[Result]:
+    label = "vocabulary"
+    terms, problem = vocabulary.read()
+    if not config.VOCABULARY_FILE.exists():
+        return [Result(OK, label, "absent")]
+    if problem is not None and not terms:
+        return [Result(WARN, label, f"{config.VOCABULARY_FILE}: ignored: {problem}")]
+    summary = f"{len(terms)} terms" + (f" ({problem})" if problem else "")
+    if not terms:
+        return [Result(OK, label, summary)]
+    try:
+        kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
+    except devices.DeviceError:
+        kind = "NPU"
+    reason = vocabulary.unsupported(kind, config.load_language()[2])
+    if reason is not None:
+        return [
+            Result(
+                WARN,
+                label,
+                f"{summary}, not used: {reason}. replacements.json still applies.",
+            )
+        ]
+    return [Result(WARN if problem else OK, label, f"{summary}, given to dictation on {kind}")]
 
 
 def _models() -> list[Result]:
@@ -501,6 +528,7 @@ def collect(probe: bool = True) -> list[Result]:
     results += _ovfetch()
     results += _failed_devices()
     results += _replacements()
+    results += _vocabulary()
     results += _models()
     results += _speech_model()
     results += _server()

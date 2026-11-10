@@ -317,6 +317,35 @@ was paused and resumed, the already-paused one was never touched. **Not yet run 
 the laptop**, so real browsers and the timing against the microphone's first 90-290ms
 are unmeasured.
 
+### A space between dictations
+
+Added 2026-11-10, from [issue #120](https://github.com/karanshukla/vinoWhisper/issues/120).
+Off by default: **Space between dictations** on the settings window's Speech page,
+stored as `smart_spacing` in `gui.json`.
+
+Two dictations in a row into the same field come out as `First sentence.Second
+sentence.`, because each paste is only its own text. With the setting on, the tray
+types a space first when all of these hold:
+
+- the previous dictation was typed (not left on the clipboard after a failed paste),
+- the key for this one went down less than 30 seconds after that paste,
+- the previous text ended in something other than whitespace, and this one starts
+  with a letter or a digit.
+
+The 30 seconds run from the last paste to the next key press, not to the next paste,
+so a long second dictation still follows the first. One space at most, and none
+before text that opens with punctuation.
+
+**It is a guess.** Wayland does not say what has focus and the tray cannot read the
+field (see "Where the text goes is not checked" below), so it cannot tell that you
+clicked into another field between the two. If you did, that field gets a leading
+space. That is why it is off by default. The space is part of what goes on the
+clipboard, so a paste that fails leaves it there too. Recent dictations and the pill
+show the text without it. The cleanup model never sees the previous dictation.
+
+The rule is `Spacing` in `tray/src/dictation.rs` and has unit tests. Not run in a
+live session yet.
+
 ### Cleaning up what you say
 
 Optional, off by default (beta). Turn on **Clean up dictation** on the settings
@@ -553,8 +582,9 @@ maps what Whisper writes to what you want typed:
 {"open vino": "OpenVINO", "vino whisper": "vinoWhisper", "k8s": "Kubernetes"}
 ```
 
-It is post-processing because on the NPU `initial_prompt` is refused outright
-(CLAUDE.md, Known gotchas), so the model cannot be biased toward a vocabulary.
+It is post-processing, so it works on every device and with both speech models.
+On a GPU or CPU the decoder can also be told which words to expect: see "A personal
+vocabulary" below.
 Matching is case-insensitive and on whole words, so "vino" leaves "vinous"
 alone, with the longest key first and any punctuation left where it was
 ("open vino." becomes "OpenVINO."). Spaces inside a key match any run of
@@ -569,6 +599,81 @@ Captions are left out on purpose. They go through the stitcher, which compares
 words across cycles, and replacing words before stitching would interact with
 its normalisation and anchors. Not run on hardware or in the overlay; the
 Python side is unit-tested only.
+
+**A personal vocabulary, added 2026-11-10**, from [issue #161](https://github.com/karanshukla/vinoWhisper/issues/161).
+Replacements fix a word after Whisper got it wrong, and only when it gets it wrong
+the same way each time. `~/.config/vinowhisper/vocabulary.txt` tells the decoder
+which words to expect instead, one term per line:
+
+```
+# names and jargon; blank lines and lines starting with # are skipped
+Kubernetes
+vinoWhisper
+Saoirse Ronan
+```
+
+Edit the file, use the list under **Vocabulary** on the settings window's Speech
+page, or pick **Add to dictionary…** under the tray's Recent dictations, which opens
+that page. The server reads the file again when it changes, so an edit applies to
+the next dictation.
+
+**It does nothing on the NPU, and nothing with Canary.** OpenVINO GenAI's NPU
+pipeline refuses a decoder prompt: `pipeline_static.cpp` asserts that both `hotwords`
+and `initial_prompt` are unset (read at 2026.4.1.0 and on master, 2026-11-10), so a
+dictation that carried one would fail. On the NPU the server leaves the vocabulary
+out and `vinowhisper-doctor` reports `vocabulary` as a warning that says so. It is
+used with Whisper on a GPU or CPU. Canary's decode loop has no prompt at all. On
+those setups `replacements.json` is still the tool.
+
+How it is passed:
+
+- **Dictation only.** `vinowhisper-dictate` marks its requests with an
+  `X-Vinowhisper-Vocabulary` header; captions and file transcription send none.
+  Captions decode every 0.7 s, so they would pay for the prompt on every window,
+  and a term the prompt talked the decoder into would be committed to a transcript
+  that cannot take it back.
+- **As `hotwords`, a comma-separated list.** `hotwords` and `initial_prompt` become
+  the same decoder tokens for audio up to 30 s (`context_tokens.cpp`: both go after
+  `<|startofprev|>`; `initial_prompt` only on the first 30 s chunk). Six utterances
+  decoded with each gave the same text. Every dictation piece is under 30 s, so
+  there is nothing to choose between them here.
+- **At most 100 terms of 64 characters, and 120 tokens.** Terms past the token
+  limit are left out, in file order, and the server's journal says how many were
+  used. The prompt shares Whisper's 448 decoder positions with the answer, and
+  OpenVINO GenAI does not trim it: a prompt of 899 tokens returned `, Qu, Qu` with
+  no error, and a 179-token prompt that repeated one made-up name was continued by
+  the decoder instead of the speech being transcribed. The answer's token limit is
+  lowered by the prompt's length.
+
+Measured 2026-11-10 on a CPU (whisper-small.en fp16, OpenVINO GenAI 2026.4.1, a
+4-core cloud Xeon), on 700 utterances of LibriSpeech test-clean (every second one of
+the first 1,400; 85.7 minutes). The vocabulary was 15 proper names from the
+reference text, picked by how rarely Whisper's tokenizer has seen them (three or
+more tokens each) and not by what the model got wrong, plus five terms that are
+never spoken (Kubernetes, vinoWhisper, OpenVINO, PipeWire, Wayland). 
+| Vocabulary | Prompt tokens | Names right, of 47 spoken | A listed name written where it was not spoken | WER, utterances with a name | WER, the rest (12,961 words) |
+|---|---|---|---|---|---|
+| none | 0 | 28 | 0 | 6.32% | 3.23% |
+| 20 terms | 80 | 47 | 1 | 4.30% | 3.36% |
+
+Mean decode time was 0.80 s without and 0.79 s with the 20 terms, on a machine doing
+other work at the time, so no cost showed at this size.
+
+What that says:
+
+- The names are what it is for, and there it works: Poyser, Southey, Margolotte,
+  Montalais and Conseil were never right without the list and always right with it.
+- Speech with none of the terms gets slightly worse, not better. The prompt changes
+  the decoder's path on about one utterance in seven. Most of those are spelling
+  ("gray"/"grey", "ten"/"10") in both directions, and a few are damage: "utter a
+  sigh" became "atturriSai", in the camel case of the tech terms on the list.
+- A term that is not spoken was never written into speech (0 of 700 for the five
+  absent terms).
+
+Not measured: anything on a GPU, a microphone, real dictation, or the multilingual
+model. LibriSpeech is read audiobook speech, and the names are spelled the way the
+books spell them; your own names and jargon may behave differently. n=1 corpus, one
+machine.
 
 #### LLM cleanup (beta)
 

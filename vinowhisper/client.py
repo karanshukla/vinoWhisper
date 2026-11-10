@@ -19,6 +19,8 @@ BASE_URL = "http://vinowhisper"
 # A file being transcribed: the server lets captions and dictation go first.
 PRIORITY_HEADER = "X-Vinowhisper-Priority"
 BACKGROUND = "background"
+# Dictation: the server gives the decoder the user's vocabulary.txt as a prompt.
+VOCABULARY_HEADER = "X-Vinowhisper-Vocabulary"
 
 
 class _UnixConnection(HTTPConnection):
@@ -84,9 +86,10 @@ def session(socket_path: Path | None = None) -> requests.Session:
 
 
 class TranscriptionClient:
-    def __init__(self, socket_path: Path | None = None) -> None:
+    def __init__(self, socket_path: Path | None = None, vocabulary: bool = False) -> None:
         # Not a default argument, which would read XDG_RUNTIME_DIR at import.
         self._session = session(socket_path)
+        self._vocabulary = vocabulary
 
     def wait_ready(self) -> dict:
         response = self._session.get(
@@ -123,6 +126,8 @@ class TranscriptionClient:
         headers = {"Content-Type": "application/octet-stream"}
         if background:
             headers[PRIORITY_HEADER] = BACKGROUND
+        if self._vocabulary:
+            headers[VOCABULARY_HEADER] = "1"
         response = self._session.post(
             f"{BASE_URL}/transcribe",
             data=samples.astype("<f4", copy=False).tobytes(),

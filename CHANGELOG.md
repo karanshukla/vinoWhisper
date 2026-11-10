@@ -12,6 +12,8 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ### 🚀 Features
 
+- **A personal vocabulary for dictation** (#161). List names and jargon in `~/.config/vinowhisper/vocabulary.txt`, or under *Vocabulary* on the settings window's Speech page, and Whisper is told to expect them. On a CPU test, 15 rare names went from 28 of 47 right to 47 of 47. It works on a GPU or CPU only: OpenVINO GenAI's NPU pipeline refuses a word list, and Canary has none, so `vinowhisper-doctor` warns when a vocabulary is not being used. Details in `docs/tray.md`.
+- **A space between back-to-back dictations** (#120). Off by default: *Space between dictations* on the settings window's Speech page. When the next dictation starts within 30 seconds of the last one being typed, the tray types a space before it. It is a guess, since the tray cannot see which field has focus. Details in `docs/tray.md`.
 - **Transcribe an audio or video file into a saved session** (#162). `vinowhisper-transcribe FILE`, or **Import audio or video…** in the sessions window, decodes the file with ffmpeg (or GStreamer) and runs it through the server faster than real time. The result is an ordinary session: summary, export, Open in… and Read aloud work on it. Captions and dictation keep priority while it runs. `vinowhisper-doctor` and `vinowhisper-setup` name the ffmpeg package for your distro. Details in `docs/sessions.md`.
 
 ## [1.5.0] - 2026-11-08

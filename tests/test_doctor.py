@@ -212,6 +212,31 @@ def test_replacements_check_names_the_error():
     assert str(config.REPLACEMENTS_FILE) in result.detail
 
 
+def test_vocabulary_check_reports_absent():
+    result = doctor._vocabulary()[0]
+    assert (result.status, result.detail) == (doctor.OK, "absent")
+
+
+def test_vocabulary_check_says_where_it_is_used(monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\nvinoWhisper\n")
+    monkeypatch.setattr(devices, "available", lambda: [devices.Device("CPU", "CPU")])
+    result = doctor._vocabulary()[0]
+    assert (result.status, result.detail) == (doctor.OK, "2 terms, given to dictation on CPU")
+
+
+def test_characterization_vocabulary_on_the_npu_is_a_warning_not_a_silent_no_op(monkeypatch):
+    """characterization: OpenVINO GenAI's NPU pipeline asserts that hotwords and
+    initial_prompt are unset (pipeline_static.cpp, checked at 2026.4.1.0 and master
+    2026-11-10), so the server leaves the vocabulary out there. Reporting OK would tell
+    someone their list is working when no decode ever sees it."""
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    monkeypatch.setattr(devices, "available", lambda: [devices.Device("NPU", "NPU")])
+    result = doctor._vocabulary()[0]
+    assert result.status == doctor.WARN
+    assert "not used" in result.detail
+    assert "NPU" in result.detail
+
+
 def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):
     """Captions and dictation never use it, so it must not fail the doctor."""
     fedora = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")

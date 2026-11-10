@@ -219,7 +219,9 @@ class CanaryTranscriber(BaseTranscriber):
             *(tok.id(p) for p in PROMPT_TAIL),
         ]
 
-    def _generate(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> None:
+    def _generate(
+        self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
+    ) -> None:
         if self._pipeline is None:
             self.load()
         pieces = chunks(np.asarray(samples, dtype=np.float32))

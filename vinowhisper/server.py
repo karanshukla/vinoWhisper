@@ -12,7 +12,7 @@ from werkzeug.serving import make_server
 
 from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
 from .canary import CanaryTranscriber
-from .client import BACKGROUND, PRIORITY_HEADER
+from .client import BACKGROUND, PRIORITY_HEADER, VOCABULARY_HEADER
 from .transcriber import BaseTranscriber, WhisperTranscriber
 
 app = Flask(__name__)
@@ -77,7 +77,10 @@ def transcribe() -> Response:
         )
 
     background = request.headers.get(PRIORITY_HEADER) == BACKGROUND
-    stream = _track_in_flight(transcriber.transcribe_stream(samples), npu=True, live=not background)
+    biased = request.headers.get(VOCABULARY_HEADER) == "1"
+    stream = _track_in_flight(
+        transcriber.transcribe_stream(samples, biased), npu=True, live=not background
+    )
     return Response(stream_with_context(stream), mimetype="text/plain; charset=utf-8")
 
 

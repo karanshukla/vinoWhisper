@@ -77,6 +77,13 @@ def no_user_replacements(monkeypatch, tmp_path_factory):
     )
 
 
+@pytest.fixture(autouse=True)
+def no_user_vocabulary(monkeypatch, tmp_path_factory):
+    monkeypatch.setattr(
+        config, "VOCABULARY_FILE", tmp_path_factory.mktemp("cfg") / "vocabulary.txt"
+    )
+
+
 @pytest.fixture
 def fake_os_release(tmp_path):
     """Write an /etc/os-release and hand back its path."""

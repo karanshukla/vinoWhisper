@@ -457,6 +457,26 @@ file". The choices that answer the issue's open questions:
   run on the laptop.** Write-ups: `docs/sessions.md` "Attestation", `docs/tray.md`
   "Pausing media while you dictate".
 
+## Vocabulary (#161) and spacing (#120), added 2026-11-10
+
+- `~/.config/vinowhisper/vocabulary.txt`, one term per line, goes to Whisper as
+  `hotwords` for dictation requests only (`X-Vinowhisper-Vocabulary` header; the server
+  reads the file and refits it when it changes). Write-up and table in `docs/tray.md`,
+  "A personal vocabulary".
+- **It is a no-op on the NPU and with Canary.** `pipeline_static.cpp` still asserts
+  `hotwords` and `initial_prompt` unset (2026.4.1.0 and master, 2026-11-10). The doctor
+  warns; `test_characterization_the_npu_never_gets_the_prompt` pins it. So on this
+  laptop it only does anything with `--device GPU` or `CPU`.
+- `hotwords` and `initial_prompt` are the same tokens for audio under 30 s. The prompt is
+  capped by tokens (`VOCABULARY_MAX_TOKENS`): OpenVINO GenAI does not trim it, and past
+  the decoder's 448 positions it returns garbage with no error.
+- Measured on a CPU only (LibriSpeech, 700 utterances): 15 rare names 28/47 right
+  without, 47/47 with a 20-term list; term-free speech 3.23% to 3.36% WER. **Never run
+  on a GPU, on a microphone, or in a real dictation.**
+- `smart_spacing` in `gui.json` (Speech page, off by default): a space before a
+  dictation whose key press comes within 30 s of the last successful paste
+  (`dictation::Spacing`). A guess, since focus is invisible. Unit tests only.
+
 ## Architecture
 
 ```
@@ -481,6 +501,7 @@ vinowhisper/
   events.py       what the loop emits instead of printing
   caption.py      caption_events() + TerminalRenderer + CLI (vinowhisper-caption)
   dictate.py      vinowhisper-dictate: one utterance from the mic, driven over stdin
+  vocabulary.py   vocabulary.txt: terms given to Whisper's decoder for dictation (GPU/CPU only)
   cleanup.py      LLM cleanup of a dictation: prompt, the deletion-only checks, breaker,
                   vinowhisper-cleanup (model status|fetch|delete)
   llm.py          the local cleanup model: pins, download, LLMPipeline in the server

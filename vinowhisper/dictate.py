@@ -355,7 +355,7 @@ class Dictation:
         self._clock = clock
         self._trace: _Trace | None = None
         self._emit = emit
-        self._client = client or TranscriptionClient()
+        self._client = client or TranscriptionClient(vocabulary=True)
         self._recorder = recorder or (lambda tap: Recorder(source="mic", tap=tap))
         self._cleaner: _Cleaner = cleaner or _FileCleaner()
         self._commands: queue.Queue[str] = queue.Queue()
