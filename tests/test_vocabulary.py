@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import pytest
 
-from vinowhisper import config, devices, vocabulary
+from vinowhisper import config, devices, vocabulary, whisper_step
 from vinowhisper.transcriber import WhisperTranscriber
 
 
@@ -113,8 +113,9 @@ def test_characterization_the_npu_never_gets_the_prompt(pipeline, monkeypatch):
     """characterization: the NPU static pipeline raises "'hotwords' parameter is not
     supported on NPU device" (and the same for initial_prompt) on any generate() that
     sets one. Passing the vocabulary there would turn every dictation into an error, so
-    it is left out and the doctor says so. Flip this only when OpenVINO GenAI drops the
-    assert in pipeline_static.cpp, and after a decode on a real NPU."""
+    WhisperPipeline never gets it on the NPU, with or without our own export (#178,
+    which takes the prompt instead). Flip this only when OpenVINO GenAI drops the assert
+    in pipeline_static.cpp, and after a decode on a real NPU."""
     config.VOCABULARY_FILE.write_text("Kubernetes\n")
     _decode(_transcriber(monkeypatch, "NPU"))
     assert "hotwords" not in pipeline[-1]
@@ -157,6 +158,75 @@ def test_only_whisper_off_the_npu_takes_the_prompt():
     assert vocabulary.unprompted("CPU", config.CANARY_MODEL)
     assert vocabulary.unprompted("NPU", config.WHISPER_MODEL)
     assert vocabulary.unprompted("GPU", config.WHISPER_MODEL) is None
+
+
+def test_our_own_export_lets_the_npu_take_the_prompt():
+    assert vocabulary.unprompted("NPU", config.WHISPER_MODEL, step_export=True) is None
+    assert vocabulary.unprompted("NPU", config.CANARY_MODEL, step_export=True)
+
+
+@pytest.fixture
+def step(monkeypatch):
+    """Our own loop (#178), faked: what it was asked, and whether it loaded."""
+    state = {"calls": [], "fails": False, "built": 0, "says": "Kubernetes is up."}
+    for name in ("encoder.xml", "decoder.xml", "step_export.json", "tokenizer.json"):
+        config.STEP_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        (config.STEP_MODEL_DIR / name).write_text("{}")
+
+    class Step:
+        def __init__(self, model_dir, device):
+            if state["fails"]:
+                raise RuntimeError("compile failed: ZE_RESULT_ERROR_UNSUPPORTED_FEATURE")
+            state["built"] += 1
+            state["device"] = device
+
+        def transcribe(self, samples, hotwords, max_new_tokens, **prompt):
+            state["calls"].append(
+                {"hotwords": hotwords, "max_new_tokens": max_new_tokens, **prompt}
+            )
+            return state["says"]
+
+    monkeypatch.setattr(whisper_step, "StepWhisper", Step)
+    return state
+
+
+def test_with_our_export_the_npu_dictates_through_the_prompted_loop(pipeline, step, monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\nSaoirse\n")
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert _decode(transcriber) == "Kubernetes is up."
+    assert step["calls"][-1]["hotwords"] == "Kubernetes, Saoirse"
+    assert step["calls"][-1]["language"] is None
+    assert step["device"] == "NPU"
+    assert pipeline == []
+    _decode(transcriber)
+    assert step["built"] == 1
+
+
+def test_captions_and_unbiased_decodes_stay_on_the_pipeline(pipeline, step, monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    _decode(_transcriber(monkeypatch, "NPU"), biased=False)
+    assert step["calls"] == [] and step["built"] == 0
+    assert "hotwords" not in pipeline[-1]
+
+
+def test_a_loop_that_does_not_load_leaves_dictation_working(pipeline, step, monkeypatch, capsys):
+    step["fails"] = True
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert _decode(transcriber) == "ok"
+    assert "hotwords" not in pipeline[-1]
+    assert "vocabulary prompt is off on NPU" in capsys.readouterr().err
+    # Tried once, not on every dictation.
+    _decode(transcriber)
+    assert capsys.readouterr().err == ""
+
+
+def test_the_prompted_loop_still_gets_the_noise_check(pipeline, step, monkeypatch):
+    """#175: a decode that is only listed terms is re-run without the prompt."""
+    step["says"] = "Kubernetes."
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    assert _decode(_transcriber(monkeypatch, "NPU")) == "ok"
+    assert len(step["calls"]) == 1 and len(pipeline) == 1
 
 
 TERMS = ["Cresswell", "Estafania", "Neverbend", "Southey", "Poyser", "Kubernetes", "Wayland"]
@@ -251,3 +321,14 @@ def test_ordinary_speech_is_decoded_once(monkeypatch, tmp_path):
     calls = _echo_pipeline(monkeypatch, tmp_path, " I deployed Kubernetes today.", " unused")
     assert _decode(_transcriber(monkeypatch, "CPU")) == " I deployed Kubernetes today."
     assert len(calls) == 1
+
+
+def test_a_prompted_decode_that_loops_over_noise_falls_back_to_the_plain_one(
+    pipeline, step, monkeypatch
+):
+    """Measured 2026-11-11 on the NPU: barking alone, prompted, came back as one listed
+    name and then "Cebu" 48 times. Not only listed terms, so the #175 check missed it."""
+    step["says"] = " Xochitl, " + ", ".join(["Cebu"] * 48)
+    config.VOCABULARY_FILE.write_text("Xochitl\n")
+    assert _decode(_transcriber(monkeypatch, "NPU")) == "ok"
+    assert len(pipeline) == 1 and "hotwords" not in pipeline[0]

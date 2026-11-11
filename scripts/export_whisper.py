@@ -38,6 +38,8 @@ SOURCES_URL = (
 MEL_FRAMES = 3000
 # Whisper's max_target_positions: the prompt and the answer share them.
 CACHE_SLOTS = 448
+# The whole prompt in one call: <|startofprev|>, at most 120 vocabulary tokens, the start tokens.
+PREFILL_TOKENS = 128
 COPIED = ("tokenizer.json", "generation_config.json", "config.json", "preprocessor_config.json")
 
 
@@ -118,7 +120,7 @@ def fetch(model_id: str, pin: dict, root: Path) -> Path:
     return target
 
 
-def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
+def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int) -> None:
     import nncf
     import numpy as np
     import openvino as ov
@@ -172,6 +174,36 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
                 x = x + layer.fc2(layer.activation_fn(layer.fc1(layer.final_layer_norm(x))))
             return (full.proj_out(dec.layer_norm(x))[:, 0], *new)
 
+    # Padding sits after the prompt, so the causal mask alone keeps it out of every real row.
+    causal = torch.triu(torch.full((prefill, prefill), -1e4), 1)[None, None]
+
+    def spread(x):
+        return x.view(1, prefill, heads, dim).transpose(1, 2)
+
+    def attend_all(q, k, v, mask=None):
+        w = torch.matmul(q, k.transpose(2, 3)) * dim**-0.5
+        if mask is not None:
+            w = w + mask
+        return torch.matmul(torch.softmax(w, -1), v).transpose(1, 2).reshape(1, prefill, -1)
+
+    class Prefill(nn.Module):
+        def forward(self, ids, pick, *cross):
+            x = dec.embed_tokens(ids) + dec.embed_positions.weight[:prefill][None]
+            new = []
+            for i, layer in enumerate(dec.layers):
+                sa, ca = layer.self_attn, layer.encoder_attn
+                h = layer.self_attn_layer_norm(x)
+                q, k, v = spread(sa.q_proj(h)), spread(sa.k_proj(h)), spread(sa.v_proj(h))
+                new += [k, v]
+                x = x + sa.out_proj(attend_all(q, k, v, causal))
+                h = layer.encoder_attn_layer_norm(x)
+                q = spread(ca.q_proj(h))
+                x = x + ca.out_proj(attend_all(q, cross[2 * i], cross[2 * i + 1]))
+                x = x + layer.fc2(layer.activation_fn(layer.fc1(layer.final_layer_norm(x))))
+            # A one-hot row, not an index: the NPU compiler could not place an int64 gather.
+            h = torch.matmul(pick[:, None, :], dec.layer_norm(x))
+            return (full.proj_out(h)[:, 0], *new)
+
     # A prompt as dictation will send it: <|startofprev|>, the vocabulary, the start tokens,
     # then answer tokens, all teacher-forced so every position's logits can be compared.
     tok = proc.tokenizer
@@ -203,6 +235,15 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
             mask[..., t] = 0
             mine.append(out[0][0])
         drift = float((torch.stack(mine) - logits).abs().max())
+        n = len(sequence) - len(answer)
+        padded = torch.zeros(1, prefill, dtype=torch.long)
+        padded[0, :n] = torch.tensor(sequence[:n])
+        pick = torch.zeros(1, prefill)
+        pick[0, n - 1] = 1.0
+        pre = Prefill()(padded, pick, *cross)
+        drift = max(drift, float((pre[0][0] - logits[n - 1]).abs().max()))
+        for j in range(2 * layers):
+            drift = max(drift, float((pre[1 + j][:, :, :n] - past[j][:, :, :n]).abs().max()))
     if drift > 1e-3:
         sys.exit(
             f"the export wrapper does not match transformers (logit drift {drift:.2g}); not writing an export"
@@ -236,12 +277,24 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
     out_names = ["logits"] + [f"new_{'kv'[j % 2]}{j // 2}" for j in range(2 * layers)]
     for port, name in zip(dec_ir.outputs, out_names, strict=True):
         port.get_tensor().set_names({name})
+    pre_names = ["ids", "pick"] + names[3 + 2 * layers :]
+    pre_example = (torch.zeros(1, prefill, dtype=torch.long), torch.zeros(1, prefill), *cross)
+    pre_ir = ov.convert_model(
+        Prefill(),
+        example_input=pre_example,
+        input=[ov.PartialShape(list(e.shape)) for e in pre_example],
+    )
+    for port, name in zip(pre_ir.inputs, pre_names, strict=True):
+        port.get_tensor().set_names({name})
+    for port, name in zip(pre_ir.outputs, out_names, strict=True):
+        port.get_tensor().set_names({name})
 
     shape = {
         "layers": layers,
         "heads": heads,
         "head_dim": dim,
         "cache_slots": slots,
+        "prefill_tokens": prefill,
         "mel_bins": int(mel.shape[1]),
         "mel_frames": MEL_FRAMES,
     }
@@ -252,9 +305,10 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
         (out / "step_export.json").write_text(json.dumps(shape, indent=2) + "\n")
     ov.save_model(enc_ir, str(cpu_out / "encoder.xml"), compress_to_fp16=True)
     ov.save_model(dec_ir, str(cpu_out / "decoder.xml"), compress_to_fp16=True)
+    ov.save_model(pre_ir, str(cpu_out / "prefill.xml"), compress_to_fp16=True)
     print(f"==> fp16 (CPU/GPU) export in {cpu_out}", flush=True)
     core = ov.Core()
-    for name in ("encoder", "decoder"):
+    for name in ("encoder", "decoder", "prefill"):
         model = nncf.compress_weights(
             core.read_model(str(cpu_out / f"{name}.xml")), mode=nncf.CompressWeightsMode.INT8_SYM
         )
@@ -286,6 +340,20 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
             f"==> {label} IR on CPU: {agree}/{len(sequence)} argmax agree, max logit drift {worst:.3g}",
             flush=True,
         )
+        pf = core.compile_model(str(out / "prefill.xml"), "CPU").create_infer_request()
+        ids = np.zeros((1, prefill), np.int64)
+        ids[0, :n] = sequence[:n]
+        onehot = np.zeros((1, prefill), np.float32)
+        onehot[0, n - 1] = 1.0
+        feed = {"ids": ids, "pick": onehot}
+        feed.update({names[3 + 2 * layers + j]: kv[j] for j in range(2 * layers)})
+        res = pf.infer(feed)
+        row, ref = res["logits"][0], logits[n - 1].numpy()
+        print(
+            f"==> {label} prefill on CPU: argmax {'agrees' if row.argmax() == ref.argmax() else 'DIFFERS'}, "
+            f"logit drift {float(np.abs(row - ref).max()):.3g}",
+            flush=True,
+        )
 
     for out in (cpu_out, npu_out):
         digests = {
@@ -305,6 +373,7 @@ def main() -> int:
     parser.add_argument("--npu-out", type=Path)
     parser.add_argument("--cpu-out", type=Path)
     parser.add_argument("--cache-slots", type=int, default=CACHE_SLOTS)
+    parser.add_argument("--prefill-tokens", type=int, default=PREFILL_TOKENS)
     parser.add_argument("--source-root", type=Path, default=models / "source")
     parser.add_argument("--sources", help="model_sources.json to read the pins from")
     args = parser.parse_args()
@@ -318,7 +387,7 @@ def main() -> int:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     source = fetch(args.model, _pins(args.model, args.sources), args.source_root)
     os.environ["HF_HUB_OFFLINE"] = "1"
-    export(source, npu_out, cpu_out, args.cache_slots)
+    export(source, npu_out, cpu_out, args.cache_slots, args.prefill_tokens)
     return 0
 
 

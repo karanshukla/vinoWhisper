@@ -55,11 +55,11 @@ def prompt(terms: list[str]) -> str:
     return ", ".join(terms)
 
 
-def unprompted(kind: str, model: str) -> str | None:
+def unprompted(kind: str, model: str, step_export: bool = False) -> str | None:
     if model != config.WHISPER_MODEL:
         return f"{model} takes no decoder prompt"
-    if kind == "NPU":
-        return "OpenVINO GenAI refuses a decoder prompt on the NPU"
+    if kind == "NPU" and not step_export:
+        return "OpenVINO GenAI refuses a decoder prompt on the NPU (scripts/export_whisper.py lifts it)"
     return None
 
 

@@ -93,7 +93,7 @@ Canary's lead on separate windows came from Whisper dropping words at window sta
 
 All of it is n=1 on one laptop and audiobook narration, not the YouTube content captions usually see.
 
-## Whisper through our own decode loop (#176, in progress)
+## Whisper through our own decode loop (#176)
 
 `WhisperPipeline` refuses a decoder prompt on the NPU (an assert in `pipeline_static.cpp`), so the vocabulary list only reaches the NPU as spelling correction. The way around it is the same as Canary's: our own export and our own loop.
 
@@ -101,7 +101,8 @@ All of it is n=1 on one laptop and audiobook narration, not the YouTube content 
 
 - `encoder.xml`: 80 x 3000 log-mel in (30 s), each decoder layer's cross-attention K and V out (`cross_k0` ... `cross_v11`).
 - `decoder.xml`: one token per call, no state. Inputs `ids`, `pos`, `mask` (1 x 1 x 1 x slots+1), the self-attention cache `past_k*`/`past_v*` (1 x 12 x slots x 64) and the cross K/V. Outputs `logits` and the step's `new_k*`/`new_v*`, which the host writes into the cache at `pos`.
-- `step_export.json` (layers, heads, slots), the tokenizer and configs, and `SHA256SUMS`.
+- `prefill.xml` (since #179): up to 128 prompt tokens in one call, padded, with a causal mask built in. Inputs `ids` (1 x 128), `pick` (a one-hot row marking the last real token) and the cross K/V; outputs that token's `logits` and every layer's K/V for all 128 positions. The first version took the last position as an int64 index, and the NPU compiler could not place it (`FeasibleAllocation Pass failed`); the one-hot row is a matmul and compiles.
+- `step_export.json` (layers, heads, slots, prefill tokens), the tokenizer and configs, and `SHA256SUMS`.
 
 448 cache slots by default (`--cache-slots`), Whisper's `max_target_positions`, since the prompt and the answer share them. INT8 (per-channel, symmetric) in `whisper-small.en-step-ov`, fp16 in `whisper-small.en-step-ov-fp16`. `--model openai/whisper-small` for the multilingual one. The source is the pinned revision in `model_sources.json`, checked by sha256, exported offline.
 
@@ -128,3 +129,44 @@ The INT8 drift is on noise, where the logits are flat. Whether INT8 holds on spe
 How the inputs are fed decides the step time. Passing numpy arrays to `infer()` copies 24 cross tensors of 4.6 MB each into the NPU on every token; `set_tensor` with shared host memory barely helps (25 ms). Writing into `request.get_tensor(name).data` once (cross K/V) and per step (one cache slot) is what gets 11.7 ms. #178's loop has to work that way.
 
 Rough cost of a 12 s dictation piece at that rate: 0.2 s encoder plus about 39 steps (4 start tokens, 35 answer tokens) is 0.66 s, against 0.70 s through `WhisperPipeline`. A 20-term prompt adds about 60 steps, 0.7 s, unless the prompt is prefilled in one call. That is an estimate from step timings, not a decode.
+
+**The loop (#178)** is `vinowhisper/whisper_step.py`, built on 2026-11-11. Everything around the two IRs is numpy and Python, so it is tested without OpenVINO:
+
+- **Features:** Whisper's log-mel (n_fft 400, hop 160, the 80 x 201 filters from `preprocessor_config.json`, 30 s of zero padding). Within 3.3e-5 of transformers' extractor on speech; `tests/fixtures/whisper_features.npz`.
+- **Tokenizer:** GPT-2 byte-level BPE read from `tokenizer.json`, with the pre-tokenizer's `\p{L}`/`\p{N}` spelled for the stdlib `re`. It matches transformers on accents, emoji, CJK, contractions and underscores. The test fixture is a 5 KB tokenizer holding only the 106 merges its cases use, which encodes them identically (a merge never chosen can't change the result).
+- **Prompt:** as `context_tokens.cpp` builds `hotwords`: `<|startofprev|>`, the tokens of `" " + terms` with special tokens dropped, `<|startoftranscript|>` (plus language and task on the multilingual model), `<|notimestamps|>`.
+- **Greedy:** `begin_suppress_tokens` on the first answer token, `suppress_tokens` on all of them, timestamps never, stop at `<|endoftext|>`, never past the cache.
+
+Text against `WhisperPipeline`, both on the NPU, no prompt, the 52 pieces of the 19 min LibriVox reading (2026-11-11):
+
+| Export | Identical pieces | Words differing |
+|---|---|---|
+| fp16 encoder + fp16 decoder | 52 / 52 | 0 / 3395 |
+| fp16 encoder + INT8 decoder | 42 / 52 | 3 / 3395 |
+| INT8 encoder + INT8 decoder | 39 / 52 | 7 / 3395 |
+
+So the server reads the fp16 export (`config.STEP_MODEL_DIR`). INT8's differences are mostly punctuation and capitals, but include "settled" read as "settle" and a dropped "is".
+
+**Timing on a quiet NPU (#179, 2026-11-11).** The figures above were taken while vinoSearch was indexing on the same NPU; these were taken after it had been under 1% busy for a minute. fp16 export, Core 5 320, driver 1.35.0, OpenVINO 2026.4.0, 8 pieces of the LibriVox reading per row, median and worst:
+
+| Piece | `WhisperPipeline` | Loop, no prompt | Loop, 20 terms | Loop, 30 terms |
+|---|---|---|---|---|
+| 5 s | 0.37 s (0.41) | 0.46 s (0.55) | 1.62 s (2.48) | 2.04 s (2.17) |
+| 12 s | 0.65 s (0.80) | 0.80 s (0.97) | 1.80 s (2.04) | 1.93 s (2.44) |
+| 29 s | 1.54 s (1.90) | 1.82 s (2.38) | 7.31 s (17.1) | 6.42 s (8.10) |
+
+- Without a prompt the loop is about 20% behind `WhisperPipeline`.
+- The prompt is the cost: each of its tokens is one decoder step (14.6 ms on a quiet NPU), so 20 terms (about 80 tokens) add about 1.2 s before the first word. A prefill that takes the whole prompt in one call is the obvious fix and is not built.
+- The 29 s worst cases are runaway decodes on mid-sentence windows (below), each running to its token limit.
+- Encoder 285 ms. Cold load from an empty driver cache: 24.8 s for the loop's two models, 27.7 s for `WhisperPipeline`. NPU memory with both loaded: 157 MB (`drm-resident-memory`).
+
+**A prompt can wipe out a piece that starts mid-sentence.** On 8 s windows cut from the continuous reading, a list of names never spoken made the decode collapse to "and", "Chitlana," or "Xochitl," on 15 of 40 windows at 10 terms, 9 at 20 and 8 at 30. transformers' own `generate(prompt_ids=...)` gives the same text on the CPU, so this is Whisper, not the loop, and it applies to `hotwords` on a CPU or GPU too. On 38 pieces bounded by real pauses (0.5 s or more, median 5.3 s), as dictation cuts them, none lost words. #175's 3.23% to 3.36% on whole LibriSpeech utterances agrees. The exposure is a long dictation cut without a pause.
+
+**With the prefill** (same day, same quiet NPU), the whole prompt is one 23 ms call, and the loop writes its K/V into the first slots before decoding on as before. On 48 prompted decodes it produced the same tokens as feeding the prompt step by step. Median (worst) of 8 pieces:
+
+| Piece | `WhisperPipeline`, no prompt | Loop, prefill, 20 terms | Loop, step by step, 20 terms |
+|---|---|---|---|
+| 5 s | 0.36 s (0.41) | 0.47 s (1.32) | 1.63 s (2.54) |
+| 29 s | 1.55 s (1.90) | 1.84 s (5.59) | 2.96 s (6.72) |
+
+A typical prompted dictation piece now costs about 0.1 s more than today's unprompted one, which is #179's "about the same" outcome. If `prefill.xml` is missing or does not compile, the loop logs it and feeds the prompt step by step.
