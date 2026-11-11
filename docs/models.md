@@ -71,3 +71,39 @@ Canary's lead on separate windows came from Whisper dropping words at window sta
 **Confidence commits** (Canary only, not built yet): the decode loop has every token's probability, which `WhisperPipeline` never exposed. Replaying a stitched session, committing pending words at probability >= 0.8 while holding back each window's last two showed half the words 0.53 s sooner, at 5.9% WER against 6.0%. Below 0.8, wrong words start committing.
 
 All of it is n=1 on one laptop and audiobook narration, not the YouTube content captions usually see.
+
+## Whisper through our own decode loop (#176, in progress)
+
+`WhisperPipeline` refuses a decoder prompt on the NPU (an assert in `pipeline_static.cpp`), so the vocabulary list only reaches the NPU as spelling correction. The way around it is the same as Canary's: our own export and our own loop.
+
+**The export (#177)** is `scripts/export_whisper.py` (PEP 723, its own transformers 5.22.2 and OpenVINO 2026.4.0). It traces the model itself, not through optimum, so the `transformers<5.4` pin the stock NPU export needs does not apply. It writes:
+
+- `encoder.xml`: 80 x 3000 log-mel in (30 s), each decoder layer's cross-attention K and V out (`cross_k0` ... `cross_v11`).
+- `decoder.xml`: one token per call, no state. Inputs `ids`, `pos`, `mask` (1 x 1 x 1 x slots+1), the self-attention cache `past_k*`/`past_v*` (1 x 12 x slots x 64) and the cross K/V. Outputs `logits` and the step's `new_k*`/`new_v*`, which the host writes into the cache at `pos`.
+- `step_export.json` (layers, heads, slots), the tokenizer and configs, and `SHA256SUMS`.
+
+448 cache slots by default (`--cache-slots`), Whisper's `max_target_positions`, since the prompt and the answer share them. INT8 (per-channel, symmetric) in `whisper-small.en-step-ov`, fp16 in `whisper-small.en-step-ov-fp16`. `--model openai/whisper-small` for the multilingual one. The source is the pinned revision in `model_sources.json`, checked by sha256, exported offline.
+
+Before writing anything, it teacher-forces a dictation-shaped sequence (`<|startofprev|>`, a vocabulary, the start tokens, an answer: 26 positions) through its wrapper and through transformers, and refuses on a logit drift over 1e-3. Then it runs the saved IR under plain OpenVINO on the CPU.
+
+| Measured 2026-11-11 (whisper-small.en, 7 s of noise) | Max logit drift | Argmax agrees |
+|---|---|---|
+| Wrapper against transformers (fp32) | 6e-05 | |
+| fp16 IR, CPU | 9.5e-05 | 26 / 26 |
+| INT8 IR, CPU | 1.34 | 25 / 26 |
+
+The INT8 drift is on noise, where the logits are flat. Whether INT8 holds on speech is #178's first check.
+
+**On the NPU** (2026-11-11, Core 5 320, driver 1.35.0, OpenVINO 2026.4.0, n=1), with an empty driver cache:
+
+| | INT8 | fp16 |
+|---|---|---|
+| Encoder compile | 23.4 s | 21.3 s |
+| Decoder compile | 2.0 s | 2.1 s |
+| Encoder, 30 s | 226 ms | 177 ms |
+| Decoder step, every input passed to `infer()` | 28.6 ms | 31.7 ms |
+| Decoder step, written into the request's own tensors | 11.7 ms | 15.6 ms |
+
+How the inputs are fed decides the step time. Passing numpy arrays to `infer()` copies 24 cross tensors of 4.6 MB each into the NPU on every token; `set_tensor` with shared host memory barely helps (25 ms). Writing into `request.get_tensor(name).data` once (cross K/V) and per step (one cache slot) is what gets 11.7 ms. #178's loop has to work that way.
+
+Rough cost of a 12 s dictation piece at that rate: 0.2 s encoder plus about 39 steps (4 start tokens, 35 answer tokens) is 0.66 s, against 0.70 s through `WhisperPipeline`. A 20-term prompt adds about 60 steps, 0.7 s, unless the prompt is prefilled in one call. That is an estimate from step timings, not a decode.
