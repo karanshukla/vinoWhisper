@@ -16,15 +16,18 @@ from typing import IO, Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, bundle, config, distro, session, summary
+from . import __version__, audio, bundle, config, distro, session, summary, vad
 from .client import TranscriptionClient
 from .dictate import clean
-from .paragraphs import ParagraphBreaker
+from .paragraphs import PARAGRAPH_SILENCE_S, ParagraphBreaker
 
 FRAME_SAMPLES = config.SAMPLE_RATE_HZ // 10
 _FRAME_BYTES = FRAME_SAMPLES * audio.BYTES_PER_SAMPLE
 _PAUSE_FRAMES = max(1, round(config.SEGMENT_PAUSE_S * 10))
 _PAD_FRAMES = max(1, round(config.TRIM_PAD_S * 10))
+# Both pads come off the gap the transcript sees between two pieces.
+_NOT_SPEECH_SCALE = 1e-4
+_BREAK_FRAMES = round((PARAGRAPH_SILENCE_S + 2 * config.TRIM_PAD_S) * 10)
 _EMPTY = np.zeros(0, dtype=np.float32)
 
 PIECE_ATTEMPTS = 3
@@ -177,13 +180,18 @@ def frames(path: Path, which: Callable[[str], str | None] = shutil.which) -> Ite
 # Pieces of at most max_s, each cut at the quietest pause past min_s: no overlap, no stitching.
 class Segmenter:
     def __init__(
-        self, min_s: float = config.FILE_PIECE_MIN_S, max_s: float = config.MAX_WINDOW_S
+        self,
+        min_s: float = config.FILE_PIECE_MIN_S,
+        max_s: float = config.MAX_WINDOW_S,
+        speech: Callable[[np.ndarray], float] | None = None,
     ) -> None:
         self.limit(min_s, max_s)
+        self._speech = speech
         self._frames: list[np.ndarray] = []
         self._levels: list[float] = []
         self._held = 0
         self._start = 0
+        self._quiet_run = 0
 
     def limit(self, min_s: float, max_s: float) -> None:
         self._max_frames = int(max_s * 10)
@@ -191,9 +199,18 @@ class Segmenter:
 
     def add(self, chunk: np.ndarray) -> list[Piece]:
         out: list[Piece] = []
+        level = audio.rms(chunk)
+        # A dog or bells between two talks is loud, and still nobody speaking (#180). Scaled,
+        # not zeroed: a tie at zero cuts at the earliest pause and makes pieces short.
+        if self._speech is not None and self._speech(chunk) < vad.SPEECH_PROBABILITY:
+            level *= _NOT_SPEECH_SCALE
         self._frames.append(chunk)
-        self._levels.append(audio.rms(chunk))
+        self._levels.append(level)
         self._held += chunk.size
+        self._quiet_run = 0 if level >= config.SILENCE_RMS_THRESHOLD else self._quiet_run + 1
+        # A pause that starts a paragraph ends the piece, so the transcript sees it between two.
+        if _BREAK_FRAMES <= self._quiet_run < len(self._levels):
+            out.append(self._take(len(self._frames)))
         while self._held >= self._max_frames * FRAME_SAMPLES and len(self._frames) > 1:
             out.append(self._take(self._cut_index()))
         return out
@@ -364,6 +381,7 @@ def transcribe_file(
     task: str | None = None,
     now: Callable[[], datetime] = datetime.now,
     which: Callable[[str], str | None] = shutil.which,
+    speech: Callable[[np.ndarray], float] | None = None,
 ) -> Path:
     if not path.is_file():
         raise TranscribeError(f"{path} is not a file")
@@ -385,7 +403,7 @@ def transcribe_file(
     duration_s = probe_duration_s(path, which)
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)
-    segmenter = Segmenter()
+    segmenter = Segmenter(speech=speech)
     if health.get("live_active"):
         segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
     decoded_s = 0.0
@@ -533,6 +551,9 @@ def main(argv: list[str] | None = None) -> int:
     # absolute(), not resolve(): a link is named as the user named it.
     path = args.file.expanduser().absolute()
     directory = args.output.expanduser() if args.output is not None else None
+    speech = vad.detector(
+        lambda line: print(f"[vinowhisper] WARNING: {line}", file=sys.stderr, flush=True)
+    )
     try:
         saved = transcribe_file(
             path,
@@ -542,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             language=args.language,
             task=args.task,
+            speech=speech,
         )
     except KeyboardInterrupt:
         return _fail(args.json, "cancelled; nothing was saved", 130)

@@ -18,6 +18,7 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ### 🐛 Bug Fixes
 
+- **Imported files break paragraphs where the speech stops, not only at silence** (#180). A dog barking or music between two talks used to merge them into one paragraph with a late time stamp. A small speech detector (Silero VAD, 1.3 MB, downloaded on the first import) now marks that sound as not speech, so it starts a new paragraph and is never sent to the speech model. Accuracy and speed are unchanged on a 19-minute reading. Details in `docs/sessions.md`.
 - Canary returned no text on a CPU with AVX512_BF16, where OpenVINO defaults to bfloat16. It now runs at 32-bit floats on the CPU.
 
 ## [1.5.0] - 2026-11-08
