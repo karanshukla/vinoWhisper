@@ -112,7 +112,10 @@ uninstall() {
     say "Removing the commands"
     uv="$(command -v uv || true)"
     [ -n "$uv" ] || { [ -x "$BIN/uv" ] && uv="$BIN/uv"; }
-    if [ -n "$uv" ] && "$uv" tool list 2>/dev/null | grep -q '^vinowhisper '; then
+    # Into a variable first: under pipefail, grep -q leaving early can fail the pipe (EPIPE).
+    local tools=""
+    [ -z "$uv" ] || tools="$("$uv" tool list 2>/dev/null || true)"
+    if grep -q '^vinowhisper ' <<<"$tools"; then
         "$uv" tool uninstall vinowhisper
     fi
     # A checkout's vinowhisper-setup links its .venv's commands, and bash completion.
@@ -127,12 +130,20 @@ uninstall() {
 
     say "Deleting the models and caches"
     rm -rf "$data/vinowhisper/models" "$cache"
-    # scripts/install.sh's own clone; a checkout with your changes in it is kept.
-    if [ -d "$data/vinowhisper/src/.git" ]; then
-        if [ -z "$(git -C "$data/vinowhisper/src" status --porcelain 2>/dev/null || echo dirty)" ]; then
-            rm -rf "$data/vinowhisper/src"
+    # scripts/install.sh's own clone; kept when it holds work that exists nowhere else.
+    local src="$data/vinowhisper/src" why=""
+    if [ -d "$src/.git" ]; then
+        if [ -n "$(git -C "$src" status --porcelain 2>/dev/null || echo unknown)" ]; then
+            why="uncommitted changes"
+        elif [ -n "$(git -C "$src" log --branches --not --remotes -1 --format=%h 2>/dev/null || echo unknown)" ]; then
+            why="commits that are not on any remote"
+        elif [ -n "$(git -C "$src" stash list 2>/dev/null || echo unknown)" ]; then
+            why="stashed changes"
+        fi
+        if [ -z "$why" ]; then
+            rm -rf "$src"
         else
-            printf '  kept %s: it has uncommitted changes\n' "$data/vinowhisper/src"
+            printf '  kept %s: it has %s (delete it yourself once they are saved elsewhere)\n' "$src" "$why"
         fi
     fi
     rmdir "$data/vinowhisper" 2>/dev/null || true

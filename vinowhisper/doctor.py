@@ -200,7 +200,7 @@ def _vocabulary() -> list[Result]:
         kind = "NPU"
     language, task, model = config.load_language()
     step = whisper_step.exported(config.step_model_dir(config.is_multilingual(language, task)))
-    reason = vocabulary.unprompted(kind, model, step)
+    reason = vocabulary.unprompted(kind, model, step, language)
     status = WARN if problem else OK
     if reason is not None:
         # Still worth having: near-miss spellings are corrected after the decode.

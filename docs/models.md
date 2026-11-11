@@ -32,6 +32,21 @@ confirmed in place.
   `vinowhisper-setup` exports it again. With Canary selected the server keeps
   running.
 
+Since 2026-11-11 the delete and the size also cover the step exports
+`scripts/export_whisper.py` writes for the vocabulary prompt (the fp16 folders the
+server loads and their INT8 siblings, for both language sets). They do not count
+as Whisper being installed: `present` in the status still means one of the four
+pipeline exports is there, because a step export decodes nothing on its own.
+
+The page changes only after the delete has happened: "Whisper was deleted" and the
+language list falling back to English wait for the refreshed status to say the
+exports are gone, and a delete that failed leaves the page as it was with the
+reason on a *Last attempt* row. If the status itself cannot be read, the group
+says so instead of disappearing. Deleting Canary while it is the speech model
+switches back to Whisper, and when no Whisper export exists the confirmation and
+the note say captions and dictation stay off until `vinowhisper-setup` exports a
+model.
+
 `vinowhisper-whisper model status|delete|delete-source` does the same from a
 terminal, in JSON lines like the other two. Silero VAD (1.3 MB, file imports
 only) is not part of it: both speech models use it and it downloads itself again
@@ -156,7 +171,7 @@ So the server reads the fp16 export (`config.STEP_MODEL_DIR`). INT8's difference
 | 29 s | 1.54 s (1.90) | 1.82 s (2.38) | 7.31 s (17.1) | 6.42 s (8.10) |
 
 - Without a prompt the loop is about 20% behind `WhisperPipeline`.
-- The prompt is the cost: each of its tokens is one decoder step (14.6 ms on a quiet NPU), so 20 terms (about 80 tokens) add about 1.2 s before the first word. A prefill that takes the whole prompt in one call is the obvious fix and is not built.
+- The prompt is the cost: each of its tokens is one decoder step (14.6 ms on a quiet NPU), so 20 terms (about 80 tokens) add about 1.2 s before the first word. These rows are from before the prefill, which now takes the whole prompt in one call (below).
 - The 29 s worst cases are runaway decodes on mid-sentence windows (below), each running to its token limit.
 - Encoder 285 ms. Cold load from an empty driver cache: 24.8 s for the loop's two models, 27.7 s for `WhisperPipeline`. NPU memory with both loaded: 157 MB (`drm-resident-memory`).
 
@@ -169,4 +184,8 @@ So the server reads the fp16 export (`config.STEP_MODEL_DIR`). INT8's difference
 | 5 s | 0.36 s (0.41) | 0.47 s (1.32) | 1.63 s (2.54) |
 | 29 s | 1.55 s (1.90) | 1.84 s (5.59) | 2.96 s (6.72) |
 
-A typical prompted dictation piece now costs about 0.1 s more than today's unprompted one, which is #179's "about the same" outcome. If `prefill.xml` is missing or does not compile, the loop logs it and feeds the prompt step by step.
+A typical prompted dictation piece now costs about 0.1 s more than today's unprompted one, which is #179's "about the same" outcome. If `prefill.xml` does not compile, the loop logs it and feeds the prompt step by step. If the file is missing (an export from before #179), it does the same without a log line.
+
+The loop's models are compiled when the server loads Whisper on the NPU, if the step export is there, the language is not auto and `vocabulary.txt` has terms (2026-11-11): the 24.8 s cold compile used to land inside the first prompted dictation, under the transcriber's lock. Otherwise they still load at the first dictation that needs them. A load that fails turns the prompt off until the model is next unloaded and loaded; a device reset (`ZE_RESULT_ERROR_DEVICE_LOST`) is not counted as a failure and goes through the usual reload. Unit tests only, not run on an NPU.
+
+`scripts/export_whisper.py` exits non-zero when the fp16 IR does not agree with transformers on every token of its check sequence, or when the fp16 prefill picks a different token (2026-11-11). The INT8 comparison only warns: 25 / 26 is its recorded result, and nothing loads the INT8 export. `--fp16-out` and `--int8-out` name the two directories (`--cpu-out` and `--npu-out` still work).

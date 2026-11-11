@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
+# install.sh refuses uid 0 on purpose ("run this as yourself, not root").
+not_root = pytest.mark.skipif(os.geteuid() == 0, reason="install.sh refuses to run as root")
+
 
 def _stub(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +104,7 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
+@not_root
 def test_uninstall_deletes_the_models_and_keeps_the_users_data(home):
     home, env, log = home
     done = _run(env, "--uninstall")
@@ -154,6 +158,7 @@ def test_uninstall_deletes_the_models_and_keeps_the_users_data(home):
     assert "Kept your saved sessions" in done.stdout
 
 
+@not_root
 def test_uninstall_honours_xdg_dirs(home, tmp_path):
     home, env, _ = home
     data, cache = tmp_path / "xdg-data", tmp_path / "xdg-cache"
@@ -167,23 +172,63 @@ def test_uninstall_honours_xdg_dirs(home, tmp_path):
     assert (data / "vinowhisper/transcripts/a.txt").is_file()
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
-def test_the_installers_clone_goes_unless_it_has_changes(home):
-    home, env, _ = home
-    src = home / ".local/share/vinowhisper/src"
-    _touch(src / "pyproject.toml", 'name = "vinowhisper"\n')
-    _git(src, "init", "-q")
-    _git(src, "add", ".")
-    _git(src, "commit", "-qm", "init")
-    _touch(src / "pyproject.toml", 'name = "vinowhisper"\n# mine\n')
+@pytest.fixture
+def clone(home, tmp_path):
+    """The installer's clone as scripts/install.sh leaves it: every commit is on origin."""
+    upstream = tmp_path / "upstream"
+    _touch(upstream / "pyproject.toml", 'name = "vinowhisper"\n')
+    _git(upstream, "init", "-q")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-qm", "init")
+    src = home[0] / ".local/share/vinowhisper/src"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    _git(src.parent, "clone", "-q", str(upstream), "src")
+    return src
+
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+
+
+@not_root
+@needs_git
+def test_the_installers_clone_goes_unless_it_has_changes(home, clone):
+    _, env, _ = home
+    _touch(clone / "pyproject.toml", 'name = "vinowhisper"\n# mine\n')
     done = _run(env, "--uninstall")
     assert done.returncode == 0, done.stderr
-    assert src.is_dir() and "uncommitted changes" in done.stdout
-    _git(src, "checkout", "-q", "--", ".")
+    assert clone.is_dir() and "uncommitted changes" in done.stdout
+    _git(clone, "checkout", "-q", "--", ".")
     assert _run(env, "--uninstall").returncode == 0
-    assert not src.exists()
+    assert not clone.exists()
 
 
+@not_root
+@needs_git
+def test_a_clone_with_a_local_commit_is_kept(home, clone):
+    """A clean working tree is not "nothing to lose": the commit exists nowhere else."""
+    _, env, _ = home
+    _git(clone, "checkout", "-qb", "mine")
+    _touch(clone / "notes.txt")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-qm", "local work")
+    done = _run(env, "--uninstall")
+    assert done.returncode == 0, done.stderr
+    assert (clone / "notes.txt").is_file()
+    assert "commits that are not on any remote" in done.stdout
+
+
+@not_root
+@needs_git
+def test_a_clone_with_a_stash_is_kept(home, clone):
+    _, env, _ = home
+    _touch(clone / "pyproject.toml", 'name = "vinowhisper"\n# mine\n')
+    _git(clone, "stash", "-q")
+    done = _run(env, "--uninstall")
+    assert done.returncode == 0, done.stderr
+    assert clone.is_dir() and "stashed changes" in done.stdout
+
+
+@not_root
 def test_a_second_uninstall_finds_nothing_and_still_succeeds(home):
     home, env, _ = home
     assert _run(env, "--uninstall").returncode == 0

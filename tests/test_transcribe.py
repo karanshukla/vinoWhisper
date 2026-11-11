@@ -488,6 +488,63 @@ def test_a_link_keeps_the_name_the_user_gave_it(command, tmp_path, capsys):
     assert bundle.read(saved).session["source"] == "lecture.wav"
 
 
+def test_a_detector_that_breaks_mid_file_is_dropped_with_one_warning(tmp_path):
+    """An inference error at minute 40 must not cost the 40 minutes: the rest of the file
+    is cut on silence alone, as it would be with no detector."""
+    heard = []
+
+    def breaks(chunk: np.ndarray) -> float:
+        heard.append(chunk.size)
+        if len(heard) > 50:
+            raise RuntimeError("Infer Request was canceled\n  at infer_request.cpp:245")
+        return 0.9
+
+    said: list[str] = []
+    path = write_wav(tmp_path / "memo.wav", np.concatenate([speech(8.0), speech(8.0)]))
+    saved, _ = run(path, FakeClient(["One. Two."]), tmp_path, speech=breaks, warn=said.append)
+    assert bundle.read(saved).transcript
+    assert len(heard) == 51, "not asked again after it failed"
+    assert said == [
+        "the speech detector stopped at 0:05 (Infer Request was canceled); "
+        "the rest of this file breaks paragraphs on silence only"
+    ]
+
+
+def test_the_detector_is_built_only_after_the_file_and_server_checks(tmp_path):
+    """Its first run downloads the model. A mistyped path or a server holding the wrong
+    model must fail before that, not after a fetch."""
+    built = []
+
+    def detector(say):
+        built.append(True)
+        return hears_speech
+
+    with pytest.raises(transcribe.TranscribeError, match="is not a file"):
+        run(tmp_path / "typo.wav", FakeClient(), tmp_path, detector=detector)
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    with pytest.raises(transcribe.TranscribeError):
+        run(path, FakeClient(), tmp_path, detector=detector, model=config.CANARY_MODEL)
+    assert built == []
+    run(path, FakeClient(), tmp_path, detector=detector)
+    assert built == [True]
+
+
+def test_a_detector_that_is_off_is_a_warning_on_the_ready_record(tmp_path):
+    """Ready's warnings are the one notice shape the import has; --json readers get the
+    detector's absence there instead of on a stderr the sessions window discards."""
+
+    def detector(say):
+        say("could not fetch the speech detector (offline); paragraphs break on silence only")
+        return None
+
+    path = write_wav(tmp_path / "memo.wav", speech(2.0))
+    _, records = run(path, FakeClient(), tmp_path, detector=detector)
+    assert records[0]["event"] == "Ready"
+    assert records[0]["warnings"] == [
+        "could not fetch the speech detector (offline); paragraphs break on silence only"
+    ]
+
+
 # ── the command ──────────────────────────────────────────────────────────────
 
 

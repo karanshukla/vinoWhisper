@@ -19,7 +19,8 @@
 # ///
 # Exports Whisper for vinoWhisper's own decode loop (#177): a static 30 s encoder that also
 # emits every decoder layer's cross-attention K/V, and a one-token stateless decoder whose
-# self-attention cache the host fills. INT8 for the NPU, fp16 for CPU/GPU. Not optimum:
+# self-attention cache the host fills. fp16 is what the server loads, on the NPU too; INT8 is
+# written beside it for comparison only (docs/models.md). Not optimum:
 # WhisperPipeline's NPU path refuses a decoder prompt, which is what this is for (#176).
 import argparse
 import hashlib
@@ -120,7 +121,7 @@ def fetch(model_id: str, pin: dict, root: Path) -> Path:
     return target
 
 
-def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int) -> None:
+def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int) -> list[str]:
     import nncf
     import numpy as np
     import openvino as ov
@@ -306,16 +307,17 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int)
     ov.save_model(enc_ir, str(cpu_out / "encoder.xml"), compress_to_fp16=True)
     ov.save_model(dec_ir, str(cpu_out / "decoder.xml"), compress_to_fp16=True)
     ov.save_model(pre_ir, str(cpu_out / "prefill.xml"), compress_to_fp16=True)
-    print(f"==> fp16 (CPU/GPU) export in {cpu_out}", flush=True)
+    print(f"==> fp16 export (the one the server loads) in {cpu_out}", flush=True)
     core = ov.Core()
     for name in ("encoder", "decoder", "prefill"):
         model = nncf.compress_weights(
             core.read_model(str(cpu_out / f"{name}.xml")), mode=nncf.CompressWeightsMode.INT8_SYM
         )
         ov.save_model(model, str(npu_out / f"{name}.xml"))
-    print(f"==> INT8 (NPU) export in {npu_out}", flush=True)
+    print(f"==> INT8 export (comparison only, not loaded) in {npu_out}", flush=True)
 
     # The IR itself, under plain openvino on the CPU: the same teacher-forced sequence.
+    wrong: list[str] = []
     for label, out in (("fp16", cpu_out), ("int8", npu_out)):
         e = core.compile_model(str(out / "encoder.xml"), "CPU")
         d = core.compile_model(str(out / "decoder.xml"), "CPU").create_infer_request()
@@ -340,6 +342,11 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int)
             f"==> {label} IR on CPU: {agree}/{len(sequence)} argmax agree, max logit drift {worst:.3g}",
             flush=True,
         )
+        if agree < len(sequence):
+            if label == "fp16":
+                wrong.append(f"decoder.xml agrees on {agree}/{len(sequence)} tokens")
+            else:
+                print(f"warning: the {label} IR differs from the reference", flush=True)
         pf = core.compile_model(str(out / "prefill.xml"), "CPU").create_infer_request()
         ids = np.zeros((1, prefill), np.int64)
         ids[0, :n] = sequence[:n]
@@ -349,11 +356,17 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int)
         feed.update({names[3 + 2 * layers + j]: kv[j] for j in range(2 * layers)})
         res = pf.infer(feed)
         row, ref = res["logits"][0], logits[n - 1].numpy()
+        same = row.argmax() == ref.argmax()
         print(
-            f"==> {label} prefill on CPU: argmax {'agrees' if row.argmax() == ref.argmax() else 'DIFFERS'}, "
+            f"==> {label} prefill on CPU: argmax {'agrees' if same else 'DIFFERS'}, "
             f"logit drift {float(np.abs(row - ref).max()):.3g}",
             flush=True,
         )
+        if not same:
+            if label == "fp16":
+                wrong.append("prefill.xml picks a different token")
+            else:
+                print(f"warning: the {label} prefill differs from the reference", flush=True)
 
     for out in (cpu_out, npu_out):
         digests = {
@@ -362,6 +375,7 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int, prefill: int)
             if p.is_file() and p.name != "SHA256SUMS"
         }
         (out / "SHA256SUMS").write_text("".join(f"{h}  {n}\n" for n, h in digests.items()))
+    return wrong
 
 
 def main() -> int:
@@ -370,8 +384,20 @@ def main() -> int:
     )
     models = _data_home() / "vinowhisper/models"
     parser.add_argument("--model", choices=MODELS, default=MODELS[0])
-    parser.add_argument("--npu-out", type=Path)
-    parser.add_argument("--cpu-out", type=Path)
+    parser.add_argument(
+        "--fp16-out",
+        "--cpu-out",
+        dest="cpu_out",
+        type=Path,
+        help="the export the server loads, on the NPU too (default: <model>-step-ov-fp16)",
+    )
+    parser.add_argument(
+        "--int8-out",
+        "--npu-out",
+        dest="npu_out",
+        type=Path,
+        help="the INT8 copy, for comparison only; nothing loads it (default: <model>-step-ov)",
+    )
     parser.add_argument("--cache-slots", type=int, default=CACHE_SLOTS)
     parser.add_argument("--prefill-tokens", type=int, default=PREFILL_TOKENS)
     parser.add_argument("--source-root", type=Path, default=models / "source")
@@ -387,7 +413,15 @@ def main() -> int:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     source = fetch(args.model, _pins(args.model, args.sources), args.source_root)
     os.environ["HF_HUB_OFFLINE"] = "1"
-    export(source, npu_out, cpu_out, args.cache_slots, args.prefill_tokens)
+    wrong = export(source, npu_out, cpu_out, args.cache_slots, args.prefill_tokens)
+    if wrong:
+        print(
+            f"error: the fp16 IR in {cpu_out} does not reproduce transformers: {'; '.join(wrong)}.\n"
+            f"  Do not use it: delete {cpu_out} and run this script again. If it repeats, the\n"
+            "  openvino or transformers pinned at the top of this script changed behaviour.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

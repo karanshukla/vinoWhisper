@@ -21,6 +21,13 @@ def export_dirs() -> tuple[Path, ...]:
     )
 
 
+def step_dirs() -> tuple[Path, ...]:
+    # The loop's fp16 pair, and the INT8 siblings scripts/export_whisper.py writes beside them.
+    fp16 = (config.STEP_MODEL_DIR, config.MULTILINGUAL_STEP_MODEL_DIR)
+    int8 = tuple(d.with_name(d.name.removesuffix("-fp16")) for d in fp16)
+    return tuple(dict.fromkeys(fp16 + int8))
+
+
 def source_dirs() -> list[Path]:
     # Only Whisper's snapshots: export_canary.py keeps Canary's source beside them.
     root = source.SOURCE_ROOT
@@ -48,16 +55,19 @@ def in_use() -> bool:
 
 def model_status() -> dict:
     exports = [d for d in export_dirs() if _exported(d)]
+    steps = [d for d in step_dirs() if _exported(d)]
     sources = source_dirs()
     return {
         "label": LABEL,
+        # A step export decodes nothing without the pipeline's export beside it.
         "present": bool(exports),
-        "bytes": sum(_size(d) for d in exports),
+        "bytes": sum(_size(d) for d in exports + steps),
         "download_bytes": 0,
         "cache_bytes": 0,
         "source_bytes": sum(_size(d) for d in sources),
         "in_use": in_use(),
         "exports": [d.name for d in exports],
+        "step_exports": [d.name for d in steps],
         "dir": str(config.MODEL_ROOT),
     }
 
@@ -93,7 +103,7 @@ def model_delete() -> bool:
     stopped = False
     if in_use() and any(_exported(d) for d in export_dirs()):
         stopped = stop_server()
-    for directory in export_dirs():
+    for directory in export_dirs() + step_dirs():
         _remove(directory)
     delete_source()
     return stopped

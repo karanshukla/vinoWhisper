@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import pytest
 
-from vinowhisper import config, devices, vocabulary, whisper_step
+from vinowhisper import config, devices, failures, vocabulary, whisper_step
 from vinowhisper.transcriber import WhisperTranscriber
 
 
@@ -79,9 +79,9 @@ def pipeline(monkeypatch, tmp_path):
     return calls
 
 
-def _transcriber(monkeypatch, device):
+def _transcriber(monkeypatch, device, **settings):
     monkeypatch.setattr(devices, "available", lambda: [devices.Device(device, device)])
-    transcriber = WhisperTranscriber()
+    transcriber = WhisperTranscriber(**settings)
     transcriber.select_device()
     transcriber.load()
     return transcriber
@@ -165,20 +165,31 @@ def test_our_own_export_lets_the_npu_take_the_prompt():
     assert vocabulary.unprompted("NPU", config.CANARY_MODEL, step_export=True)
 
 
+def test_auto_language_has_no_prompt_on_the_npu_only():
+    """Our loop writes the language token into the prompt itself, and auto has none.
+    WhisperPipeline on a CPU or GPU detects the language under its own hotwords."""
+    reason = vocabulary.unprompted("NPU", config.WHISPER_MODEL, True, config.AUTO_LANGUAGE)
+    assert reason and "auto" in reason and "Settings" in reason
+    assert vocabulary.unprompted("NPU", config.WHISPER_MODEL, True, "fr") is None
+    assert vocabulary.unprompted("GPU", config.WHISPER_MODEL, False, config.AUTO_LANGUAGE) is None
+
+
 @pytest.fixture
 def step(monkeypatch):
     """Our own loop (#178), faked: what it was asked, and whether it loaded."""
     state = {"calls": [], "fails": False, "built": 0, "says": "Kubernetes is up."}
-    for name in ("encoder.xml", "decoder.xml", "step_export.json", "tokenizer.json"):
-        config.STEP_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        (config.STEP_MODEL_DIR / name).write_text("{}")
+    for directory in (config.STEP_MODEL_DIR, config.MULTILINGUAL_STEP_MODEL_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in ("encoder.xml", "decoder.xml", "step_export.json", "tokenizer.json"):
+            (directory / name).write_text("{}")
 
     class Step:
         def __init__(self, model_dir, device):
             if state["fails"]:
-                raise RuntimeError("compile failed: ZE_RESULT_ERROR_UNSUPPORTED_FEATURE")
+                raise RuntimeError(state["fails"])
             state["built"] += 1
             state["device"] = device
+            state["dir"] = model_dir
 
         def transcribe(self, samples, hotwords, max_new_tokens, **prompt):
             state["calls"].append(
@@ -205,12 +216,107 @@ def test_with_our_export_the_npu_dictates_through_the_prompted_loop(pipeline, st
 def test_captions_and_unbiased_decodes_stay_on_the_pipeline(pipeline, step, monkeypatch):
     config.VOCABULARY_FILE.write_text("Kubernetes\n")
     _decode(_transcriber(monkeypatch, "NPU"), biased=False)
-    assert step["calls"] == [] and step["built"] == 0
+    assert step["calls"] == []
     assert "hotwords" not in pipeline[-1]
 
 
+def test_the_loop_is_built_at_load_when_a_vocabulary_will_use_it(pipeline, step, monkeypatch):
+    """Its two models take 24.8 s from an empty driver cache (docs/models.md): paid at
+    the key press's warm-up load, not under the lock inside the first dictation."""
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert step["built"] == 1
+    _decode(transcriber)
+    assert step["built"] == 1
+
+
+@pytest.mark.parametrize("vocabulary_text", [None, "# no terms yet\n"])
+def test_without_terms_the_loop_waits_for_a_dictation_that_needs_it(
+    pipeline, step, monkeypatch, vocabulary_text
+):
+    if vocabulary_text is not None:
+        config.VOCABULARY_FILE.write_text(vocabulary_text)
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert step["built"] == 0
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    assert _decode(transcriber) == "Kubernetes is up."
+    assert step["built"] == 1
+
+
+def test_the_loop_is_not_built_off_the_npu(pipeline, step, monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    _decode(_transcriber(monkeypatch, "CPU"))
+    assert step["built"] == 0 and step["calls"] == []
+
+
+def test_a_named_language_reaches_the_multilingual_loop(pipeline, step, monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    transcriber = _transcriber(monkeypatch, "NPU", language="fr")
+    assert _decode(transcriber) == "Kubernetes is up."
+    assert step["dir"] == config.MULTILINGUAL_STEP_MODEL_DIR
+    assert (step["calls"][-1]["language"], step["calls"][-1]["task"]) == ("fr", "transcribe")
+    assert pipeline == []
+
+
+def test_auto_language_on_the_npu_dictates_without_the_prompt(pipeline, step, monkeypatch):
+    """The loop's prompt needs a language token and auto has none, so the pipeline decodes
+    and nothing is compiled for a prompt that will never be used."""
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    transcriber = _transcriber(monkeypatch, "NPU", language=config.AUTO_LANGUAGE)
+    assert _decode(transcriber) == "ok"
+    assert step["built"] == 0 and step["calls"] == []
+    assert "hotwords" not in pipeline[-1]
+
+
+def test_a_reload_gives_a_loop_that_failed_another_try(pipeline, step, monkeypatch, capsys):
+    step["fails"] = "compile failed: ZE_RESULT_ERROR_UNSUPPORTED_FEATURE"
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert _decode(transcriber) == "ok"
+    step["fails"] = False
+    assert _decode(transcriber) == "ok", "still off: one failure is not retried per dictation"
+    transcriber._unload()
+    transcriber.load()
+    assert _decode(transcriber) == "Kubernetes is up."
+
+
+def test_a_reset_while_the_loop_loads_is_a_reset_not_a_broken_export(
+    pipeline, step, monkeypatch, capsys
+):
+    """ZE_RESULT_ERROR_DEVICE_LOST is another program's fault resetting the NPU for
+    everyone. Swallowing it as "did not load" would turn the prompt off for good and
+    leave a dead pipeline in place; raised, transcribe_stream reloads and retries."""
+    transcriber = _transcriber(monkeypatch, "NPU")
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    step["fails"] = "compile_model: ZE_RESULT_ERROR_DEVICE_LOST"
+    builds = []
+    real = WhisperTranscriber._build
+
+    def build(self, selection, model_dir):
+        builds.append(selection.kind)
+        step["fails"] = False
+        real(self, selection, model_dir)
+
+    monkeypatch.setattr(WhisperTranscriber, "_build", build)
+    assert _decode(transcriber) == "Kubernetes is up."
+    assert builds == ["NPU"]
+    err = capsys.readouterr().err
+    assert "was reset, reloading the model" in err
+    assert "vocabulary prompt is off" not in err
+
+
+def test_a_reset_at_load_leaves_the_loop_for_the_first_dictation(pipeline, step, monkeypatch):
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    step["fails"] = "compile_model: ZE_RESULT_ERROR_DEVICE_LOST"
+    transcriber = _transcriber(monkeypatch, "NPU")
+    assert not transcriber._step_failed
+    step["fails"] = False
+    assert _decode(transcriber) == "Kubernetes is up."
+    assert not failures.load()
+
+
 def test_a_loop_that_does_not_load_leaves_dictation_working(pipeline, step, monkeypatch, capsys):
-    step["fails"] = True
+    step["fails"] = "compile failed: ZE_RESULT_ERROR_UNSUPPORTED_FEATURE"
     config.VOCABULARY_FILE.write_text("Kubernetes\n")
     transcriber = _transcriber(monkeypatch, "NPU")
     assert _decode(transcriber) == "ok"
