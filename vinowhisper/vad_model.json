@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "note": "Silero VAD (MIT), the variant its authors export for OpenVINO: the general silero_vad.onnx does not convert (its If branches have dynamic ranks). Read by vad.py to find speech in an imported file. Hashed 2026-11-11 from the v6.2.3 tag.",
+  "repo": "snakers4/silero-vad",
+  "revision": "5cd7945676eb32225748052e2e6a0580e4686a08",
+  "path": "src/silero_vad/data",
+  "recorded": "2026-11-11",
+  "files": {
+    "silero_vad_openvino_16k.onnx": {
+      "sha256": "7776b81ad1b0350c15d7f1555943b9232eb53e9ca5d989c6d0cea9ebc8664d87",
+      "size": 1288203
+    }
+  }
+}

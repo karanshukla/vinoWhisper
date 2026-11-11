@@ -441,6 +441,11 @@ file". The choices that answer the issue's open questions:
 - **Two tests in `tests/test_transcribe.py` run the real ffmpeg when it is installed**, and
   skip when it is not. Kept on purpose (user's call, 2026-11-09) as the one exception to
   "anything that would shell out is monkeypatched": they caught ffmpeg's downmix level.
+- **Non-speech is silence to the file segmenter** (#180, 2026-11-11): Silero VAD on the CPU
+  (`vad.py`, pinned in `vad_model.json`), scaled by 1e-4 rather than zeroed (zero ties
+  every pause and shrank pieces, dropping 33 words on the reading), and 3.1 s without
+  speech ends a piece. Whisper's segment timestamps were tried first and rejected:
+  +64% time and 6.9% to 8.6% WER on the NPU. Files only; captions still break on RMS.
 - Fixed 2026-11-09: a live Canary session used to be attested as Whisper. `Ready` now
   carries the server's `model`, and `config.served_model_id` names it for both paths.
 
@@ -521,6 +526,7 @@ vinowhisper/
   playing.py      what was sending the audio: MPRIS (busctl) and PipeWire streams, for the attestation
   session.py      --record writer, --transcript writer (TranscriptWriter), vinowhisper-session
   transcribe.py   vinowhisper-transcribe: a file decoded, cut at pauses, into a .vwsession
+  vad.py          Silero VAD for file imports: the pinned download and the 32 ms stepping
   bundle.py       the .vwsession zip: read, atomic write, attestation, verify
   summary.py      chunked summaries, the server's background Summariser, crash recovery
   replay.py       vinowhisper-replay, --restitch (offline) and --sweep (needs NPU)

@@ -16,7 +16,7 @@ import pytest
 import requests
 
 from tests import pcm
-from vinowhisper import bundle, config, distro, transcribe
+from vinowhisper import audio, bundle, config, distro, transcribe
 
 RATE = config.SAMPLE_RATE_HZ
 NOW = datetime(2026, 11, 9, 14, 5, 12)
@@ -292,6 +292,76 @@ def test_a_break_inside_a_piece_is_stamped_by_where_its_words_fall(tmp_path):
     assert paragraphs[1].startswith("[00:16] m0 m1")
 
 
+def noise(seconds: float) -> np.ndarray:
+    """A dog barking or bells: as loud as speech or louder, and not speech."""
+    return pcm.sine(900.0, seconds, amplitude=0.3)
+
+
+def hears_speech(chunk: np.ndarray) -> float:
+    """A stand-in for Silero: speech() above is speech, noise() is not."""
+    return 0.9 if audio.rms(chunk) < 0.15 else 0.1
+
+
+def paragraphs_of(saved: Path) -> list[str]:
+    return bundle.read(saved).transcript.strip().split("\n\n")[1:]
+
+
+def test_sound_between_talks_breaks_the_paragraph_like_silence_does(tmp_path):
+    """#180: three talks with barking and bells between them, in a 91 s file."""
+    track = np.concatenate(
+        [speech(8.0), noise(18.0), speech(8.0), noise(30.0), speech(5.0), noise(4.0)]
+    )
+    path = write_wav(tmp_path / "barking.mp4.wav", track)
+    client = FakeClient(["Sourdough needs time.", "Oil the chain.", "Taxes are due."])
+    saved, _ = run(path, client, tmp_path, speech=hears_speech)
+    assert paragraphs_of(saved) == [
+        "[00:00] Sourdough needs time.",
+        "[00:25] Oil the chain.",
+        "[01:03] Taxes are due.",
+    ]
+    # Nothing but the talks reached Whisper, which writes sentences for noise.
+    assert len(client.seen) == 3
+    assert sum(size for size, _ in client.seen) <= (21.0 + 6 * config.TRIM_PAD_S) * RATE
+
+
+def test_without_a_detector_noise_is_still_sound(tmp_path):
+    """characterization: with no speech detector (it could not be fetched), barking counts
+    as sound, as before #180. The import still works; only its paragraphs merge."""
+    track = np.concatenate([speech(8.0), noise(18.0), speech(8.0)])
+    path = write_wav(tmp_path / "barking.wav", track)
+    saved, _ = run(path, FakeClient(["One. Two."]), tmp_path)
+    assert len(paragraphs_of(saved)) == 1
+
+
+def test_a_long_silence_inside_a_piece_now_ends_it(tmp_path):
+    track = np.concatenate([speech(5.0), pcm.silence(4.0), speech(5.0)])
+    path = write_wav(tmp_path / "pause.wav", track)
+    client = FakeClient(["Before the pause.", "After the pause."])
+    saved, _ = run(path, client, tmp_path)
+    assert paragraphs_of(saved) == ["[00:00] Before the pause.", "[00:08] After the pause."]
+
+
+def test_a_short_pause_keeps_one_piece(tmp_path):
+    track = np.concatenate([speech(5.0), pcm.silence(2.0), speech(5.0)])
+    path = write_wav(tmp_path / "breath.wav", track)
+    client = FakeClient(["All of it."])
+    run(path, client, tmp_path, speech=hears_speech)
+    assert len(client.seen) == 1
+
+
+def test_characterization_noise_keeps_the_pieces_long(tmp_path):
+    """characterization: non-speech is scaled down, not zeroed. At zero every pause ties,
+    the earliest wins, and pieces shrink toward FILE_PIECE_MIN_S: on 19 min of a reading
+    that was 63 pieces against 52 and three lines dropped at the extra boundaries."""
+    beat = np.concatenate([speech(3.0), noise(0.5)])
+    track = np.concatenate([beat] * 17)
+    loudness = np.repeat(np.linspace(1.0, 0.5, track.size // 1600), 1600)
+    path = write_wav(tmp_path / "talk.wav", track * np.resize(loudness, track.size))
+    client = FakeClient()
+    run(path, client, tmp_path, speech=hears_speech)
+    assert client.seen[0][0] > 25.0 * RATE
+
+
 def test_repeats_and_non_speech_tags_are_cleaned_like_a_dictation(tmp_path):
     path = write_wav(tmp_path / "memo.wav", np.concatenate([speech(20.0), speech(20.0)]))
     client = FakeClient(["[BLANK_AUDIO]", "you you you you you you fine."])
@@ -426,6 +496,7 @@ def command(monkeypatch, tmp_path):
     client = FakeClient()
     monkeypatch.setattr(transcribe, "TranscriptionClient", lambda: client)
     monkeypatch.setattr(transcribe.shutil, "which", no_tools)
+    monkeypatch.setattr(transcribe.vad, "detector", lambda say: None)
     kicked = []
     monkeypatch.setattr(transcribe.summary, "queue_auto", lambda: kicked.append(True))
     client.kicked = kicked

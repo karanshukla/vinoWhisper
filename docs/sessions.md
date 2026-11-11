@@ -60,13 +60,44 @@ Open in… and Read aloud work on it as on any session.
   have a latency target; a file has none. The file is cut into pieces of 15 to 29.5 s
   (`FILE_PIECE_MIN_S`, `MAX_WINDOW_S`), each cut at the quietest 0.3 s in that span,
   so each second is decoded once and a cut falls in a pause when the audio has one.
-  The cut needs no threshold. Only stretches under `SILENCE_RMS_THRESHOLD` (digital
-  silence) are skipped; quiet speech is always sent. Each piece is normalised like a
-  caption window and cleaned like a dictation (repeat loops, `[BLANK_AUDIO]`).
-- **Stamps** are positions in the file. A paragraph starts after 2.5 s of silence
-  or at a sentence end past 70 words, as in captions. The model gives no word times,
-  so a break inside a piece is stamped by where its words fall in the piece, which
-  can be a few seconds off.
+  The cut needs no threshold. Stretches under `SILENCE_RMS_THRESHOLD` (digital
+  silence) are skipped, and so is sound with nobody speaking in it (below); quiet
+  speech is always sent. Each piece is normalised like a caption window and cleaned
+  like a dictation (repeat loops, `[BLANK_AUDIO]`).
+- **Non-speech counts as silence** (#180, 2026-11-11). Silero VAD
+  (`vinowhisper/vad.py`, MIT, the 1.3 MB `silero_vad_openvino_16k.onnx` pinned by
+  commit and sha256 in `vad_model.json`, fetched on first import into the models
+  folder) scores each 32 ms on the CPU. A 100 ms frame it scores under 0.5 is cut and
+  trimmed like silence, and 3.1 s without speech (the 2.5 s paragraph gap plus both
+  0.3 s pads) ends a piece, so the gap is seen between two pieces. Before this, a dog
+  barking or bells between two talks were loud, the talks merged into one paragraph,
+  and the next stamp was 7 s late. If the detector cannot be fetched or loaded, the
+  import goes on with a warning and breaks on silence only.
+  Non-speech frames are scaled down (x1e-4), not zeroed. At zero every pause ties,
+  the cut lands at the earliest one, and pieces shrink: 63 against 52 on the reading
+  below, with three lines (33 words) dropped at the extra boundaries.
+- **Stamps** are positions in the file. A paragraph starts after 2.5 s without
+  speech or at a sentence end past 70 words, as in captions. The model gives no word
+  times, so a break inside a piece is stamped by where its words fall in the piece,
+  which can be a few seconds off. A paragraph after a pause is stamped where its
+  speech starts less the 0.3 s pad, so it reads up to a second early.
+
+  **Why not Whisper's segment timestamps.** They were built first and measured
+  on the NPU (2026-11-11, 19 min of the LibriVox Pride and Prejudice reading): 106 s
+  against 65 s and 8.6% WER against 6.9%. Timestamp mode decoded differently: it
+  inserted phrases nobody said, and once repeated "the book of" 24 times. Its first
+  segment in a piece also starts at 0.00 even after ten seconds of barking, so the
+  stamps needed a guess anyway.
+
+  | Measured on the NPU, 2026-11-11 | Time | WER | Paragraphs |
+  |---|---|---|---|
+  | Reading, 19 min, no detector | 67.0 s | 6.9% | 42 |
+  | Reading, 19 min, with detector | 73.3 s | 6.9% | 42 |
+  | espeak, 3 talks at 0:00, 0:26, 1:04, barking and bells between | 2.5 s | | 3, stamped 0:00, 0:25, 1:03 (was 2) |
+
+  The noise in that file is synthesized (square-wave barks, sine bells), not
+  recorded; the issue's own mp4 from linuxlab has not been re-run. The detector
+  takes about 7 s of one CPU core per 19 min of audio.
 - **The flags check, they do not switch.** The server holds one speech model. If
   `--model`, `--language` or `--task` differ from what it is running, the command
   stops and says to change it under Settings → Speech; it never transcribes French
