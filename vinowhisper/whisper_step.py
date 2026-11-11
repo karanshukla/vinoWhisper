@@ -244,7 +244,8 @@ class StepWhisper:
     # The whole prompt in one call, its K/V written into the first len(prompt) slots.
     def _prefill_prompt(self, prompt: list[int]) -> np.ndarray:
         request = self._prefill
-        assert request is not None
+        if request is None:
+            raise RuntimeError("no prefill model loaded")
         count = len(prompt)
         self._pre_ids[...] = 0
         self._pre_ids[0, :count] = prompt
