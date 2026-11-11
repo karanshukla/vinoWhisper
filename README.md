@@ -114,6 +114,12 @@ To upgrade, use **Check for updates** on the settings window's About page, or ru
 if you have them, and restarts the server; the exported model stays. To build from a
 checkout instead, `scripts/install.sh` still clones and syncs the locked environment.
 
+To remove it, run `vinowhisper-upgrade --uninstall` (or pipe the installer above into
+`bash -s -- --uninstall`). That stops the server and deletes the commands, the menu
+entries and every model with its caches. Your saved sessions and settings stay.
+To free space without uninstalling, Settings → Speech and Settings → Cleanup delete
+each model. [docs/install.md](https://docs.vinowhisper.com/install/#uninstalling)
+
 Or from PyPI, if you would rather wire up the machine yourself:
 
 ```bash
@@ -198,6 +204,7 @@ vinowhisper-setup --dry-run               # print the plan, change nothing
 vinowhisper-setup --print-units           # the systemd units it would generate
 vinowhisper-setup --gui                   # just the optional overlay and dictation
 vinowhisper-setup --ovfetch               # just ovfetch, NPU driver data for the doctor
+vinowhisper-upgrade --uninstall           # remove it, models included; sessions and settings stay
 
 vinowhisper-doctor                        # devices, model, digests, audio, live levels
 vinowhisper-doctor --json                 # the same, for a bug report
