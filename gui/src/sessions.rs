@@ -572,6 +572,8 @@ pub enum ImportEvent {
         position_s: f64,
         duration_s: Option<f64>,
     },
+    // The speech detector is off or stopped: the import goes on, breaking on silence.
+    Warning(String),
     Done(PathBuf),
     Failed(String),
 }
@@ -586,6 +588,9 @@ pub fn parse_import_line(line: &str) -> Option<ImportEvent> {
         "Done" => Some(ImportEvent::Done(PathBuf::from(
             record.get("path")?.as_str()?,
         ))),
+        "Warning" => Some(ImportEvent::Warning(
+            record.get("message")?.as_str()?.to_owned(),
+        )),
         "Error" => Some(ImportEvent::Failed(
             record.get("message")?.as_str()?.to_owned(),
         )),
@@ -959,6 +964,12 @@ mod tests {
         assert_eq!(
             parse_import_line(r#"{"event": "Error", "message": "no speech found in a.mp3"}"#),
             Some(ImportEvent::Failed("no speech found in a.mp3".to_owned()))
+        );
+        assert_eq!(
+            parse_import_line(r#"{"event": "Warning", "message": "the speech detector stopped"}"#),
+            Some(ImportEvent::Warning(
+                "the speech detector stopped".to_owned()
+            ))
         );
         assert_eq!(
             parse_import_line(r#"{"event": "Ready", "device": "NPU"}"#),

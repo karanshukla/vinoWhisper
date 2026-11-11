@@ -76,8 +76,9 @@ Open in… and Read aloud work on it as on any session.
   `Ready` record's `warnings` (2026-11-11), so `--json` carries it. The detector is
   built after the file and the server are checked, so a mistyped path does not start
   the download. If its inference fails part-way through a file, it is dropped for the
-  rest of that file with one warning on stderr (`--json` has no event for that, and
-  the sessions window does not show `Ready`'s warnings yet).
+  rest of that file with one warning on stderr. `--json` also carries both as
+  `{"event": "Warning", "message": …}` records, and the sessions window shows them
+  as an "Import note" with the import's result (2026-11-11).
   Non-speech frames are scaled down (x1e-4), not zeroed. At zero every pause ties,
   the cut lands at the earliest one, and pieces shrink: 63 against 52 on the reading
   below, with three lines (33 words) dropped at the extra boundaries.
