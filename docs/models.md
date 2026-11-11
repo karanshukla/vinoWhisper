@@ -125,4 +125,19 @@ Text against `WhisperPipeline`, both on the NPU, no prompt, the 52 pieces of the
 
 So the server reads the fp16 export (`config.STEP_MODEL_DIR`). INT8's differences are mostly punctuation and capitals, but include "settled" read as "settle" and a dropped "is".
 
-**Timing is not measured yet.** Every NPU number from 2026-11-11, including the step timings above, was taken while vinoSearch was indexing on the same NPU, so they are upper bounds at best. Re-run them on a quiet NPU before deciding #179.
+**Timing on a quiet NPU (#179, 2026-11-11).** The figures above were taken while vinoSearch was indexing on the same NPU; these were taken after it had been under 1% busy for a minute. fp16 export, Core 5 320, driver 1.35.0, OpenVINO 2026.4.0, 8 pieces of the LibriVox reading per row, median and worst:
+
+| Piece | `WhisperPipeline` | Loop, no prompt | Loop, 20 terms | Loop, 30 terms |
+|---|---|---|---|---|
+| 5 s | 0.37 s (0.41) | 0.46 s (0.55) | 1.62 s (2.48) | 2.04 s (2.17) |
+| 12 s | 0.65 s (0.80) | 0.80 s (0.97) | 1.80 s (2.04) | 1.93 s (2.44) |
+| 29 s | 1.54 s (1.90) | 1.82 s (2.38) | 7.31 s (17.1) | 6.42 s (8.10) |
+
+- Without a prompt the loop is about 20% behind `WhisperPipeline`.
+- The prompt is the cost: each of its tokens is one decoder step (14.6 ms on a quiet NPU), so 20 terms (about 80 tokens) add about 1.2 s before the first word. A prefill that takes the whole prompt in one call is the obvious fix and is not built.
+- The 29 s worst cases are runaway decodes on mid-sentence windows (below), each running to its token limit.
+- Encoder 285 ms. Cold load from an empty driver cache: 24.8 s for the loop's two models, 27.7 s for `WhisperPipeline`. NPU memory with both loaded: 157 MB (`drm-resident-memory`).
+
+**A prompt can wipe out a piece that starts mid-sentence.** On 8 s windows cut from the continuous reading, a list of names never spoken made the decode collapse to "and", "Chitlana," or "Xochitl," on 15 of 40 windows at 10 terms, 9 at 20 and 8 at 30. transformers' own `generate(prompt_ids=...)` gives the same text on the CPU, so this is Whisper, not the loop, and it applies to `hotwords` on a CPU or GPU too. On 38 pieces bounded by real pauses (0.5 s or more, median 5.3 s), as dictation cuts them, none lost words. #175's 3.23% to 3.36% on whole LibriSpeech utterances agrees. The exposure is a long dictation cut without a pause.
+
+Against #179's rule, the loop is "slower than `WhisperPipeline`": 1.62 s for a typical 5 s piece with 20 terms, just over the 1.5 s line, and the prompt's per-token prefill is most of it.
