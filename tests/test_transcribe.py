@@ -501,12 +501,16 @@ def test_a_detector_that_breaks_mid_file_is_dropped_with_one_warning(tmp_path):
 
     said: list[str] = []
     path = write_wav(tmp_path / "memo.wav", np.concatenate([speech(8.0), speech(8.0)]))
-    saved, _ = run(path, FakeClient(["One. Two."]), tmp_path, speech=breaks, warn=said.append)
+    saved, records = run(path, FakeClient(["One. Two."]), tmp_path, speech=breaks, warn=said.append)
     assert bundle.read(saved).transcript
     assert len(heard) == 51, "not asked again after it failed"
     assert said == [
         "the speech detector stopped at 0:05 (Infer Request was canceled); "
         "the rest of this file breaks paragraphs on silence only"
+    ]
+    # gui/src/sessions.rs reads this record: "event" and "message".
+    assert [r for r in records if r["event"] == "Warning"] == [
+        {"event": "Warning", "message": said[0]}
     ]
 
 
@@ -543,6 +547,10 @@ def test_a_detector_that_is_off_is_a_warning_on_the_ready_record(tmp_path):
     assert records[0]["warnings"] == [
         "could not fetch the speech detector (offline); paragraphs break on silence only"
     ]
+    assert records[1] == {
+        "event": "Warning",
+        "message": "could not fetch the speech detector (offline); paragraphs break on silence only",
+    }
 
 
 # ── the command ──────────────────────────────────────────────────────────────

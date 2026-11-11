@@ -254,8 +254,9 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   which resolves only once `install` has written it, so the first-run check
   also rewrites per-user icons that differ (they hold nothing of the user's,
   unlike the launcher).
-- **The Speech page applies a Whisper delete only once the status says it is gone**
-  (2026-11-11, `whisper_delete_pending`); `forget_canary` still acts on the click.
+- **The Speech page applies a model delete only once the status says it is gone**
+  (2026-11-11, `whisper_delete_pending` and `canary_delete_pending`), so a delete that
+  failed changes nothing on the page.
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
   portal. They draw into memory and bind scratch sockets. The `tray` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.
@@ -450,7 +451,8 @@ file". The choices that answer the issue's open questions:
   +64% time and 6.9% to 8.6% WER on the NPU. Files only; captions still break on RMS.
 - 2026-11-11: the detector is built inside `transcribe_file`, after the file and server
   checks; its "off" warning rides `Ready.warnings`; an inference error mid-file drops it
-  for the rest of the file (stderr only, the sessions window shows neither).
+  for the rest of the file. Both are also `Warning` records in `--json`, which the
+  sessions window shows with the import's result.
 - Fixed 2026-11-09: a live Canary session used to be attested as Whisper. `Ready` now
   carries the server's `model`, and `config.served_model_id` names it for both paths.
 

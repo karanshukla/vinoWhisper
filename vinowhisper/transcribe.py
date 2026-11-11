@@ -413,16 +413,24 @@ def transcribe_file(
     device = str(health.get("device", "?"))
     warnings = [str(warning) for warning in health.get("warnings", [])]
     # After the checks: its first run downloads, which a mistyped path must not start.
+    notes: list[str] = []
     if speech is None and detector is not None:
-        speech = detector(warnings.append)
+        speech = detector(notes.append)
     emit(
         {
             "event": "Ready",
             "device": device,
             "degraded": bool(health.get("degraded", False)),
-            "warnings": warnings,
+            "warnings": warnings + notes,
         }
     )
+    # A record of its own for the sessions window, which shows these and not Ready's.
+    for note in notes:
+        emit({"event": "Warning", "message": note})
+
+    def detector_stopped(line: str) -> None:
+        warn(line)
+        emit({"event": "Warning", "message": line})
 
     started = now().astimezone()
     # Before the decode: the file may be moved or deleted while a long one runs.
@@ -430,7 +438,7 @@ def transcribe_file(
     duration_s = probe_duration_s(path, which)
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)
-    segmenter = Segmenter(speech=speech, say=warn)
+    segmenter = Segmenter(speech=speech, say=detector_stopped)
     if health.get("live_active"):
         segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
     decoded_s = 0.0

@@ -235,6 +235,7 @@ struct SettingsWindow {
     confirm_delete_source: bool,
     // A delete was started: its effects are applied once the status says Whisper is gone.
     whisper_delete_pending: bool,
+    canary_delete_pending: bool,
     multilingual: bool,
     canary: bool,
     focused: bool,
@@ -317,6 +318,7 @@ impl SettingsWindow {
             confirm_delete_whisper: false,
             confirm_delete_source: false,
             whisper_delete_pending: false,
+            canary_delete_pending: false,
             multilingual: false,
             canary: false,
             focused: true,
@@ -534,6 +536,15 @@ impl SettingsWindow {
         true
     }
 
+    // Whether the speech model changed: a delete that failed left Canary in use.
+    fn settle_canary_delete(&mut self, state: &ModelState) -> bool {
+        if !self.canary_delete_pending || state.busy {
+            return false;
+        }
+        self.canary_delete_pending = false;
+        matches!(&state.status, Some(Ok(status)) if !status.present) && self.forget_canary()
+    }
+
     fn settle_whisper_delete(&mut self, state: &ModelState) {
         if !self.whisper_delete_pending || state.busy {
             return;
@@ -696,14 +707,7 @@ impl SettingsWindow {
         }
     }
 
-    fn model_rows(
-        &mut self,
-        ui: &mut egui::Ui,
-        tool: Tool,
-        status: &Status,
-        state: &ModelState,
-    ) -> bool {
-        let mut speech_changed = false;
+    fn model_rows(&mut self, ui: &mut egui::Ui, tool: Tool, status: &Status, state: &ModelState) {
         let p = theme::palette(ui.ctx());
         let mut confirm = match tool {
             Tool::Cleanup => self.confirm_delete,
@@ -752,7 +756,7 @@ impl SettingsWindow {
                     {
                         confirm = false;
                         if tool == Tool::Canary {
-                            speech_changed |= self.forget_canary();
+                            self.canary_delete_pending = true;
                         }
                         self.run_model(ui.ctx(), tool, "delete");
                     }
@@ -825,7 +829,6 @@ impl SettingsWindow {
             Tool::Canary => self.confirm_delete_canary = confirm,
             Tool::Whisper => {}
         }
-        speech_changed
     }
 
     // Whisper has no download: vinowhisper-setup exports it. So two deletes and no fetch.
@@ -1062,8 +1065,9 @@ impl SettingsWindow {
             }
         }
         widgets::group_label(ui, "Recognition");
-        let model = self.speech.model;
         let canary_state = self.canary_model.lock().unwrap().clone();
+        changed |= self.settle_canary_delete(&canary_state);
+        let model = self.speech.model;
         // The download's own status once known; until then, what is on disk.
         let canary = match &canary_state.status {
             Some(Ok(status)) => status.present,
@@ -1192,7 +1196,7 @@ impl SettingsWindow {
             None => {}
         }
         if let Some(Ok(status)) = &canary_state.status {
-            changed |= self.model_rows(ui, Tool::Canary, status, &canary_state);
+            self.model_rows(ui, Tool::Canary, status, &canary_state);
         }
         widgets::group_label(ui, "Dictation");
         widgets::group(ui, |ui| {
@@ -2251,6 +2255,60 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .contains("Run vinowhisper-setup to export a model")
+        );
+    }
+
+    #[test]
+    fn a_canary_delete_that_failed_leaves_canary_the_speech_model() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.canary = true;
+            window.speech.model = SpeechModel::Canary;
+            window.canary_delete_pending = true;
+            let mut state = window.canary_model.lock().unwrap();
+            state.busy = true;
+            state.status = Some(Ok(canary_status(true)));
+        }
+        harness.run();
+        assert!(
+            harness.state().window.canary_delete_pending,
+            "still deleting: nothing is decided yet"
+        );
+        assert_eq!(harness.state().window.speech.model, SpeechModel::Canary);
+        {
+            let window = &mut harness.state_mut().window;
+            let mut state = window.canary_model.lock().unwrap();
+            state.busy = false;
+            state.error = "Permission denied".into();
+        }
+        harness.run();
+        let window = &harness.state().window;
+        assert!(!window.canary_delete_pending);
+        assert_eq!(window.speech.model, SpeechModel::Canary);
+        assert!(window.speech_note.is_none(), "nothing was deleted");
+    }
+
+    #[test]
+    fn a_canary_delete_switches_to_whisper_once_the_status_says_it_is_gone() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.canary = true;
+            window.speech.model = SpeechModel::Canary;
+            window.canary_delete_pending = true;
+            window.canary_model.lock().unwrap().status = Some(Ok(canary_status(false)));
+        }
+        harness.run();
+        let window = &harness.state().window;
+        assert!(!window.canary_delete_pending);
+        assert_eq!(window.speech.model, SpeechModel::Whisper);
+        assert!(
+            window
+                .speech_note
+                .as_deref()
+                .unwrap()
+                .contains("Canary was deleted")
         );
     }
 

@@ -41,6 +41,8 @@ struct SessionsState {
     opened: Option<Result<Opened, String>>,
     import: Option<Import>,
     imported: Option<Result<PathBuf, String>>,
+    // What the last import warned of, shown with its result.
+    import_warnings: Vec<String>,
     // An import added a session: the next frame lists again.
     relist: bool,
 }
@@ -53,6 +55,7 @@ struct Import {
     duration_s: Option<f64>,
     pid: Option<u32>,
     cancelled: bool,
+    warnings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -132,6 +135,7 @@ impl SessionsWindow {
             }
             state.import = Some(Import::default());
             state.imported = None;
+            state.import_warnings.clear();
         }
         let importer = Arc::clone(&self.importer);
         let ctx = ctx.clone();
@@ -150,6 +154,7 @@ impl SessionsWindow {
                             import.position_s = position_s;
                             import.duration_s = duration_s;
                         }
+                        ImportEvent::Warning(what) => import.warnings.push(what),
                         ImportEvent::Done(_) | ImportEvent::Failed(_) => {}
                     }
                 }
@@ -157,7 +162,9 @@ impl SessionsWindow {
                 ctx.request_repaint();
             });
             let mut locked = state.lock().unwrap();
-            let cancelled = locked.import.take().is_some_and(|import| import.cancelled);
+            let import = locked.import.take().unwrap_or_default();
+            let cancelled = import.cancelled;
+            locked.import_warnings = import.warnings;
             locked.imported = match result {
                 Ok(Some(path)) => Some(Ok(path)),
                 // Closing the dialog, or Cancel, is not a failure to report.
@@ -247,8 +254,18 @@ impl SessionsWindow {
             ),
             Err(why) => widgets::notice(ui, Tone::Error, &format!("Import didn't work: {why}")),
         };
-        if dismissed {
-            self.state.lock().unwrap().imported = None;
+        let mut warned = false;
+        for warning in &state.import_warnings {
+            ui.add_space(8.0);
+            warned |= widgets::notice(ui, Tone::Warn, &format!("Import note: {warning}."));
+        }
+        if dismissed || warned {
+            let mut state = self.state.lock().unwrap();
+            if dismissed {
+                state.imported = None;
+            }
+            // Either dismissal clears them: they are about the import just shown.
+            state.import_warnings.clear();
         }
     }
 
@@ -2135,6 +2152,49 @@ mod tests {
             duration_s,
             ..Import::default()
         }
+    }
+
+    #[test]
+    fn an_import_that_lost_its_speech_detector_says_so_with_the_result() {
+        let mut harness = harness(true);
+        importer_answering(
+            &mut harness,
+            vec![
+                ImportEvent::Chosen("lecture.mp3".to_owned()),
+                ImportEvent::Warning("the speech detector stopped at 0:05".to_owned()),
+            ],
+            Ok(Some("/t/c.vwsession".into())),
+        );
+        harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
+            .click();
+        until(&mut harness, |under| {
+            under.window.state.lock().unwrap().imported.is_some()
+        });
+        harness.run();
+        harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
+        harness.get_by_label("Import note: the speech detector stopped at 0:05.");
+        // The next import starts with none.
+        harness
+            .get_by_role_and_label(Role::Button, "Import audio or video…")
+            .click();
+        until(&mut harness, |under| {
+            under.window.state.lock().unwrap().imported.is_some()
+        });
+        assert_eq!(
+            harness
+                .state()
+                .window
+                .state
+                .lock()
+                .unwrap()
+                .import_warnings
+                .len(),
+            1,
+            "one per import, not one more each time"
+        );
     }
 
     #[test]
