@@ -50,6 +50,10 @@ def compression_ratio(text: str) -> float:
     return len(data) / len(zlib.compress(data)) if data else 0.0
 
 
+def is_loop(text: str) -> bool:
+    return compression_ratio(text) > _MAX_COMPRESSION_RATIO
+
+
 def collapse_repeats(text: str) -> str:
     n = len(text)
     out: list[str] = []
@@ -196,7 +200,7 @@ class Stitcher:
         curr = collapse_word_repeats(collapse_repeats(transcript).split())
         # A loop the collapses could not fold is dropped whole: two such decodes in a row
         # agree with each other and would commit.
-        if not curr or compression_ratio(" ".join(curr)) > _MAX_COMPRESSION_RATIO:
+        if not curr or is_loop(" ".join(curr)):
             return []
 
         cut = _cut(self._confirmed, curr)

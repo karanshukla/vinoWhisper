@@ -639,9 +639,21 @@ from a word you use is better left to `replacements.json`.
 **The decoder prompt** is Whisper's `hotwords`, and OpenVINO GenAI's NPU pipeline
 refuses it: `pipeline_static.cpp` asserts that both `hotwords` and `initial_prompt`
 are unset (read at 2026.4.1.0 and on master, 2026-11-10). That is a limit of
-OpenVINO's wrapper, not of the NPU. Lifting it here would mean driving Whisper's
-decoder ourselves on the NPU, as `canary.py` does for Canary; that has not been
-tried. `vinowhisper-doctor` reports `vocabulary` with which of the two is in use.
+OpenVINO's wrapper, not of the NPU. Since #178 (2026-11-11) the NPU gets the prompt
+anyway when our own export exists (`scripts/export_whisper.py`, read from
+`whisper-small.en-step-ov-fp16`): a dictation with a vocabulary goes through
+`whisper_step.StepWhisper`, our own decode loop, laid out the way
+`context_tokens.cpp` lays `hotwords`. Without the export, or if it fails to load
+(logged once), the NPU stays on correction only. Captions never use it.
+`vinowhisper-doctor` reports `vocabulary` with which of the two is in use.
+
+A prompted decode is checked twice before it is typed. If it is only listed terms
+(#175), or a repetition loop (zlib ratio over 2.0, as captions check), it is decoded
+again without the prompt. The loop case was found on the NPU: barking alone came back
+as one listed name and then "Cebu" 48 times.
+
+Measured on the NPU 2026-11-11 (espeak, 5 sentences, 14 rare names, 12-term list):
+3 of 14 names right without the prompt, 9 of 14 with it.
 
 How the prompt is passed, where it is:
 

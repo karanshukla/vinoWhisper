@@ -238,6 +238,17 @@ def test_vocabulary_on_the_npu_says_it_only_corrects_spelling(monkeypatch):
     assert "NPU" in result.detail
 
 
+def test_vocabulary_on_the_npu_with_our_export_is_given_to_dictation(monkeypatch):
+    """#178: our own decode loop takes the prompt where WhisperPipeline refuses it."""
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    config.STEP_MODEL_DIR.mkdir(parents=True)
+    for name in ("encoder.xml", "decoder.xml", "step_export.json", "tokenizer.json"):
+        (config.STEP_MODEL_DIR / name).write_text("{}")
+    monkeypatch.setattr(devices, "available", lambda: [devices.Device("NPU", "NPU")])
+    result = doctor._vocabulary()[0]
+    assert result.detail == "1 terms, given to dictation on NPU and used to correct"
+
+
 def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):
     """Captions and dictation never use it, so it must not fail the doctor."""
     fedora = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")

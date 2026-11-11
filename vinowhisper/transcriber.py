@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, devices, failures, ovfetch, vocabulary
+from . import config, devices, failures, ovfetch, stitch, vocabulary, whisper_step
 
 _SENTINEL = object()
 
@@ -187,6 +187,8 @@ class WhisperTranscriber(BaseTranscriber):
     _vocabulary_stamp: tuple[int, int] | None | bool = False
     _hotwords: tuple[str, int] | None = None
     _terms: list[str] = []
+    _step: whisper_step.StepWhisper | None = None
+    _step_failed = False
 
     def _default_model_dir(self, kind: str) -> Path:
         return config.model_dir(kind, self.multilingual)
@@ -241,9 +243,37 @@ class WhisperTranscriber(BaseTranscriber):
             options["language"] = f"<|{self.language}|>"
         return options
 
+    def _unload(self) -> None:
+        self._pipeline = None
+        self._step = None
+
+    def _step_dir(self) -> Path:
+        return config.step_model_dir(self.multilingual)
+
+    # The NPU takes the prompt only through our own loop, and auto-detect has no token to name.
+    def _prompts_on_npu(self) -> bool:
+        if self._step_failed or (self.multilingual and self.language == config.AUTO_LANGUAGE):
+            return False
+        return whisper_step.exported(self._step_dir())
+
+    def _step_loop(self) -> whisper_step.StepWhisper | None:
+        if self._step is None and not self._step_failed and self.selection is not None:
+            try:
+                self._step = whisper_step.StepWhisper(self._step_dir(), self.selection.device.name)
+            except Exception as exc:  # noqa: BLE001 — dictation goes on with correction only
+                self._step_failed = True
+                print(
+                    f"[vinowhisper-server] the vocabulary prompt is off on {self.device}: "
+                    f"{self._step_dir()} did not load ({failures.summary(str(exc))})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        return self._step
+
     def hotwords(self) -> tuple[str, int] | None:
         kind = self.selection.kind if self.selection else "?"
-        if self._pipeline is None or vocabulary.unprompted(kind, self.model):
+        step = kind == "NPU" and self._prompts_on_npu()
+        if self._pipeline is None or vocabulary.unprompted(kind, self.model, step):
             return None
         stamp = vocabulary.stamp()
         if stamp != self._vocabulary_stamp:
@@ -296,19 +326,31 @@ class WhisperTranscriber(BaseTranscriber):
 
         # The prompt and the answer share the decoder's positions.
         room = config.WHISPER_MAX_TOKENS - hotwords[1] - config.MAX_TOKENS_MARGIN
-        pipeline.generate(  # type: ignore[attr-defined]
-            samples,
-            streamer=collect,
-            max_new_tokens=min(limit, room),
-            hotwords=hotwords[0],
-            **options,
-        )
-        text = "".join(heard)
-        # On noise the prompt answers with its own terms; a plain decode says whether
-        # anything like them was spoken.
-        if vocabulary.only_terms(text, self._terms):
+        step = self._step_loop() if self.selection and self.selection.kind == "NPU" else None
+        if step is not None:
+            language = self.language if self.multilingual else None
+            text = step.transcribe(
+                samples, hotwords[0], min(limit, room), language=language, task=self.task
+            )
+        elif self.selection and self.selection.kind == "NPU":
+            pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            return
+        else:
+            pipeline.generate(  # type: ignore[attr-defined]
+                samples,
+                streamer=collect,
+                max_new_tokens=min(limit, room),
+                hotwords=hotwords[0],
+                **options,
+            )
+            text = "".join(heard)
+        # On noise the prompt answers with its own terms, or loops on a word it suggests
+        # ("Xochitl, Cebu, Cebu, ..." over barking on the NPU, 2026-11-11); a plain decode
+        # says whether anything like them was spoken.
+        looped = stitch.is_loop(text)
+        if looped or vocabulary.only_terms(text, self._terms):
             biased_text, heard[:] = text, []
             pipeline.generate(samples, streamer=collect, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
-            if vocabulary.echoes(biased_text, "".join(heard)):
+            if looped or vocabulary.echoes(biased_text, "".join(heard)):
                 text = "".join(heard)
         streamer(text)

@@ -20,6 +20,7 @@ from . import (
     replacements,
     style,
     vocabulary,
+    whisper_step,
 )
 
 _PROBE_S = 2.0
@@ -197,7 +198,9 @@ def _vocabulary() -> list[Result]:
         kind = devices.select(config.DEFAULT_DEVICE, devices.available()).kind
     except devices.DeviceError:
         kind = "NPU"
-    reason = vocabulary.unprompted(kind, config.load_language()[2])
+    language, task, model = config.load_language()
+    step = whisper_step.exported(config.step_model_dir(config.is_multilingual(language, task)))
+    reason = vocabulary.unprompted(kind, model, step)
     status = WARN if problem else OK
     if reason is not None:
         # Still worth having: near-miss spellings are corrected after the decode.

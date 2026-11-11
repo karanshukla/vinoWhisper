@@ -525,6 +525,7 @@ vinowhisper/
   paragraphs.py   ParagraphBreaker, the paragraph rules shared by ui.py and the transcript
   playing.py      what was sending the audio: MPRIS (busctl) and PipeWire streams, for the attestation
   session.py      --record writer, --transcript writer (TranscriptWriter), vinowhisper-session
+  whisper_step.py our own Whisper decode loop (#178): log-mel, BPE, prompt, greedy over the step export
   transcribe.py   vinowhisper-transcribe: a file decoded, cut at pauses, into a .vwsession
   vad.py          Silero VAD for file imports: the pinned download and the 32 ms stepping
   bundle.py       the .vwsession zip: read, atomic write, attestation, verify
