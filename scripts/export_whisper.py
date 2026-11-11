@@ -207,7 +207,10 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
         sys.exit(
             f"the export wrapper does not match transformers (logit drift {drift:.2g}); not writing an export"
         )
-    print(f"==> wrapper matches transformers over {len(sequence)} positions (logit drift {drift:.1g})", flush=True)
+    print(
+        f"==> wrapper matches transformers over {len(sequence)} positions (logit drift {drift:.1g})",
+        flush=True,
+    )
 
     enc_ir = ov.convert_model(
         Encoder(), example_input=(mel,), input=[ov.PartialShape([1, mel.shape[1], MEL_FRAMES])]
@@ -234,8 +237,14 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
     for port, name in zip(dec_ir.outputs, out_names, strict=True):
         port.get_tensor().set_names({name})
 
-    shape = {"layers": layers, "heads": heads, "head_dim": dim, "cache_slots": slots,
-             "mel_bins": int(mel.shape[1]), "mel_frames": MEL_FRAMES}
+    shape = {
+        "layers": layers,
+        "heads": heads,
+        "head_dim": dim,
+        "cache_slots": slots,
+        "mel_bins": int(mel.shape[1]),
+        "mel_frames": MEL_FRAMES,
+    }
     for out in (cpu_out, npu_out):
         out.mkdir(parents=True, exist_ok=True)
         for name in COPIED:
@@ -273,15 +282,24 @@ def export(source: Path, npu_out: Path, cpu_out: Path, slots: int) -> None:
             ref = logits[t].numpy()
             worst = max(worst, float(np.abs(row - ref).max()))
             agree += int(row.argmax() == ref.argmax())
-        print(f"==> {label} IR on CPU: {agree}/{len(sequence)} argmax agree, max logit drift {worst:.3g}", flush=True)
+        print(
+            f"==> {label} IR on CPU: {agree}/{len(sequence)} argmax agree, max logit drift {worst:.3g}",
+            flush=True,
+        )
 
     for out in (cpu_out, npu_out):
-        digests = {p.name: _sha256(p) for p in sorted(out.iterdir()) if p.is_file() and p.name != "SHA256SUMS"}
+        digests = {
+            p.name: _sha256(p)
+            for p in sorted(out.iterdir())
+            if p.is_file() and p.name != "SHA256SUMS"
+        }
         (out / "SHA256SUMS").write_text("".join(f"{h}  {n}\n" for n, h in digests.items()))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Export Whisper for vinoWhisper's own decode loop.")
+    parser = argparse.ArgumentParser(
+        description="Export Whisper for vinoWhisper's own decode loop."
+    )
     models = _data_home() / "vinowhisper/models"
     parser.add_argument("--model", choices=MODELS, default=MODELS[0])
     parser.add_argument("--npu-out", type=Path)
