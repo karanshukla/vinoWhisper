@@ -57,6 +57,7 @@ vinowhisper-setup = "vinowhisper.wizard:main"
 vinowhisper-cleanup = "vinowhisper.cleanup:main"
 vinowhisper-session = "vinowhisper.session:main"
 vinowhisper-canary = "vinowhisper.canary:main"
+vinowhisper-whisper = "vinowhisper.whisper_model:main"
 vinowhisper-transcribe = "vinowhisper.transcribe:main"
 
 [build-system]
