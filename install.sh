@@ -24,6 +24,11 @@
 # It keeps a checked copy of itself as vinowhisper-upgrade, which the settings
 # window's Update button runs with VINO_UPDATE_TAG set.
 #
+#   --uninstall removes it: the server units, the tray's menu and login
+#               entries, the commands in ~/.local/bin, the models and their
+#               caches. Saved sessions, settings and exported documents stay.
+#               Downloads nothing. `vinowhisper-upgrade --uninstall`.
+#
 # From a checkout, scripts/install.sh builds from source instead.
 
 # Everything is in main, called on the last line: piped into bash, a download
@@ -71,13 +76,78 @@ fetch() {
         || die "$1 doesn't match the release's SHA256SUMS. Nothing was changed."
 }
 
+# The models go; what the user made or chose stays: transcripts and sessions,
+# ~/.config/vinowhisper, ~/.local/state/vinowhisper, exported documents, and
+# the NPU driver's own cache. Shared tools (uv, ovfetch) stay too.
+uninstall() {
+    local data="${XDG_DATA_HOME:-$HOME/.local/share}"
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/vinowhisper"
+    local units f uv
+
+    say "Stopping vinoWhisper"
+    if [ -x "$BIN/vinowhisper-tray" ]; then
+        "$BIN/vinowhisper-tray" quit >/dev/null 2>&1 || true
+    fi
+    if command -v systemctl >/dev/null; then
+        systemctl --user disable --now vinowhisper-server.socket vinowhisper-server.service \
+            >/dev/null 2>&1 || true
+    fi
+    # vinowhisper-setup writes to ~/.config whatever XDG_CONFIG_HOME says.
+    for units in "$HOME/.config/systemd/user" "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"; do
+        rm -f "$units/vinowhisper-server.service" "$units/vinowhisper-server.socket"
+    done
+    if command -v systemctl >/dev/null; then
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        systemctl --user reset-failed vinowhisper-server.service vinowhisper-server.socket \
+            >/dev/null 2>&1 || true
+    fi
+
+    say "Removing the menu, login and file-type entries"
+    if [ -x "$BIN/vinowhisper-tray" ]; then
+        "$BIN/vinowhisper-tray" --uninstall >/dev/null || true
+    fi
+    rm -f "$data"/applications/io.github.karanshukla.vinowhisper*.desktop \
+        "${XDG_CONFIG_HOME:-$HOME/.config}"/autostart/io.github.karanshukla.vinowhisper*.desktop
+
+    say "Removing the commands"
+    uv="$(command -v uv || true)"
+    [ -n "$uv" ] || { [ -x "$BIN/uv" ] && uv="$BIN/uv"; }
+    if [ -n "$uv" ] && "$uv" tool list 2>/dev/null | grep -q '^vinowhisper '; then
+        "$uv" tool uninstall vinowhisper
+    fi
+    # A checkout's vinowhisper-setup links its .venv's commands, and bash completion.
+    for f in "$BIN"/vinowhisper-* "$HOME"/.local/share/bash-completion/completions/vinowhisper-* \
+        "$data"/bash-completion/completions/vinowhisper-*; do
+        [ -L "$f" ] || continue
+        case "$(readlink "$f")" in
+            */.venv/bin/vinowhisper-* | */vinowhisper-completion.bash) rm -f "$f" ;;
+        esac
+    done
+    rm -f "$BIN/vinowhisper-tray" "$BIN/vinowhisper-gui" "$BIN/vinowhisper-upgrade"
+
+    say "Deleting the models and caches"
+    rm -rf "$data/vinowhisper/models" "$cache"
+    # scripts/install.sh's own clone; a checkout with your changes in it is kept.
+    if [ -d "$data/vinowhisper/src/.git" ]; then
+        if [ -z "$(git -C "$data/vinowhisper/src" status --porcelain 2>/dev/null || echo dirty)" ]; then
+            rm -rf "$data/vinowhisper/src"
+        else
+            printf '  kept %s: it has uncommitted changes\n' "$data/vinowhisper/src"
+        fi
+    fi
+    rmdir "$data/vinowhisper" 2>/dev/null || true
+
+    say "Removed vinoWhisper. Kept your saved sessions in $data/vinowhisper/transcripts and your settings in ${XDG_CONFIG_HOME:-$HOME/.config}/vinowhisper."
+}
+
 main() {
-    local tag="${VINO_UPDATE_TAG:-}" arg
+    local tag="${VINO_UPDATE_TAG:-}" arg remove=0
     local setup_args=()
     for arg in "$@"; do
         case "$arg" in
+            --uninstall) remove=1 ;;
             v[0-9]*) tag="$arg" ;;
-            -h|--help) sed -n '2,27p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+            -h|--help) sed -n '2,32p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
             *) setup_args+=("$arg") ;;
         esac
     done
@@ -86,6 +156,10 @@ main() {
     fi
     [ "$(uname -s)" = Linux ] || die "vinoWhisper is Linux-only (PipeWire/PulseAudio + Intel NPU)"
     [ "$(id -u)" -ne 0 ] || die "run this as yourself, not root: vinoWhisper installs into your home"
+    if [ "$remove" = 1 ]; then
+        uninstall
+        return
+    fi
     local tool
     for tool in curl tar sha256sum awk; do
         command -v "$tool" >/dev/null || die "missing $tool: install it, then run this again"

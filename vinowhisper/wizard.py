@@ -27,6 +27,7 @@ COMMANDS = (
     "cleanup",
     "session",
     "canary",
+    "whisper",
     "transcribe",
 )
 

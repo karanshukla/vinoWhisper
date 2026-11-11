@@ -11,6 +11,8 @@ pub struct Status {
     pub present: bool,
     pub bytes: u64,
     pub cache_bytes: u64,
+    // Whisper only: the download its exports were built from.
+    pub source_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +52,7 @@ pub fn parse_status(line: &str) -> Result<Status, String> {
         present: value.get("present").and_then(Value::as_bool) == Some(true),
         bytes: number(&value, "bytes"),
         cache_bytes: number(&value, "cache_bytes"),
+        source_bytes: number(&value, "source_bytes"),
     })
 }
 
@@ -96,11 +99,13 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-/// The downloadable models: each command answers `model status|fetch|delete` in JSON lines.
+/// The models on disk: each command answers `model status|fetch|delete` in JSON lines.
+/// Whisper has no fetch (vinowhisper-setup exports it) and adds `delete-source`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Cleanup,
     Canary,
+    Whisper,
 }
 
 impl Tool {
@@ -108,6 +113,7 @@ impl Tool {
         match self {
             Tool::Cleanup => "vinowhisper-cleanup",
             Tool::Canary => "vinowhisper-canary",
+            Tool::Whisper => "vinowhisper-whisper",
         }
     }
 }
@@ -176,8 +182,23 @@ mod tests {
                 present: true,
                 bytes: 1_701_999_000,
                 cache_bytes: 2_000_000_000,
+                source_bytes: 0,
             }
         );
+    }
+
+    #[test]
+    fn whisper_status_carries_its_source_download() {
+        let status = parse_status(
+            r#"{"label": "Whisper small", "present": true, "bytes": 930000000, "download_bytes": 0, "cache_bytes": 0, "source_bytes": 967000000, "in_use": true, "exports": ["whisper-small.en-ov-stateful"], "dir": "/m"}"#,
+        )
+        .unwrap();
+        assert!(status.present);
+        assert_eq!(
+            (status.bytes, status.source_bytes),
+            (930_000_000, 967_000_000)
+        );
+        assert_eq!(Tool::Whisper.program(), "vinowhisper-whisper");
     }
 
     #[test]

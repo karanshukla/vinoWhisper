@@ -311,6 +311,49 @@ needs it unless your distro's driver package has no NPU compiler (Fedora's
 the fix, and vinoWhisper loads what it installs. Otherwise the doctor just has
 two fewer lines. See [hardware.md](hardware.md#platform-data-from-ovfetch).
 
+## Uninstalling
+
+```bash
+vinowhisper-upgrade --uninstall
+```
+
+`vinowhisper-upgrade` is the copy of the release installer that a release
+install keeps. From a checkout install, which has none, pipe the installer in
+instead; it downloads nothing for this:
+
+```bash
+curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/install.sh | bash -s -- --uninstall
+```
+
+It removes, in this order:
+
+- the server: `systemctl --user disable --now` on `vinowhisper-server.socket`
+  and `.service`, then both unit files from `~/.config/systemd/user`, then
+  `daemon-reload`;
+- the tray (`vinowhisper-tray quit`) and what `vinowhisper-tray --install
+  --autostart` wrote: launcher, settings and sessions entries, icons, the
+  `.vwsession` file type and the login entry;
+- the commands: `uv tool uninstall vinowhisper`, the `~/.local/bin` links a
+  checkout's `vinowhisper-setup` made into its `.venv`, the bash completion
+  links, and `vinowhisper-tray`, `vinowhisper-gui` and `vinowhisper-upgrade`;
+- every model, with `$XDG_DATA_HOME/vinowhisper/models` (Whisper exports and
+  their source download, Canary, SmolLM3, Silero VAD) and all of
+  `$XDG_CACHE_HOME/vinowhisper` (SmolLM3's compiled NPU blobs, export scratch);
+- `scripts/install.sh`'s own clone at `~/.local/share/vinowhisper/src`, unless
+  it has uncommitted changes. A checkout you cloned yourself stays.
+
+It keeps what is yours: saved sessions and transcripts
+(`~/.local/share/vinowhisper/transcripts`), settings (`~/.config/vinowhisper`),
+the summariser's state (`~/.local/state/vinowhisper`) and any document you
+exported. Tools other apps use stay too: uv, ovfetch and its
+`~/.local/lib/ovfetch-npu`, and the NPU driver's `~/.cache/ze_intel_npu_cache`.
+Delete those yourself if nothing else needs them.
+
+To free the space without uninstalling, the settings window deletes each model:
+Whisper and Canary on the Speech page, SmolLM3 on the Cleanup page. From a
+terminal, `vinowhisper-whisper model delete`, `vinowhisper-canary model delete`
+and `vinowhisper-cleanup model delete` do the same.
+
 ## Pinning the terminal on top
 
 The overlay above stays on top by itself. For the terminal UI instead: the

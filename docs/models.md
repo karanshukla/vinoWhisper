@@ -16,6 +16,27 @@ Whisper stays the default. Canary is the better pick for translation into Englis
 
 Settings → Speech has a Download row for it, `vinowhisper-setup --model canary-1b-v2` selects it and offers the download, and `vinowhisper-canary model status|fetch|delete` does the same from a terminal (JSON lines, like `vinowhisper-cleanup model`). It fetches our prebuilt export for the device the server would pick: [arankays/canary-1b-v2-int8-ov](https://huggingface.co/arankays/canary-1b-v2-int8-ov) on an NPU, [arankays/canary-1b-v2-fp16-ov](https://huggingface.co/arankays/canary-1b-v2-fp16-ov) otherwise. Both are pinned by commit and per-file sha256 in `vinowhisper/canary_model.json`, and both were downloaded back and matched the local export byte for byte (2026-11-06). Deleting the model while it's selected switches Settings back to Whisper.
 
+## Deleting Whisper
+
+Settings → Speech lists Whisper's files under **Whisper small**: the exports
+`vinowhisper-setup` built (up to four folders: English-only or multilingual, NPU
+or stateful) and the source download they were built from
+(`models/source/openai--whisper-small*`, about 1 GB). Each has its own Delete…,
+confirmed in place.
+
+- **Source download** only feeds an export, so deleting it changes nothing that
+  runs. A new export downloads it again.
+- **Delete Whisper** removes every export and the source download. If Whisper is
+  the speech model, it stops `vinowhisper-server.service` first, the way a
+  language switch does, and dictation and captions stay off until
+  `vinowhisper-setup` exports it again. With Canary selected the server keeps
+  running.
+
+`vinowhisper-whisper model status|delete|delete-source` does the same from a
+terminal, in JSON lines like the other two. Silero VAD (1.3 MB, file imports
+only) is not part of it: both speech models use it and it downloads itself again
+when needed. Uninstalling removes it.
+
 ## Detect automatically
 
 Canary has no language detection, but it doesn't need one to translate into English. With the wrong source language named in its prompt, it translated the same way: French audio named as German, German named as French, and English named as French all came out right (2026-11-06, two windows each). Named as English, French audio leaked French words. So with Canary, Detect automatically always means translate into English, and the prompt names `config.CANARY_AUTO_SOURCE` (`fr`). Transcribing in the detected language stays Whisper-only.

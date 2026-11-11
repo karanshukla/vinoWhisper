@@ -81,6 +81,13 @@ _vinowhisper() {
                 mapfile -t COMPREPLY < <(compgen -W "model --help" -- "$cur")
             fi
             ;;
+        vinowhisper-whisper)
+            if [[ $prev == model ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "status delete delete-source" -- "$cur")
+            elif ((COMP_CWORD == 1)); then
+                mapfile -t COMPREPLY < <(compgen -W "model --help" -- "$cur")
+            fi
+            ;;
         vinowhisper-session)
             if ((COMP_CWORD == 1)); then
                 mapfile -t COMPREPLY < <(compgen -W "
@@ -149,4 +156,5 @@ complete -F _vinowhisper vinowhisper-setup
 complete -F _vinowhisper vinowhisper-cleanup
 complete -F _vinowhisper vinowhisper-session
 complete -F _vinowhisper vinowhisper-canary
+complete -F _vinowhisper vinowhisper-whisper
 complete -F _vinowhisper vinowhisper-transcribe
