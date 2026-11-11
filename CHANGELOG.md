@@ -10,6 +10,8 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-11
+
 ### 🚀 Features
 
 - **A personal vocabulary for dictation** (#161). List names and jargon in `~/.config/vinowhisper/vocabulary.txt`, or under *Vocabulary* on the settings window's Speech page. A near-miss spelling of a listed term is corrected, on every device and with both speech models, and Whisper on a GPU or CPU is also told to expect the terms. On a CPU test of 47 spoken names, Whisper went from 28 right to 39 with correction alone (what the NPU gets) and 47 with the prompt; Canary went from 35 to 45. OpenVINO GenAI's NPU pipeline refuses the prompt itself. Details in `docs/tray.md`.
