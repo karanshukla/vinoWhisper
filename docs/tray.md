@@ -644,8 +644,12 @@ anyway when our own export exists (`scripts/export_whisper.py`, read from
 `whisper-small.en-step-ov-fp16`): a dictation with a vocabulary goes through
 `whisper_step.StepWhisper`, our own decode loop, laid out the way
 `context_tokens.cpp` lays `hotwords`. Without the export, or if it fails to load
-(logged once), the NPU stays on correction only. Captions never use it.
-`vinowhisper-doctor` reports `vocabulary` with which of the two is in use.
+(logged once), the NPU stays on correction only. So does the multilingual model
+with the language on auto: the loop writes the language token into the prompt itself,
+and auto has none. Captions never use it.
+`vinowhisper-doctor` reports `vocabulary` with which of the two is in use; it and
+the server read the same rule, `vocabulary.unprompted` (2026-11-11, before which the
+doctor said "given to dictation" for auto on the NPU while the server refused).
 
 A prompted decode is checked twice before it is typed. If it is only listed terms
 (#175), or a repetition loop (zlib ratio over 2.0, as captions check), it is decoded

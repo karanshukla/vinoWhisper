@@ -55,11 +55,19 @@ def prompt(terms: list[str]) -> str:
     return ", ".join(terms)
 
 
-def unprompted(kind: str, model: str, step_export: bool = False) -> str | None:
+def unprompted(
+    kind: str, model: str, step_export: bool = False, language: str = config.DEFAULT_LANGUAGE
+) -> str | None:
     if model != config.WHISPER_MODEL:
         return f"{model} takes no decoder prompt"
     if kind == "NPU" and not step_export:
         return "OpenVINO GenAI refuses a decoder prompt on the NPU (scripts/export_whisper.py lifts it)"
+    # Our loop builds the prompt itself, and auto-detect has no language token to put in it.
+    if kind == "NPU" and language == config.AUTO_LANGUAGE:
+        return (
+            "on the NPU the prompt needs a named language, and it is set to auto "
+            "(pick one in Settings > Speech)"
+        )
     return None
 
 

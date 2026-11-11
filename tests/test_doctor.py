@@ -249,6 +249,22 @@ def test_vocabulary_on_the_npu_with_our_export_is_given_to_dictation(monkeypatch
     assert result.detail == "1 terms, given to dictation on NPU and used to correct"
 
 
+def test_vocabulary_on_the_npu_with_auto_language_is_correction_only(monkeypatch):
+    """The transcriber refuses the prompt there (the loop has no language token for auto),
+    so the doctor must not say it is given to dictation. Both read vocabulary.unprompted."""
+    config.VOCABULARY_FILE.write_text("Kubernetes\n")
+    config.save_language(config.AUTO_LANGUAGE, "transcribe", config.LANGUAGE_FILE)
+    config.MULTILINGUAL_STEP_MODEL_DIR.mkdir(parents=True)
+    for name in ("encoder.xml", "decoder.xml", "step_export.json", "tokenizer.json"):
+        (config.MULTILINGUAL_STEP_MODEL_DIR / name).write_text("{}")
+    monkeypatch.setattr(devices, "available", lambda: [devices.Device("NPU", "NPU")])
+    result = doctor._vocabulary()[0]
+    assert "spelling correction only" in result.detail and "auto" in result.detail
+    config.save_language("fr", "transcribe", config.LANGUAGE_FILE)
+    result = doctor._vocabulary()[0]
+    assert result.detail == "1 terms, given to dictation on NPU and used to correct"
+
+
 def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):
     """Captions and dictation never use it, so it must not fail the doctor."""
     fedora = distro.Distro(id="fedora", name="Fedora", version="44", family="fedora")

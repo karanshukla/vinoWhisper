@@ -22,6 +22,11 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 - **Imported files break paragraphs where the speech stops, not only at silence** (#180). A dog barking or music between two talks used to merge them into one paragraph with a late time stamp. A small speech detector (Silero VAD, 1.3 MB, downloaded on the first import) now marks that sound as not speech, so it starts a new paragraph and is never sent to the speech model. Accuracy and speed are unchanged on a 19-minute reading. Details in `docs/sessions.md`.
 - Canary returned no text on a CPU with AVX512_BF16, where OpenVINO defaults to bfloat16. It now runs at 32-bit floats on the CPU.
+- Deleting Whisper also removes the vocabulary-prompt exports from `scripts/export_whisper.py`, and counts them in the size shown. The Speech page no longer says Whisper was deleted when the delete failed, shows an error when it cannot read Whisper's status, and says captions and dictation stay off when you delete Canary with no Whisper export to fall back to.
+- `--uninstall` keeps the installer's clone when it holds commits that are on no remote, or a stash, not only uncommitted changes. A pipe that could make it skip `uv tool uninstall` and still report success is gone.
+- On the NPU, the vocabulary prompt's models load with the server instead of inside the first dictation, a failed load is retried after the next model reload, and a device reset during the load goes through the normal reload. `vinowhisper-doctor` no longer says the prompt is in use on the NPU when the language is set to detect automatically.
+- `vinowhisper-transcribe` checks the file and the server before it downloads the speech detector, and carries on without the detector if it fails part-way through a file. With `--json`, a detector that is off is in the `Ready` record's `warnings`.
+- `scripts/export_whisper.py` exits with an error when the export it wrote does not reproduce the reference decode.
 
 ## [1.5.0] - 2026-11-08
 

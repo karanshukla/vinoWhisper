@@ -254,6 +254,8 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   which resolves only once `install` has written it, so the first-run check
   also rewrites per-user icons that differ (they hold nothing of the user's,
   unlike the launcher).
+- **The Speech page applies a Whisper delete only once the status says it is gone**
+  (2026-11-11, `whisper_delete_pending`); `forget_canary` still acts on the click.
 - **Rust tests follow the same rule as `tests/`**: no compositor, tray or
   portal. They draw into memory and bind scratch sockets. The `tray` CI job runs
   fmt, `clippy -D warnings` and `cargo test --locked`.
@@ -446,6 +448,9 @@ file". The choices that answer the issue's open questions:
   every pause and shrank pieces, dropping 33 words on the reading), and 3.1 s without
   speech ends a piece. Whisper's segment timestamps were tried first and rejected:
   +64% time and 6.9% to 8.6% WER on the NPU. Files only; captions still break on RMS.
+- 2026-11-11: the detector is built inside `transcribe_file`, after the file and server
+  checks; its "off" warning rides `Ready.warnings`; an inference error mid-file drops it
+  for the rest of the file (stderr only, the sessions window shows neither).
 - Fixed 2026-11-09: a live Canary session used to be attested as Whisper. `Ready` now
   carries the server's `model`, and `config.served_model_id` names it for both paths.
 
@@ -489,6 +494,14 @@ table in `docs/tray.md`, "A personal vocabulary".
   `canary.py` now asks for f32 on the CPU. Found on a cloud Xeon; this laptop's CPU has
   no BF16, so it never showed here.
 - Never run on an NPU, a GPU, a microphone, or in a real dictation.
+- **2026-11-11 review fixes (#178's loop, unit tests only, nothing run on an NPU):**
+  `vocabulary.unprompted(kind, model, step_export, language)` is the one rule the server
+  and the doctor read, auto-language on the NPU included. The step models are built in
+  `WhisperTranscriber.load` when a vocabulary will use them, lazily otherwise; `_unload`
+  clears `_step_failed`, and a device-lost error from the step load is re-raised.
+  `export_whisper.py` exits non-zero on an fp16 mismatch (INT8 only warns; the server
+  loads fp16 on the NPU too). `vinowhisper-whisper` deletes and counts the step exports,
+  and `present` still means a pipeline export.
 - `smart_spacing` in `gui.json` (Speech page, off by default): a space before a
   dictation whose key press comes within 30 s of the last successful paste
   (`dictation::Spacing`). A guess, since focus is invisible. Unit tests only.
@@ -1230,6 +1243,9 @@ Ordered by what would most change the design.
 - Keep `wildcat-lake-linux/input/f5-voice-typing.md` in sync with real
   decisions made here. That repo is the durable investigation record, this
   repo is just the code.
+- `install.sh --uninstall` keeps the installer's clone unless it is clean, has no commit
+  that is off every remote, and no stash (2026-11-11). The tests that run it skip as
+  root, since install.sh refuses uid 0; they passed as `nobody` on 2026-11-11.
 
 ## Temp files and large downloads
 

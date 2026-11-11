@@ -340,7 +340,9 @@ It removes, in this order:
   their source download, Canary, SmolLM3, Silero VAD) and all of
   `$XDG_CACHE_HOME/vinowhisper` (SmolLM3's compiled NPU blobs, export scratch);
 - `scripts/install.sh`'s own clone at `~/.local/share/vinowhisper/src`, unless
-  it has uncommitted changes. A checkout you cloned yourself stays.
+  it has uncommitted changes, commits on a local branch that no remote has, or
+  a stash. It is then kept and the reason printed. A checkout you cloned
+  yourself stays.
 
 It keeps what is yours: saved sessions and transcripts
 (`~/.local/share/vinowhisper/transcripts`), settings (`~/.config/vinowhisper`),

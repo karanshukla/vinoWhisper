@@ -15,6 +15,9 @@ def models(monkeypatch, tmp_path):
         "MULTILINGUAL_STATEFUL_MODEL_DIR",
         root / config.MULTILINGUAL_STATEFUL_MODEL_DIR.name,
     )
+    # conftest points these at scratch names; the INT8 siblings are derived from the real ones.
+    monkeypatch.setattr(config, "STEP_MODEL_DIR", root / "whisper-small.en-step-ov-fp16")
+    monkeypatch.setattr(config, "MULTILINGUAL_STEP_MODEL_DIR", root / "whisper-small-step-ov-fp16")
     monkeypatch.setattr(source, "SOURCE_ROOT", root / "source")
     stops = []
     monkeypatch.setattr(whisper_model, "stop_server", lambda: stops.append(1) or True)
@@ -47,6 +50,25 @@ def test_nothing_on_disk_is_not_present(models):
     assert (status["present"], status["bytes"], status["source_bytes"]) == (False, 0, 0)
 
 
+def test_step_exports_are_counted_but_are_not_a_loadable_whisper(models):
+    """#177/#178: the step export only serves the vocabulary prompt beside the pipeline's
+    export, so alone it is bytes to delete and not a model the server can load."""
+    root, _ = models
+    _put(root / "whisper-small.en-step-ov-fp16", "decoder.xml", 30)
+    _put(root / "whisper-small.en-step-ov", "decoder.xml", 20)
+    _put(root / "whisper-small-step-ov-fp16", "encoder.xml", 7)
+    status = whisper_model.model_status()
+    assert (status["present"], status["bytes"], status["exports"]) == (False, 57, [])
+    assert status["step_exports"] == [
+        "whisper-small.en-step-ov-fp16",
+        "whisper-small-step-ov-fp16",
+        "whisper-small.en-step-ov",
+    ]
+    _put(root / "whisper-small.en-ov", "openvino_decoder_model.xml", 100)
+    status = whisper_model.model_status()
+    assert (status["present"], status["bytes"]) == (True, 157)
+
+
 def test_delete_removes_every_export_and_whispers_source_only(models):
     root, stops = models
     for name in (
@@ -54,6 +76,10 @@ def test_delete_removes_every_export_and_whispers_source_only(models):
         "whisper-small.en-ov-stateful",
         "whisper-small-ov",
         "whisper-small-ov-stateful",
+        "whisper-small.en-step-ov-fp16",
+        "whisper-small.en-step-ov",
+        "whisper-small-step-ov-fp16",
+        "whisper-small-step-ov",
     ):
         _put(root / name, "openvino_decoder_model.xml", 1)
     _put(root / "source/openai--whisper-small.en@e872", "config.json", 1)

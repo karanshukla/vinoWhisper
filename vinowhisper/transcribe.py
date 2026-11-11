@@ -184,9 +184,11 @@ class Segmenter:
         min_s: float = config.FILE_PIECE_MIN_S,
         max_s: float = config.MAX_WINDOW_S,
         speech: Callable[[np.ndarray], float] | None = None,
+        say: Callable[[str], None] = lambda line: None,
     ) -> None:
         self.limit(min_s, max_s)
         self._speech = speech
+        self._say = say
         self._frames: list[np.ndarray] = []
         self._levels: list[float] = []
         self._held = 0
@@ -202,7 +204,7 @@ class Segmenter:
         level = audio.rms(chunk)
         # A dog or bells between two talks is loud, and still nobody speaking (#180). Scaled,
         # not zeroed: a tie at zero cuts at the earliest pause and makes pieces short.
-        if self._speech is not None and self._speech(chunk) < vad.SPEECH_PROBABILITY:
+        if self._not_speech(chunk):
             level *= _NOT_SPEECH_SCALE
         self._frames.append(chunk)
         self._levels.append(level)
@@ -214,6 +216,21 @@ class Segmenter:
         while self._held >= self._max_frames * FRAME_SAMPLES and len(self._frames) > 1:
             out.append(self._take(self._cut_index()))
         return out
+
+    def _not_speech(self, chunk: np.ndarray) -> bool:
+        if self._speech is None:
+            return False
+        try:
+            return self._speech(chunk) < vad.SPEECH_PROBABILITY
+        except Exception as exc:  # noqa: BLE001 — the file still imports, breaking on silence
+            self._speech = None
+            reason = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+            at_s = (self._start + self._held) / config.SAMPLE_RATE_HZ
+            self._say(
+                f"the speech detector stopped at {_clock(at_s)} "
+                f"({reason}); the rest of this file breaks paragraphs on silence only"
+            )
+            return False
 
     def finish(self) -> list[Piece]:
         out: list[Piece] = []
@@ -370,6 +387,10 @@ def _free_bundle_path(directory: Path, started: datetime) -> Path:
     return path
 
 
+def _warn(line: str) -> None:
+    print(f"[vinowhisper] WARNING: {line}", file=sys.stderr, flush=True)
+
+
 def transcribe_file(
     path: Path,
     client: _Client,
@@ -382,18 +403,24 @@ def transcribe_file(
     now: Callable[[], datetime] = datetime.now,
     which: Callable[[str], str | None] = shutil.which,
     speech: Callable[[np.ndarray], float] | None = None,
+    detector: Callable[[Callable[[str], None]], Callable[[np.ndarray], float] | None] | None = None,
+    warn: Callable[[str], None] = _warn,
 ) -> Path:
     if not path.is_file():
         raise TranscribeError(f"{path} is not a file")
     health = client.wait_ready()
     check_server(health, model, language, task)
     device = str(health.get("device", "?"))
+    warnings = [str(warning) for warning in health.get("warnings", [])]
+    # After the checks: its first run downloads, which a mistyped path must not start.
+    if speech is None and detector is not None:
+        speech = detector(warnings.append)
     emit(
         {
             "event": "Ready",
             "device": device,
             "degraded": bool(health.get("degraded", False)),
-            "warnings": [str(warning) for warning in health.get("warnings", [])],
+            "warnings": warnings,
         }
     )
 
@@ -403,7 +430,7 @@ def transcribe_file(
     duration_s = probe_duration_s(path, which)
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)
-    segmenter = Segmenter(speech=speech)
+    segmenter = Segmenter(speech=speech, say=warn)
     if health.get("live_active"):
         segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
     decoded_s = 0.0
@@ -551,9 +578,6 @@ def main(argv: list[str] | None = None) -> int:
     # absolute(), not resolve(): a link is named as the user named it.
     path = args.file.expanduser().absolute()
     directory = args.output.expanduser() if args.output is not None else None
-    speech = vad.detector(
-        lambda line: print(f"[vinowhisper] WARNING: {line}", file=sys.stderr, flush=True)
-    )
     try:
         saved = transcribe_file(
             path,
@@ -563,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             language=args.language,
             task=args.task,
-            speech=speech,
+            detector=vad.detector,
         )
     except KeyboardInterrupt:
         return _fail(args.json, "cancelled; nothing was saved", 130)

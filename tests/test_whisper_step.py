@@ -197,6 +197,10 @@ def export(tmp_path, monkeypatch):
                 for slot in range(prefill):
                     self.tensors[f"new_{n}"].data[:, :, slot] = slot + 1
             last = int(self.tensors["pick"].data[0].argmax())
+            ids = self.tensors["ids"].data[0]
+            # Padding is zeros, and the picked position is the prompt's last token.
+            assert (ids[last + 1 :] == 0).all() and self.tensors["pick"].data.sum() == 1.0
+            seen["prefill_ids"] = [int(token) for token in ids[: last + 1]]
             logits = self.tensors["logits"].data
             logits[...] = 0
             logits[0, EOS if last >= seen["eos_at"] else 500 + last] = 1.0
@@ -292,6 +296,7 @@ def test_a_long_prompt_is_prefilled_in_one_call_with_the_same_answer(export):
     assert fast == slow == [509, 510, 511]
     np.testing.assert_array_equal(fast_cache, step._past[0])
     assert seen["prefills"] == 1
+    assert seen["prefill_ids"] == LONG_PROMPT
     # The ten prompt tokens took one prefill call instead of ten decoder steps.
     assert len(seen["masks"]) - steps_with_prefill == steps_with_prefill + len(LONG_PROMPT)
 

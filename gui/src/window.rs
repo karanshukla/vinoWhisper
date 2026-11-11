@@ -233,6 +233,8 @@ struct SettingsWindow {
     whisper_model: Arc<Mutex<ModelState>>,
     confirm_delete_whisper: bool,
     confirm_delete_source: bool,
+    // A delete was started: its effects are applied once the status says Whisper is gone.
+    whisper_delete_pending: bool,
     multilingual: bool,
     canary: bool,
     focused: bool,
@@ -314,6 +316,7 @@ impl SettingsWindow {
             whisper_model: Arc::new(Mutex::new(ModelState::default())),
             confirm_delete_whisper: false,
             confirm_delete_source: false,
+            whisper_delete_pending: false,
             multilingual: false,
             canary: false,
             focused: true,
@@ -504,6 +507,12 @@ impl SettingsWindow {
         changed
     }
 
+    // Unknown until its status arrives: assume it is there, as setup leaves it.
+    fn whisper_present(&self) -> bool {
+        let state = self.whisper_model.lock().unwrap();
+        !matches!(&state.status, Some(Ok(status)) if !status.present)
+    }
+
     // Deleting the model in use: the server could not load it any more, so back to Whisper,
     // and the page says so.
     fn forget_canary(&mut self) -> bool {
@@ -515,8 +524,25 @@ impl SettingsWindow {
             ..self.speech
         }
         .normalised();
-        self.speech_note = Some("Canary was deleted, so the speech model is Whisper again.".into());
+        self.speech_note = Some(if self.whisper_present() {
+            "Canary was deleted, so the speech model is Whisper again.".into()
+        } else {
+            "Canary was deleted and Whisper is not exported, so captions and dictation are \
+             off. Run vinowhisper-setup to export a model."
+                .into()
+        });
         true
+    }
+
+    fn settle_whisper_delete(&mut self, state: &ModelState) {
+        if !self.whisper_delete_pending || state.busy {
+            return;
+        }
+        self.whisper_delete_pending = false;
+        // A delete that failed left it on disk: the row shows why, and nothing else changed.
+        if matches!(&state.status, Some(Ok(status)) if !status.present) {
+            self.forget_whisper();
+        }
     }
 
     // Deleting Whisper: nothing of it is left to pick, in any language.
@@ -696,9 +722,20 @@ impl SettingsWindow {
                 (_, false) => "INT8 for the NPU, fp16 for CPU and GPU, checked against pinned \
                                sha256s. CC-BY-4.0, by NVIDIA."
                     .to_owned(),
-                (_, true) if self.speech.model == SpeechModel::Canary => format!(
-                    "Deletes Canary ({on_disk}). It is the speech model, so Whisper takes over."
-                ),
+                (_, true) if self.speech.model == SpeechModel::Canary => {
+                    if self.whisper_present() {
+                        format!(
+                            "Deletes Canary ({on_disk}). It is the speech model, so Whisper \
+                             takes over."
+                        )
+                    } else {
+                        format!(
+                            "Deletes Canary ({on_disk}). It is the speech model and Whisper is \
+                             not exported, so captions and dictation stay off until \
+                             vinowhisper-setup exports a model."
+                        )
+                    }
+                }
                 (_, true) => format!("Deletes Canary ({on_disk}). Download it again to use it."),
             };
             let row = Row::new("Download").help(&help);
@@ -827,7 +864,7 @@ impl SettingsWindow {
                     {
                         self.confirm_delete_whisper = false;
                         self.confirm_delete_source = false;
-                        self.forget_whisper();
+                        self.whisper_delete_pending = true;
                         self.run_model(ui.ctx(), Tool::Whisper, "delete");
                     }
                     if ui.add(Button::ghost("Cancel").small()).clicked() {
@@ -1033,8 +1070,8 @@ impl SettingsWindow {
             _ => self.canary,
         };
         let whisper_state = self.whisper_model.lock().unwrap().clone();
-        // Unknown until its status arrives: assume it is there, as setup leaves it.
-        let whisper = !matches!(&whisper_state.status, Some(Ok(status)) if !status.present);
+        self.settle_whisper_delete(&whisper_state);
+        let whisper = self.whisper_present();
         let installed = |option: SpeechModel| match option {
             SpeechModel::Whisper => whisper,
             SpeechModel::Canary => canary,
@@ -1138,8 +1175,21 @@ impl SettingsWindow {
                     });
                 });
         });
-        if let Some(Ok(status)) = &whisper_state.status {
-            self.whisper_rows(ui, status, &whisper_state);
+        match &whisper_state.status {
+            Some(Ok(status)) => self.whisper_rows(ui, status, &whisper_state),
+            Some(Err(why)) => {
+                widgets::group_label(ui, "Whisper small");
+                widgets::group(ui, |ui| {
+                    Row::new("Exported model")
+                        .help(&format!(
+                            "Could not check what is on disk: {why}. vinowhisper-setup links \
+                             the command this page asks."
+                        ))
+                        .tone(Tone::Error)
+                        .show(ui, |_, _| {});
+                });
+            }
+            None => {}
         }
         if let Some(Ok(status)) = &canary_state.status {
             changed |= self.model_rows(ui, Tool::Canary, status, &canary_state);
@@ -2106,6 +2156,102 @@ mod tests {
             .click();
         harness.run();
         harness.get_by_label("Whisper small (not installed)");
+    }
+
+    #[test]
+    fn a_whisper_delete_that_failed_changes_nothing_on_the_page() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.multilingual = true;
+            window.whisper_delete_pending = true;
+            let mut state = window.whisper_model.lock().unwrap();
+            state.busy = true;
+            state.status = Some(Ok(whisper_status(true, 0)));
+        }
+        harness.run();
+        assert!(
+            harness.state().window.whisper_delete_pending,
+            "still deleting: nothing is decided yet"
+        );
+        {
+            let window = &mut harness.state_mut().window;
+            let mut state = window.whisper_model.lock().unwrap();
+            state.busy = false;
+            state.error = "Permission denied".into();
+        }
+        harness.run();
+        let window = &harness.state().window;
+        assert!(!window.whisper_delete_pending);
+        assert!(window.multilingual, "the exports are still there");
+        assert!(window.speech_note.is_none(), "nothing was deleted");
+        harness.get_by_label_contains("The last attempt failed: Permission denied");
+    }
+
+    #[test]
+    fn a_whisper_delete_takes_effect_once_the_status_says_it_is_gone() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.multilingual = true;
+            window.whisper_delete_pending = true;
+            window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(false, 0)));
+        }
+        harness.run();
+        let window = &harness.state().window;
+        assert!(!window.whisper_delete_pending && !window.multilingual);
+        assert!(
+            window
+                .speech_note
+                .as_deref()
+                .unwrap()
+                .contains("Whisper was deleted")
+        );
+    }
+
+    #[test]
+    fn a_whisper_status_that_could_not_be_read_is_shown() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness
+            .state_mut()
+            .window
+            .whisper_model
+            .lock()
+            .unwrap()
+            .status = Some(Err("could not run vinowhisper-whisper: not found".into()));
+        harness.run();
+        harness.get_by_label_contains(
+            "Could not check what is on disk: could not run vinowhisper-whisper: not found",
+        );
+    }
+
+    #[test]
+    fn deleting_canary_with_no_whisper_export_says_everything_stays_off() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.canary = true;
+            window.speech.model = SpeechModel::Canary;
+            window.confirm_delete_canary = true;
+            window.canary_model.lock().unwrap().status = Some(Ok(canary_status(true)));
+            window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(false, 0)));
+        }
+        harness.run();
+        harness.get_by_label_contains("stay off until vinowhisper-setup exports a model");
+        assert!(
+            harness
+                .query_by_label_contains("Whisper takes over")
+                .is_none()
+        );
+        let window = &mut harness.state_mut().window;
+        assert!(window.forget_canary());
+        assert!(
+            window
+                .speech_note
+                .as_deref()
+                .unwrap()
+                .contains("Run vinowhisper-setup to export a model")
+        );
     }
 
     #[test]

@@ -243,24 +243,47 @@ class WhisperTranscriber(BaseTranscriber):
             options["language"] = f"<|{self.language}|>"
         return options
 
+    def load(self, *, record: bool = True) -> None:
+        super().load(record=record)
+        self._warm_step()
+
     def _unload(self) -> None:
         self._pipeline = None
         self._step = None
+        # A reload is a new device session: what failed on the old one may load now.
+        self._step_failed = False
 
     def _step_dir(self) -> Path:
         return config.step_model_dir(self.multilingual)
 
-    # The NPU takes the prompt only through our own loop, and auto-detect has no token to name.
     def _prompts_on_npu(self) -> bool:
-        if self._step_failed or (self.multilingual and self.language == config.AUTO_LANGUAGE):
-            return False
-        return whisper_step.exported(self._step_dir())
+        return not self._step_failed and whisper_step.exported(self._step_dir())
+
+    def _unprompted(self) -> str | None:
+        kind = self.selection.kind if self.selection else "?"
+        step = kind == "NPU" and self._prompts_on_npu()
+        return vocabulary.unprompted(kind, self.model, step, self.language)
+
+    # At load, not inside the first prompted dictation (24.8 s cold, docs/models.md).
+    def _warm_step(self) -> None:
+        if self.selection is None or self.selection.kind != "NPU" or self._unprompted():
+            return
+        if not vocabulary.read()[0]:
+            return
+        try:
+            self._step_loop()
+        except Exception as exc:  # noqa: BLE001 — the pipeline loaded; the first dictation retries
+            if not failures.is_device_lost(exc):
+                raise
 
     def _step_loop(self) -> whisper_step.StepWhisper | None:
         if self._step is None and not self._step_failed and self.selection is not None:
             try:
                 self._step = whisper_step.StepWhisper(self._step_dir(), self.selection.device.name)
             except Exception as exc:  # noqa: BLE001 — dictation goes on with correction only
+                # A reset is not this export failing: transcribe_stream reloads and retries.
+                if failures.is_device_lost(exc):
+                    raise
                 self._step_failed = True
                 print(
                     f"[vinowhisper-server] the vocabulary prompt is off on {self.device}: "
@@ -271,9 +294,7 @@ class WhisperTranscriber(BaseTranscriber):
         return self._step
 
     def hotwords(self) -> tuple[str, int] | None:
-        kind = self.selection.kind if self.selection else "?"
-        step = kind == "NPU" and self._prompts_on_npu()
-        if self._pipeline is None or vocabulary.unprompted(kind, self.model, step):
+        if self._pipeline is None or self._unprompted():
             return None
         stamp = vocabulary.stamp()
         if stamp != self._vocabulary_stamp:
