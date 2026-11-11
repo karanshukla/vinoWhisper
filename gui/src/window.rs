@@ -154,7 +154,11 @@ fn model_switch_note(wanted: Speech) -> String {
 
 fn model_help(model: SpeechModel, installed: bool) -> &'static str {
     match (model, installed) {
-        (SpeechModel::Whisper, _) => {
+        (SpeechModel::Whisper, false) => {
+            "Whisper small is not on this machine. Run vinowhisper-setup to export it again \
+             (0.9 GB, a few minutes)."
+        }
+        (SpeechModel::Whisper, true) => {
             "OpenAI's Whisper small, 0.9 GB. Five languages, translates them into English. \
              The default, and the most accurate on English captions."
         }
@@ -226,6 +230,9 @@ struct SettingsWindow {
     confirm_delete: bool,
     canary_model: Arc<Mutex<ModelState>>,
     confirm_delete_canary: bool,
+    whisper_model: Arc<Mutex<ModelState>>,
+    confirm_delete_whisper: bool,
+    confirm_delete_source: bool,
     multilingual: bool,
     canary: bool,
     focused: bool,
@@ -304,6 +311,9 @@ impl SettingsWindow {
             confirm_delete: false,
             canary_model: Arc::new(Mutex::new(ModelState::default())),
             confirm_delete_canary: false,
+            whisper_model: Arc::new(Mutex::new(ModelState::default())),
+            confirm_delete_whisper: false,
+            confirm_delete_source: false,
             multilingual: false,
             canary: false,
             focused: true,
@@ -509,10 +519,23 @@ impl SettingsWindow {
         true
     }
 
+    // Deleting Whisper: nothing of it is left to pick, in any language.
+    fn forget_whisper(&mut self) {
+        self.multilingual = false;
+        if self.speech.model == SpeechModel::Whisper {
+            self.speech_note = Some(
+                "Whisper was deleted, so dictation and captions are off. Run vinowhisper-setup \
+                 to export it again."
+                    .into(),
+            );
+        }
+    }
+
     fn model_state(&self, tool: Tool) -> Arc<Mutex<ModelState>> {
         match tool {
             Tool::Cleanup => Arc::clone(&self.model),
             Tool::Canary => Arc::clone(&self.canary_model),
+            Tool::Whisper => Arc::clone(&self.whisper_model),
         }
     }
 
@@ -659,17 +682,31 @@ impl SettingsWindow {
         let mut confirm = match tool {
             Tool::Cleanup => self.confirm_delete,
             Tool::Canary => self.confirm_delete_canary,
+            Tool::Whisper => unreachable!("whisper_rows draws Whisper"),
         };
+        let on_disk = model::size(status.bytes + status.cache_bytes);
         widgets::group_label(ui, &status.label);
         widgets::group(ui, |ui| {
-            let row = Row::new("Download").help(match tool {
-                Tool::Cleanup => "Checked against pinned sha256s.",
-                Tool::Canary => {
-                    "INT8 for the NPU, fp16 for CPU and GPU, checked against pinned sha256s. \
-                     CC-BY-4.0, by NVIDIA."
-                }
-            });
-            let row = if confirm { row.tint(p.error_tint) } else { row };
+            let help = match (tool, confirm) {
+                (Tool::Cleanup, false) => "Checked against pinned sha256s.".to_owned(),
+                (Tool::Cleanup, true) => format!(
+                    "Deletes the model and its compiled cache ({on_disk}). Dictation is typed \
+                     as you said it until you download it again."
+                ),
+                (_, false) => "INT8 for the NPU, fp16 for CPU and GPU, checked against pinned \
+                               sha256s. CC-BY-4.0, by NVIDIA."
+                    .to_owned(),
+                (_, true) if self.speech.model == SpeechModel::Canary => format!(
+                    "Deletes Canary ({on_disk}). It is the speech model, so Whisper takes over."
+                ),
+                (_, true) => format!("Deletes Canary ({on_disk}). Download it again to use it."),
+            };
+            let row = Row::new("Download").help(&help);
+            let row = if confirm {
+                row.tint(p.error_tint).tone(Tone::Error)
+            } else {
+                row
+            };
             row.show(ui, |ui, _| {
                 if confirm {
                     if ui
@@ -737,7 +774,7 @@ impl SettingsWindow {
                     .tone(Tone::Error)
                     .show(ui, |_, _| {});
             }
-            if tool == Tool::Canary {
+            if tool != Tool::Cleanup {
                 return;
             }
             Row::new("Compiled cache")
@@ -749,8 +786,126 @@ impl SettingsWindow {
         match tool {
             Tool::Cleanup => self.confirm_delete = confirm,
             Tool::Canary => self.confirm_delete_canary = confirm,
+            Tool::Whisper => {}
         }
         speech_changed
+    }
+
+    // Whisper has no download: vinowhisper-setup exports it. So two deletes and no fetch.
+    fn whisper_rows(&mut self, ui: &mut egui::Ui, status: &Status, state: &ModelState) {
+        let p = theme::palette(ui.ctx());
+        let in_use = self.speech.model == SpeechModel::Whisper;
+        let all = model::size(status.bytes + status.source_bytes);
+        widgets::group_label(ui, &status.label);
+        widgets::group(ui, |ui| {
+            let confirm = self.confirm_delete_whisper;
+            let help = match (confirm, in_use) {
+                (false, _) => "Built for this machine by vinowhisper-setup. Captions and \
+                               dictation run on it."
+                    .to_owned(),
+                (true, true) => format!(
+                    "Deletes every Whisper export and its source download ({all}). vinoWhisper \
+                     stops, and dictation and captions stay off until you run vinowhisper-setup \
+                     again."
+                ),
+                (true, false) => format!(
+                    "Deletes every Whisper export and its source download ({all}). Canary keeps \
+                     running; to use Whisper again, run vinowhisper-setup."
+                ),
+            };
+            let row = Row::new("Exported model").help(&help);
+            let row = if confirm {
+                row.tint(p.error_tint).tone(Tone::Error)
+            } else {
+                row
+            };
+            row.show(ui, |ui, _| {
+                if confirm {
+                    if ui
+                        .add(Button::destructive("Delete Whisper").small())
+                        .clicked()
+                    {
+                        self.confirm_delete_whisper = false;
+                        self.confirm_delete_source = false;
+                        self.forget_whisper();
+                        self.run_model(ui.ctx(), Tool::Whisper, "delete");
+                    }
+                    if ui.add(Button::ghost("Cancel").small()).clicked() {
+                        self.confirm_delete_whisper = false;
+                    }
+                    return;
+                }
+                let deletable = (status.present || status.source_bytes > 0) && !state.busy;
+                if ui
+                    .add_enabled(deletable, Button::secondary("Delete…"))
+                    .clicked()
+                {
+                    self.confirm_delete_whisper = true;
+                    self.confirm_delete_source = false;
+                }
+                let shown = if state.busy {
+                    widgets::chip(ui, ChipKind::Neutral, "Deleting…")
+                } else if status.present {
+                    widgets::chip(
+                        ui,
+                        ChipKind::Ok,
+                        &format!("On disk, {}", model::size(status.bytes)),
+                    )
+                } else {
+                    widgets::chip(ui, ChipKind::Warn, "Not exported")
+                };
+                a11y::live(&shown);
+            });
+            if status.source_bytes > 0 {
+                let confirm = self.confirm_delete_source;
+                let size = model::size(status.source_bytes);
+                let help = if confirm {
+                    format!(
+                        "Deletes the {size} download. Captions and dictation keep working; a \
+                         new export downloads it again."
+                    )
+                } else {
+                    "What the export was built from. Only a new export reads it, so deleting \
+                     it is safe."
+                        .to_owned()
+                };
+                let row = Row::new("Source download").help(&help);
+                let row = if confirm {
+                    row.tint(p.error_tint).tone(Tone::Error)
+                } else {
+                    row
+                };
+                row.show(ui, |ui, _| {
+                    if confirm {
+                        if ui
+                            .add(Button::destructive("Delete the download").small())
+                            .clicked()
+                        {
+                            self.confirm_delete_source = false;
+                            self.run_model(ui.ctx(), Tool::Whisper, "delete-source");
+                        }
+                        if ui.add(Button::ghost("Cancel").small()).clicked() {
+                            self.confirm_delete_source = false;
+                        }
+                        return;
+                    }
+                    if ui
+                        .add_enabled(!state.busy, Button::secondary("Delete…"))
+                        .clicked()
+                    {
+                        self.confirm_delete_source = true;
+                        self.confirm_delete_whisper = false;
+                    }
+                    ui.label(size);
+                });
+            }
+            if !state.error.is_empty() {
+                Row::new("Last attempt")
+                    .help(&format!("The last attempt failed: {}", state.error))
+                    .tone(Tone::Error)
+                    .show(ui, |_, _| {});
+            }
+        });
     }
 
     fn refresh_model_ready(&self, ctx: &egui::Context) {
@@ -877,13 +1032,25 @@ impl SettingsWindow {
             Some(Ok(status)) => status.present,
             _ => self.canary,
         };
+        let whisper_state = self.whisper_model.lock().unwrap().clone();
+        // Unknown until its status arrives: assume it is there, as setup leaves it.
+        let whisper = !matches!(&whisper_state.status, Some(Ok(status)) if !status.present);
+        let installed = |option: SpeechModel| match option {
+            SpeechModel::Whisper => whisper,
+            SpeechModel::Canary => canary,
+        };
         let multilingual = match model {
             SpeechModel::Whisper => self.multilingual,
             SpeechModel::Canary => true,
         };
         widgets::group(ui, |ui| {
             Row::new("Speech model")
-                .help(model_help(model, model != SpeechModel::Canary || canary))
+                .help(model_help(model, installed(model)))
+                .tone(if installed(model) {
+                    Tone::Neutral
+                } else {
+                    Tone::Warn
+                })
                 .show(ui, |ui, named| {
                     let before = self.speech.model;
                     let shown = widgets::combo(
@@ -894,7 +1061,7 @@ impl SettingsWindow {
                     )
                     .show_ui(ui, |ui| {
                         for option in SpeechModel::ALL {
-                            let installed = option != SpeechModel::Canary || canary;
+                            let installed = installed(option);
                             let label = if installed {
                                 model_label(option).to_owned()
                             } else {
@@ -971,6 +1138,9 @@ impl SettingsWindow {
                     });
                 });
         });
+        if let Some(Ok(status)) = &whisper_state.status {
+            self.whisper_rows(ui, status, &whisper_state);
+        }
         if let Some(Ok(status)) = &canary_state.status {
             changed |= self.model_rows(ui, Tool::Canary, status, &canary_state);
         }
@@ -1188,6 +1358,7 @@ impl eframe::App for SettingsWindow {
         }
         if self.shown != Some(Page::Speech) && self.page == Page::Speech {
             self.refresh_model(ctx, Tool::Canary);
+            self.refresh_model(ctx, Tool::Whisper);
         }
         if self.page == Page::Sessions && (regained || self.shown != Some(Page::Sessions)) {
             self.refresh_model_ready(ctx);
@@ -1765,6 +1936,7 @@ mod tests {
             present,
             bytes: if present { 972_131_242 } else { 0 },
             cache_bytes: 0,
+            source_bytes: 0,
         }
     }
 
@@ -1840,6 +2012,147 @@ mod tests {
         assert!(!window.forget_canary(), "Whisper in use: nothing to switch");
     }
 
+    fn whisper_status(present: bool, source_bytes: u64) -> Status {
+        Status {
+            label: "Whisper small".into(),
+            present,
+            bytes: if present { 930_000_000 } else { 0 },
+            source_bytes,
+            ..Status::default()
+        }
+    }
+
+    #[test]
+    fn whisper_in_use_confirms_its_delete_in_place_and_says_what_stops() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness
+            .state_mut()
+            .window
+            .whisper_model
+            .lock()
+            .unwrap()
+            .status = Some(Ok(whisper_status(true, 967_000_000)));
+        harness.run();
+        harness.get_by_label("On disk, 930 MB");
+        harness.get_by_label("967 MB");
+        harness
+            .get_all_by_role_and_label(Role::Button, "Delete…")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        assert!(harness.state().window.confirm_delete_whisper);
+        harness
+            .get_by_label_contains("Deletes every Whisper export and its source download (1.9 GB)");
+        harness.get_by_label_contains("stay off until you run vinowhisper-setup again");
+        harness.get_by_role_and_label(Role::Button, "Delete Whisper");
+        harness
+            .get_by_role_and_label(Role::Button, "Cancel")
+            .click();
+        harness.run();
+        assert!(!harness.state().window.confirm_delete_whisper);
+    }
+
+    #[test]
+    fn deleting_whisper_under_canary_says_canary_keeps_running() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.canary = true;
+            window.speech.model = SpeechModel::Canary;
+            window.confirm_delete_whisper = true;
+            window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(true, 0)));
+        }
+        harness.run();
+        harness.get_by_label_contains("Canary keeps running");
+        assert!(
+            harness.query_by_label("Source download").is_none(),
+            "no source on disk, no row"
+        );
+    }
+
+    #[test]
+    fn the_source_download_has_its_own_safe_delete() {
+        let mut harness = harness(Page::Speech, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.confirm_delete_source = true;
+            window.whisper_model.lock().unwrap().status =
+                Some(Ok(whisper_status(true, 967_000_000)));
+        }
+        harness.run();
+        harness.get_by_label_contains("Captions and dictation keep working");
+        harness.get_by_role_and_label(Role::Button, "Delete the download");
+        assert!(!harness.state().window.confirm_delete_whisper);
+    }
+
+    #[test]
+    fn a_deleted_whisper_is_not_installed_and_says_how_to_get_it_back() {
+        let mut harness = harness(Page::Speech, WIDE);
+        harness
+            .state_mut()
+            .window
+            .whisper_model
+            .lock()
+            .unwrap()
+            .status = Some(Ok(whisper_status(false, 0)));
+        harness.run();
+        harness.get_by_label("Not exported");
+        harness.get_by_label_contains("Run vinowhisper-setup to export it again");
+        let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
+        assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Speech model")
+            .click();
+        harness.run();
+        harness.get_by_label("Whisper small (not installed)");
+    }
+
+    #[test]
+    fn forgetting_whisper_in_use_leaves_a_note() {
+        let mut window = SettingsWindow::with(
+            Some(Page::Speech),
+            Settings::default(),
+            Speech::default(),
+            Cleanup::default(),
+        );
+        window.multilingual = true;
+        window.forget_whisper();
+        assert!(!window.multilingual);
+        assert!(
+            window
+                .speech_note
+                .as_deref()
+                .unwrap()
+                .contains("vinowhisper-setup")
+        );
+        window.speech_note = None;
+        window.speech.model = SpeechModel::Canary;
+        window.forget_whisper();
+        assert!(
+            window.speech_note.is_none(),
+            "Canary in use: nothing stopped"
+        );
+    }
+
+    #[test]
+    fn the_cleanup_delete_says_what_goes() {
+        let mut harness = harness(Page::Cleanup, WIDE);
+        {
+            let window = &mut harness.state_mut().window;
+            window.confirm_delete = true;
+            window.model.lock().unwrap().status = Some(Ok(Status {
+                label: "SmolLM3-3B".into(),
+                present: true,
+                bytes: 1_701_000_000,
+                cache_bytes: 300_000_000,
+                ..Status::default()
+            }));
+        }
+        harness.run();
+        harness.get_by_label_contains("Deletes the model and its compiled cache (2.0 GB)");
+    }
+
     #[test]
     fn translation_says_why_it_is_off_for_english() {
         let mut harness = harness(Page::Speech, WIDE);
@@ -1892,6 +2205,7 @@ mod tests {
             present: true,
             bytes: 1_701_000_000,
             cache_bytes: 2_100_000_000,
+            source_bytes: 0,
         }));
         harness.run();
         harness.get_by_label("Downloaded, 1.7 GB");
