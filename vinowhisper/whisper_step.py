@@ -1,6 +1,7 @@
 import itertools
 import json
 import re
+import sys
 from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
@@ -135,10 +136,12 @@ def greedy(
     prompt: list[int],
     generation: Generation,
     max_new_tokens: int,
+    prefilled: np.ndarray | None = None,
 ) -> list[int]:
-    logits = None
-    for position, token in enumerate(prompt):
-        logits = step(token, position)
+    logits = prefilled
+    if logits is None:
+        for position, token in enumerate(prompt):
+            logits = step(token, position)
     answer: list[int] = []
     position = len(prompt)
     while logits is not None and len(answer) < max_new_tokens:
@@ -155,6 +158,10 @@ def greedy(
         logits = step(token, position)
         position += 1
     return answer
+
+
+# Below this a prompt is the start tokens alone, and two steps cost less than one prefill.
+PREFILL_MIN_TOKENS = 8
 
 
 class StepWhisper:
@@ -184,6 +191,25 @@ class StepWhisper:
         self._mask = self._decoder.get_tensor("mask").data
         self._ids = self._decoder.get_tensor("ids").data
         self._pos = self._decoder.get_tensor("pos").data
+        self.prefill_tokens = int(shape.get("prefill_tokens") or 0)
+        self._prefill = None
+        if self.prefill_tokens and (model_dir / "prefill.xml").is_file():
+            try:
+                self._prefill = core.compile_model(
+                    str(model_dir / "prefill.xml"), device
+                ).create_infer_request()
+            except RuntimeError as exc:
+                # Token by token still works, only slower.
+                print(
+                    f"[vinowhisper-server] prefill.xml did not compile on {device}, "
+                    f"feeding the prompt token by token: {str(exc).strip().splitlines()[-1][:160]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        if self._prefill is not None:
+            self._pre_cross = [self._prefill.get_tensor(name).data for name, _ in self._cross]
+            self._pre_ids = self._prefill.get_tensor("ids").data
+            self._pre_pick = self._prefill.get_tensor("pick").data
 
     def decode(self, samples: np.ndarray, prompt: list[int], max_new_tokens: int) -> list[int]:
         room = self.slots - len(prompt)
@@ -191,8 +217,13 @@ class StepWhisper:
             raise ValueError(f"a {len(prompt)}-token prompt leaves no room in {self.slots} slots")
         mel = log_mel(samples, self.filters)[None]
         out = self._encoder.infer({"mel": mel})
-        for name, target in self._cross:
+        prefill = self._prefill is not None and (
+            PREFILL_MIN_TOKENS <= len(prompt) <= self.prefill_tokens
+        )
+        for index, (name, target) in enumerate(self._cross):
             target[...] = out[name]
+            if prefill:
+                self._pre_cross[index][...] = out[name]
         for past in self._past:
             past[...] = 0
         self._mask[...] = -1e4
@@ -207,7 +238,24 @@ class StepWhisper:
             self._mask[..., position] = 0
             return self._decoder.get_tensor("logits").data[0]
 
-        return greedy(step, prompt, self.generation, min(max_new_tokens, room - 1))
+        first = self._prefill_prompt(prompt) if prefill else None
+        return greedy(step, prompt, self.generation, min(max_new_tokens, room - 1), first)
+
+    # The whole prompt in one call, its K/V written into the first len(prompt) slots.
+    def _prefill_prompt(self, prompt: list[int]) -> np.ndarray:
+        request = self._prefill
+        if request is None:
+            raise RuntimeError("no prefill model loaded")
+        count = len(prompt)
+        self._pre_ids[...] = 0
+        self._pre_ids[0, :count] = prompt
+        self._pre_pick[...] = 0
+        self._pre_pick[0, count - 1] = 1.0
+        request.infer()
+        for past, name in zip(self._past, self._new, strict=True):
+            past[:, :, :count] = request.get_tensor(name).data[:, :, :count]
+        self._mask[..., :count] = 0
+        return np.array(request.get_tensor("logits").data[0], copy=True)
 
     def transcribe(
         self, samples: np.ndarray, hotwords: str, max_new_tokens: int, **prompt_args
