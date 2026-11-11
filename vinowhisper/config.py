@@ -40,6 +40,16 @@ MULTILINGUAL_MODEL_ID = "openai/whisper-small"
 MULTILINGUAL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov"
 MULTILINGUAL_STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov-stateful"
 
+# scripts/export_whisper.py: our own encoder + one-token decoder, for a decoder prompt on the
+# NPU (#176). fp16: it matched WhisperPipeline word for word on 19 min, INT8 did not.
+STEP_MODEL_DIR = MODEL_ROOT / "whisper-small.en-step-ov-fp16"
+MULTILINGUAL_STEP_MODEL_DIR = MODEL_ROOT / "whisper-small-step-ov-fp16"
+
+
+def step_model_dir(multilingual: bool = False) -> Path:
+    return MULTILINGUAL_STEP_MODEL_DIR if multilingual else STEP_MODEL_DIR
+
+
 AUTO_LANGUAGE = "auto"
 # Checked on the CPU device 2026-10-06 with the multilingual small: transcription,
 # forced language and translation to English. Whisper knows ~99, but these are the

@@ -72,7 +72,7 @@ Canary's lead on separate windows came from Whisper dropping words at window sta
 
 All of it is n=1 on one laptop and audiobook narration, not the YouTube content captions usually see.
 
-## Whisper through our own decode loop (#176, in progress)
+## Whisper through our own decode loop (#176)
 
 `WhisperPipeline` refuses a decoder prompt on the NPU (an assert in `pipeline_static.cpp`), so the vocabulary list only reaches the NPU as spelling correction. The way around it is the same as Canary's: our own export and our own loop.
 
@@ -107,3 +107,22 @@ The INT8 drift is on noise, where the logits are flat. Whether INT8 holds on spe
 How the inputs are fed decides the step time. Passing numpy arrays to `infer()` copies 24 cross tensors of 4.6 MB each into the NPU on every token; `set_tensor` with shared host memory barely helps (25 ms). Writing into `request.get_tensor(name).data` once (cross K/V) and per step (one cache slot) is what gets 11.7 ms. #178's loop has to work that way.
 
 Rough cost of a 12 s dictation piece at that rate: 0.2 s encoder plus about 39 steps (4 start tokens, 35 answer tokens) is 0.66 s, against 0.70 s through `WhisperPipeline`. A 20-term prompt adds about 60 steps, 0.7 s, unless the prompt is prefilled in one call. That is an estimate from step timings, not a decode.
+
+**The loop (#178)** is `vinowhisper/whisper_step.py`, built on 2026-11-11. Everything around the two IRs is numpy and Python, so it is tested without OpenVINO:
+
+- **Features:** Whisper's log-mel (n_fft 400, hop 160, the 80 x 201 filters from `preprocessor_config.json`, 30 s of zero padding). Within 3.3e-5 of transformers' extractor on speech; `tests/fixtures/whisper_features.npz`.
+- **Tokenizer:** GPT-2 byte-level BPE read from `tokenizer.json`, with the pre-tokenizer's `\p{L}`/`\p{N}` spelled for the stdlib `re`. It matches transformers on accents, emoji, CJK, contractions and underscores. The test fixture is a 5 KB tokenizer holding only the 106 merges its cases use, which encodes them identically (a merge never chosen can't change the result).
+- **Prompt:** as `context_tokens.cpp` builds `hotwords`: `<|startofprev|>`, the tokens of `" " + terms` with special tokens dropped, `<|startoftranscript|>` (plus language and task on the multilingual model), `<|notimestamps|>`.
+- **Greedy:** `begin_suppress_tokens` on the first answer token, `suppress_tokens` on all of them, timestamps never, stop at `<|endoftext|>`, never past the cache.
+
+Text against `WhisperPipeline`, both on the NPU, no prompt, the 52 pieces of the 19 min LibriVox reading (2026-11-11):
+
+| Export | Identical pieces | Words differing |
+|---|---|---|
+| fp16 encoder + fp16 decoder | 52 / 52 | 0 / 3395 |
+| fp16 encoder + INT8 decoder | 42 / 52 | 3 / 3395 |
+| INT8 encoder + INT8 decoder | 39 / 52 | 7 / 3395 |
+
+So the server reads the fp16 export (`config.STEP_MODEL_DIR`). INT8's differences are mostly punctuation and capitals, but include "settled" read as "settle" and a dropped "is".
+
+**Timing is not measured yet.** Every NPU number from 2026-11-11, including the step timings above, was taken while vinoSearch was indexing on the same NPU, so they are upper bounds at best. Re-run them on a quiet NPU before deciding #179.

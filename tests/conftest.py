@@ -31,6 +31,8 @@ def no_real_cleanup_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "CLEANUP_FILE", tmp_path / "no-cleanup.json")
     monkeypatch.setattr(config, "CLEANUP_MODEL_DIR", tmp_path / "no-cleanup-model")
     monkeypatch.setattr(config, "CLEANUP_CACHE_DIR", tmp_path / "no-cleanup-cache")
+    monkeypatch.setattr(config, "STEP_MODEL_DIR", tmp_path / "no-step-model")
+    monkeypatch.setattr(config, "MULTILINGUAL_STEP_MODEL_DIR", tmp_path / "no-step-model-ml")
     for name in list(os.environ):
         if name.startswith("VINOWHISPER_CLEANUP"):
             monkeypatch.delenv(name)

@@ -1,0 +1,124 @@
+{
+ "source": "openai/whisper-small.en@e8727524f962, transformers 5.22.2",
+ "cases": [
+  {
+   "text": " Karan, OpenVINO, Wildcat Lake, Plasma",
+   "ids": [
+    9375,
+    272,
+    11,
+    4946,
+    53,
+    46016,
+    11,
+    6183,
+    9246,
+    6233,
+    11,
+    31226
+   ],
+   "decoded": " Karan, OpenVINO, Wildcat Lake, Plasma"
+  },
+  {
+   "text": " SmolLM3, vinoWhisper, NPU's, it's we'll",
+   "ids": [
+    2439,
+    349,
+    31288,
+    18,
+    11,
+    410,
+    2879,
+    1199,
+    271,
+    525,
+    11,
+    399,
+    5105,
+    338,
+    11,
+    340,
+    338,
+    356,
+    1183
+   ],
+   "decoded": " SmolLM3, vinoWhisper, NPU's, it's we'll"
+  },
+  {
+   "text": "Hello  world\n\ttabs  ",
+   "ids": [
+    15496,
+    220,
+    995,
+    198,
+    197,
+    8658,
+    82,
+    220,
+    220
+   ],
+   "decoded": "Hello  world\n\ttabs  "
+  },
+  {
+   "text": " naïve café — 12,345.67 ½ emoji 🎉 日本語",
+   "ids": [
+    41492,
+    40304,
+    851,
+    1105,
+    11,
+    27712,
+    13,
+    3134,
+    25208,
+    44805,
+    12520,
+    236,
+    231,
+    10545,
+    245,
+    98,
+    17312,
+    105,
+    45739,
+    252
+   ],
+   "decoded": " naïve café — 12,345.67 ½ emoji 🎉 日本語"
+  },
+  {
+   "text": " under_score, x86_64, C++, e-mail",
+   "ids": [
+    739,
+    62,
+    26675,
+    11,
+    2124,
+    4521,
+    62,
+    2414,
+    11,
+    327,
+    4880,
+    11,
+    304,
+    12,
+    4529
+   ],
+   "decoded": " under_score, x86_64, C++, e-mail"
+  },
+  {
+   "text": " 's 't don't  ",
+   "ids": [
+    705,
+    82,
+    705,
+    83,
+    836,
+    470,
+    220,
+    220
+   ],
+   "decoded": " 's 't don't  "
+  }
+ ]
+}
