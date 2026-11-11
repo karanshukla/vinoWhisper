@@ -134,16 +134,16 @@ def test_the_answer_stops_at_its_token_limit(tmp_path):
 @pytest.fixture
 def export(tmp_path, monkeypatch):
     """An export directory and a fake openvino whose decoder echoes its inputs."""
-    layers, heads, slots, dim = 2, 1, 8, 2
-    (tmp_path / "step_export.json").write_text(
-        json.dumps({"layers": layers, "heads": heads, "head_dim": dim, "cache_slots": slots})
-    )
+    layers, heads, slots, dim, prefill = 2, 1, 16, 2, 12
+    shape = {"layers": layers, "heads": heads, "head_dim": dim, "cache_slots": slots}
+    (tmp_path / "step_export.json").write_text(json.dumps({**shape, "prefill_tokens": prefill}))
+    (tmp_path / "prefill.xml").write_text("")
     generation(tmp_path)
     (tmp_path / "tokenizer.json").write_text((FIXTURES / "whisper_tokenizer_mini.json").read_text())
     filters = np.load(FIXTURES / "whisper_features.npz")["filters"].tolist()
     (tmp_path / "preprocessor_config.json").write_text(json.dumps({"mel_filters": filters}))
     kv = [f"{'kv'[j % 2]}{j // 2}" for j in range(2 * layers)]
-    seen = {"encoder": 0, "masks": [], "eos_at": 3}
+    seen = {"encoder": 0, "masks": [], "eos_at": 3, "prefills": 0, "prefill_fails": False}
 
     class Tensor:
         def __init__(self, array):
@@ -174,6 +174,33 @@ def export(tmp_path, monkeypatch):
             logits[...] = 0
             logits[0, EOS if position >= seen["eos_at"] else 500 + position] = 1.0
 
+    class Prefill:
+        """Answers as the step decoder would have, one position at a time."""
+
+        def __init__(self):
+            self.tensors = {
+                "ids": Tensor(np.zeros((1, prefill), np.int64)),
+                "pick": Tensor(np.zeros((1, prefill), np.float32)),
+                "logits": Tensor(np.zeros((1, NO_TS + 10), np.float32)),
+            }
+            for n in kv:
+                self.tensors[f"cross_{n}"] = Tensor(np.zeros((1, heads, 4, dim), np.float32))
+                self.tensors[f"new_{n}"] = Tensor(np.zeros((1, heads, prefill, dim), np.float32))
+
+        def get_tensor(self, name):
+            return self.tensors[name]
+
+        def infer(self):
+            seen["prefills"] += 1
+            assert (self.tensors["cross_k0"].data == 7.0).all()
+            for n in kv:
+                for slot in range(prefill):
+                    self.tensors[f"new_{n}"].data[:, :, slot] = slot + 1
+            last = int(self.tensors["pick"].data[0].argmax())
+            logits = self.tensors["logits"].data
+            logits[...] = 0
+            logits[0, EOS if last >= seen["eos_at"] else 500 + last] = 1.0
+
     class Encoder:
         def infer(self, inputs):
             assert inputs["mel"].shape == (1, 80, 3000)
@@ -185,11 +212,15 @@ def export(tmp_path, monkeypatch):
             self.path = path
 
         def create_infer_request(self):
-            return Encoder() if self.path.endswith("encoder.xml") else Decoder()
+            if self.path.endswith("encoder.xml"):
+                return Encoder()
+            return Prefill() if self.path.endswith("prefill.xml") else Decoder()
 
     class Core:
         def compile_model(self, path, device):
             seen["device"] = device
+            if path.endswith("prefill.xml") and seen["prefill_fails"]:
+                raise RuntimeError("Compilation failed.\nFeasibleAllocation Pass failed")
             return Compiled(path)
 
     openvino = ModuleType("openvino")
@@ -206,7 +237,7 @@ def test_the_loop_writes_each_step_into_the_cache_and_opens_the_mask(export):
     assert seen["device"] == "NPU" and seen["encoder"] == 1
     past = step._past[0]
     # Position p holds what the decoder returned at p (p + 1 here); the rest is empty.
-    assert [float(past[0, 0, p, 0]) for p in range(slots)] == [1, 2, 3, 4, 0, 0, 0, 0]
+    assert [float(past[0, 0, p, 0]) for p in range(slots)] == [1, 2, 3, 4] + [0] * (slots - 4)
     # Each step sees the slots already filled and its own one, never a later one.
     first, third = seen["masks"][0][0, 0, 0], seen["masks"][2][0, 0, 0]
     assert (first[:slots] < 0).all() and first[slots] == 0
@@ -242,3 +273,41 @@ def test_an_answer_never_runs_past_the_cache(export):
 
 def test_a_directory_is_an_export_only_with_every_file():
     assert not whisper_step.exported(FIXTURES)
+
+
+LONG_PROMPT = [PREV, 11, 12, 13, 14, 15, 16, 17, SOT, NO_TS]
+
+
+def test_a_long_prompt_is_prefilled_in_one_call_with_the_same_answer(export):
+    path, seen, slots = export
+    seen["eos_at"] = 12
+    step = whisper_step.StepWhisper(path, "NPU")
+    audio = np.zeros(16000, np.float32)
+    fast = step.decode(audio, LONG_PROMPT, 10)
+    fast_cache = step._past[0].copy()
+    steps_with_prefill = len(seen["masks"])
+
+    step._prefill = None
+    slow = step.decode(audio, LONG_PROMPT, 10)
+    assert fast == slow == [509, 510, 511]
+    np.testing.assert_array_equal(fast_cache, step._past[0])
+    assert seen["prefills"] == 1
+    # The ten prompt tokens took one prefill call instead of ten decoder steps.
+    assert len(seen["masks"]) - steps_with_prefill == steps_with_prefill + len(LONG_PROMPT)
+
+
+def test_the_start_tokens_alone_are_not_worth_a_prefill(export):
+    path, seen, _ = export
+    whisper_step.StepWhisper(path, "NPU").decode(np.zeros(16000, np.float32), [SOT, NO_TS], 5)
+    assert seen["prefills"] == 0
+
+
+def test_a_prefill_that_does_not_compile_falls_back_to_steps(export, capsys):
+    """Measured 2026-11-11: the first prefill export (an int64 index) failed the NPU
+    compiler's FeasibleAllocation pass. Dictation should get slower, not lose the prompt."""
+    path, seen, _ = export
+    seen["prefill_fails"] = True
+    seen["eos_at"] = 12
+    step = whisper_step.StepWhisper(path, "NPU")
+    assert step.decode(np.zeros(16000, np.float32), LONG_PROMPT, 10) == [509, 510, 511]
+    assert "token by token: FeasibleAllocation Pass failed" in capsys.readouterr().err
