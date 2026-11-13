@@ -448,7 +448,7 @@ file". The choices that answer the issue's open questions:
   (`vad.py`, pinned in `vad_model.json`), scaled by 1e-4 rather than zeroed (zero ties
   every pause and shrank pieces, dropping 33 words on the reading), and 3.1 s without
   speech ends a piece. Whisper's segment timestamps were tried first and rejected:
-  +64% time and 6.9% to 8.6% WER on the NPU. Files only; captions still break on RMS.
+  +64% time and 6.9% to 8.6% WER on the NPU. Captions gate on it too since 2026-11-13 (`caption.SpeechGate`, docs/audio.md "Sound that is not speech"): noise and music, not mumbling.
 - 2026-11-11: the detector is built inside `transcribe_file`, after the file and server
   checks; its "off" warning rides `Ready.warnings`; an inference error mid-file drops it
   for the rest of the file. Both are also `Warning` records in `--json`, which the

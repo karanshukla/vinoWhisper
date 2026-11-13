@@ -138,7 +138,10 @@ class RichRenderer:
             self._rms = event.rms
             self._silent_for = event.elapsed_s
             self._muted = bool(event.sink_muted)
-            self._state = ("MUTED", "red") if self._muted else ("no signal", "red")
+            if event.no_speech:
+                self._state = ("no speech", "yellow")
+            else:
+                self._state = ("MUTED", "red") if self._muted else ("no signal", "red")
             self._paragraphs.silence(event.elapsed_s)
         elif isinstance(event, events.Stopped):
             self._add_words(event.flushed)

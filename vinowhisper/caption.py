@@ -3,14 +3,28 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
 import requests
 
-from . import __version__, audio, bundle, capture, config, events, playing, session, style, summary
+from . import (
+    __version__,
+    audio,
+    bundle,
+    capture,
+    config,
+    events,
+    playing,
+    session,
+    style,
+    summary,
+    vad,
+)
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
@@ -45,19 +59,103 @@ def stall_window_s(window_s: float, stalled_for_s: float, task: str) -> float:
     return min(window_s, config.STALL_WINDOW_S)
 
 
+class SpeechGate:
+    def __init__(self, detect: Callable[[np.ndarray], float]) -> None:
+        self._detect: Callable[[np.ndarray], float] | None = detect
+        self._lock = threading.Lock()
+        self._chunks: deque[tuple[int, bool]] = deque()
+        self._held = 0
+        self._capacity = int(config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ)
+
+    @property
+    def active(self) -> bool:
+        return self._detect is not None
+
+    # Runs on the capture thread, once per chunk, in step with the ring buffer.
+    def tap(self, chunk: np.ndarray) -> None:
+        detect = self._detect
+        if detect is None:
+            return
+        try:
+            speech = detect(chunk) >= vad.SPEECH_PROBABILITY
+        except Exception:  # noqa: BLE001 — captions go on, decoding every sound as before
+            self._detect = None
+            return
+        with self._lock:
+            self._chunks.append((chunk.size, speech))
+            self._held += chunk.size
+            while self._chunks and self._held - self._chunks[0][0] >= self._capacity:
+                self._held -= self._chunks.popleft()[0]
+
+    # None when the window holds too little speech to decode; otherwise the window with
+    # everything away from speech scaled to near silence, so Whisper never hears it.
+    def apply(self, window: np.ndarray) -> np.ndarray | None:
+        if self._detect is None:
+            return window
+        with self._lock:
+            chunks = list(self._chunks)
+        if not chunks:
+            return window
+        sizes = np.array([size for size, _ in chunks])
+        flags = np.array([speech for _, speech in chunks])
+        if int(sizes[flags].sum()) < config.CAPTION_MIN_SPEECH_S * config.SAMPLE_RATE_HZ:
+            return None
+        pad = max(1, round(config.TRIM_PAD_S * config.SAMPLE_RATE_HZ / int(sizes.max())))
+        near = np.convolve(flags.astype(np.int8), np.ones(2 * pad + 1, dtype=np.int8), "same") > 0
+        mask = np.repeat(near, sizes)
+        if mask.size >= window.size:
+            mask = mask[mask.size - window.size :]
+        else:
+            # Older than the detector's history: keep it, as before the gate existed.
+            mask = np.concatenate([np.ones(window.size - mask.size, dtype=bool), mask])
+        gated = window.astype(np.float32, copy=True)
+        gated[~mask] *= _NOT_SPEECH_SCALE
+        return gated
+
+
+_NOT_SPEECH_SCALE = 1e-4
+
+
+def speech_gate(warnings: list[str]) -> SpeechGate | None:
+    try:
+        return SpeechGate(vad.SpeechDetector(vad.model_path()))
+    except (vad.VadError, RuntimeError, ImportError, OSError) as exc:
+        warnings.append(f"speech detector unavailable ({exc}); captions decode any sound")
+        return None
+
+
+def _taps(
+    *taps: Callable[[np.ndarray], None] | None,
+) -> Callable[[np.ndarray], None] | None:
+    live = [tap for tap in taps if tap is not None]
+    if not live:
+        return None
+    if len(live) == 1:
+        return live[0]
+
+    def both(chunk: np.ndarray) -> None:
+        for tap in live:
+            tap(chunk)
+
+    return both
+
+
 def caption_events(
     source: str,
     target: str | None,
     window_s: float,
     tap: Callable[[np.ndarray], None] | None = None,
+    gate: Callable[[list[str]], SpeechGate | None] | None = None,
 ) -> Iterator[events.Event]:
     client = TranscriptionClient(language=True)
     health = client.wait_ready()
+    warnings = [str(warning) for warning in health.get("warnings", [])]
+    speech = gate(warnings) if gate is not None else None
     yield events.Ready(
         device=str(health.get("device", "?")),
         device_full=str(health.get("device_full_name", "")),
         degraded=bool(health.get("degraded", False)),
-        warnings=[str(warning) for warning in health.get("warnings", [])],
+        warnings=warnings,
         server_version=str(health.get("version", "")),
         language=str(health.get("language", "")),
         task=str(health.get("task", "")),
@@ -73,7 +171,9 @@ def caption_events(
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
-        with Recorder(source=source, target=target, tap=tap) as recorder:
+        with Recorder(
+            source=source, target=target, tap=_taps(speech.tap if speech else None, tap)
+        ) as recorder:
             while True:
                 recorder.check_alive()
 
@@ -94,15 +194,26 @@ def caption_events(
                 last_cycle_at_s = recorder.captured_s
 
                 level = audio.rms(window)
-                if level < config.SILENCE_RMS_THRESHOLD:
+                gated: np.ndarray | None = window
+                if speech is not None and level >= config.SILENCE_RMS_THRESHOLD:
+                    gated = speech.apply(window)
+                if gated is None or level < config.SILENCE_RMS_THRESHOLD:
                     now = time.monotonic()
                     silent_since = now if silent_since is None else silent_since
                     last_commit_at_s = last_cycle_at_s
                     elapsed_s = now - silent_since
-                    muted = sink_muted() if elapsed_s >= _SILENCE_NOTICE_AFTER_S else None
-                    yield events.Silence(elapsed_s=elapsed_s, rms=level, sink_muted=muted)
+                    no_speech = gated is None
+                    muted = (
+                        sink_muted()
+                        if elapsed_s >= _SILENCE_NOTICE_AFTER_S and not no_speech
+                        else None
+                    )
+                    yield events.Silence(
+                        elapsed_s=elapsed_s, rms=level, sink_muted=muted, no_speech=no_speech
+                    )
                     continue
                 silent_since = None
+                window = gated
 
                 window, gain = audio.normalize(window, config.TARGET_RMS, config.MAX_GAIN)
 
@@ -165,7 +276,11 @@ class TerminalRenderer:
                 print(self._debug_line(event), file=sys.stderr)
             self._emit(event.confirmed)
         elif isinstance(event, events.Silence):
-            if event.elapsed_s >= _SILENCE_NOTICE_AFTER_S and not self._silence_reported:
+            if (
+                event.elapsed_s >= _SILENCE_NOTICE_AFTER_S
+                and not event.no_speech
+                and not self._silence_reported
+            ):
                 muted = _MUTED_LINE if event.sink_muted else ""
                 print(
                     _SILENCE_NOTICE.format(seconds=event.elapsed_s, muted=muted),
@@ -288,6 +403,12 @@ def _parse_args() -> argparse.Namespace:
         help="One JSON object per event on stdout instead of text: what "
         "vinowhisper-tray reads. Human-readable messages stay on stderr.",
     )
+    parser.add_argument(
+        "--no-speech-gate",
+        action="store_true",
+        help="Decode every sound above the silence level, not only what the speech "
+        "detector hears as someone talking. Mumbling and noise then get captioned too.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     return parser.parse_args()
 
@@ -362,6 +483,7 @@ def main() -> int:
             target=args.target,
             window_s=args.window,
             tap=writer.audio_chunk if writer else None,
+            gate=None if args.no_speech_gate else speech_gate,
         )
         with json_out or _renderer(plain, debug=args.debug) as renderer:
             for event in stream:
