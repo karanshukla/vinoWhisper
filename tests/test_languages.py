@@ -7,9 +7,13 @@ of that touched an NPU, and the NPU export of the multilingual model has never
 been built, so the pins in model_digests.json do not cover it yet.
 """
 
+import sys
+from types import ModuleType, SimpleNamespace
+
+import numpy as np
 import pytest
 
-from vinowhisper import config, doctor, integrity, wizard
+from vinowhisper import config, devices, doctor, integrity, wizard
 from vinowhisper import source as model_source
 from vinowhisper.transcriber import WhisperTranscriber
 
@@ -79,6 +83,41 @@ def test_the_transcriber_loads_the_multilingual_export_and_names_it_when_missing
     message = str(excinfo.value)
     assert "no stateful model export" in message
     assert config.export_command("stateful", multilingual=True) in message
+
+
+@pytest.mark.parametrize(
+    "language, expected", [("auto", "de"), ("fr", ""), (config.DEFAULT_LANGUAGE, "")]
+)
+def test_only_auto_mode_reports_the_language_whisper_heard(
+    monkeypatch, tmp_path, language, expected
+):
+    """Measured 2026-11-13 on the NPU (StaticWhisperPipeline, OpenVINO GenAI 2026.4.1):
+    result.language is the bare code ("de"), with or without a streamer, and under
+    translate too. A forced language comes back as itself, so it says nothing."""
+
+    class Pipeline:
+        def __init__(self, model_dir, device, **kwargs):
+            pass
+
+        def generate(self, samples, streamer, **kwargs):
+            streamer("Guten Tag")
+            return SimpleNamespace(language="de" if language == "auto" else language)
+
+    genai = ModuleType("openvino_genai")
+    genai.WhisperPipeline = Pipeline
+    monkeypatch.setitem(sys.modules, "openvino_genai", genai)
+    monkeypatch.setattr(config, "FAILED_DEVICES_FILE", tmp_path / "failed-devices.json")
+    monkeypatch.setattr(config, "model_dir", lambda kind, multilingual: tmp_path)
+    monkeypatch.setattr(WhisperTranscriber, "_check_export", lambda self, kind, model_dir: None)
+    monkeypatch.setattr(devices, "available", lambda: [devices.Device("CPU", "CPU")])
+    transcriber = WhisperTranscriber(language=language)
+    transcriber.select_device()
+    transcriber.load()
+
+    heard: list[str] = []
+    samples = np.zeros(config.SAMPLE_RATE_HZ, dtype=np.float32)
+    assert "".join(transcriber.transcribe_stream(samples, heard=heard.append)) == "Guten Tag"
+    assert heard == ([expected] if expected else [])
 
 
 def test_describe_reports_the_language_and_task():

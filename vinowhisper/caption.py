@@ -51,7 +51,7 @@ def caption_events(
     window_s: float,
     tap: Callable[[np.ndarray], None] | None = None,
 ) -> Iterator[events.Event]:
-    client = TranscriptionClient()
+    client = TranscriptionClient(language=True)
     health = client.wait_ready()
     yield events.Ready(
         device=str(health.get("device", "?")),
@@ -69,6 +69,7 @@ def caption_events(
     last_cycle_at_s = 0.0
     last_commit_at_s = 0.0
     silent_since: float | None = None
+    heard = last_heard = ""
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
@@ -109,6 +110,9 @@ def caption_events(
                 transcript, first_piece_s = client.transcribe(window)
                 total_s = time.monotonic() - started_at
                 transcript = strip_controls(transcript)
+                if client.heard_language and client.heard_language == last_heard:
+                    heard = client.heard_language
+                last_heard = client.heard_language
 
                 confirmed = stitcher.push(transcript)
                 if confirmed:
@@ -126,6 +130,7 @@ def caption_events(
                     transcript=transcript,
                     confirmed=confirmed,
                     pending=stitcher.pending,
+                    language=heard,
                 )
     except KeyboardInterrupt:
         pass

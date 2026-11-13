@@ -1,4 +1,5 @@
 import argparse
+import collections
 import hashlib
 import json
 import shutil
@@ -42,6 +43,8 @@ class TranscribeError(Exception):
 
 
 class _Client(Protocol):
+    heard_language: str
+
     def wait_ready(self) -> dict: ...
     def transcribe(
         self, samples: np.ndarray, background: bool = False
@@ -443,6 +446,7 @@ def transcribe_file(
         segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
     decoded_s = 0.0
     working_since = time.monotonic()
+    heard: collections.Counter[str] = collections.Counter()
 
     def decode(pieces: list[Piece]) -> None:
         nonlocal decoded_s
@@ -450,7 +454,10 @@ def transcribe_file(
             if piece.samples.size:
                 samples, _ = audio.normalize(piece.samples, config.TARGET_RMS, config.MAX_GAIN)
                 text = _decode_piece(client, samples, health)
-                transcript.piece(piece, clean(text).split())
+                words = clean(text).split()
+                if client.heard_language:
+                    heard[client.heard_language] += len(words)
+                transcript.piece(piece, words)
                 _pace(segmenter, client)
             decoded_s = piece.end_s
             emit(
@@ -485,6 +492,7 @@ def transcribe_file(
         None if device == "?" else device,
         model_id_for(health),
         file={"name": path.name, "sha256": digest, "bytes": size},
+        heard_language=heard.most_common(1)[0][0] if heard else None,
     )
     target = _free_bundle_path(directory or config.TRANSCRIPT_DIR, started)
     bundle.write(bundle.Bundle(target, transcript.text(), attestation))
@@ -589,7 +597,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         saved = transcribe_file(
             path,
-            TranscriptionClient(),
+            TranscriptionClient(language=True),
             emit,
             directory=directory,
             model=args.model,

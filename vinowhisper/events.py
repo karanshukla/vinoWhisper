@@ -26,6 +26,8 @@ class Cycle:
     transcript: str
     confirmed: list[str] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)
+    # Auto mode only: what two windows in a row heard, so the label does not flicker.
+    language: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,9 +45,11 @@ class Stopped:
 Event = Ready | Cycle | Silence | Stopped
 
 
-def speech_label(language: str, task: str) -> str:
+def speech_label(language: str, task: str, heard: str = "") -> str:
     if not language:
         return ""
+    if heard:
+        language = f"{language}: {heard}"
     return f"{language} → en" if task == "translate" else language
 
 

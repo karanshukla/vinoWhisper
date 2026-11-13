@@ -97,10 +97,15 @@ class BaseTranscriber:
 
     def _generate(
         self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
-    ) -> None:
+    ) -> str:
         raise NotImplementedError
 
-    def transcribe_stream(self, samples: np.ndarray, biased: bool = False) -> Iterator[str]:
+    def transcribe_stream(
+        self,
+        samples: np.ndarray,
+        biased: bool = False,
+        heard: Callable[[str], None] | None = None,
+    ) -> Iterator[str]:
         if self.selection is None:
             raise RuntimeError("call load() before transcribe_stream()")
 
@@ -117,8 +122,9 @@ class BaseTranscriber:
             try:
                 with self._lock:
                     lost = ""
+                    language = ""
                     try:
-                        self._generate(samples, streamer, biased)
+                        language = self._generate(samples, streamer, biased)
                     except RuntimeError as exc:
                         if not failures.is_device_lost(exc):
                             raise
@@ -137,7 +143,9 @@ class BaseTranscriber:
                     # memory (and on the device) through the reload.
                     if lost:
                         self._reload_after_reset(lost)
-                        self._generate(samples, streamer, biased)
+                        language = self._generate(samples, streamer, biased)
+                if language and heard is not None:
+                    heard(language)
             except Exception as exc:  # noqa: BLE001 — re-raised in the consumer below
                 pieces.put(exc)
             finally:
@@ -327,7 +335,7 @@ class WhisperTranscriber(BaseTranscriber):
 
     def _generate(
         self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
-    ) -> None:
+    ) -> str:
         if self._pipeline is None:
             self.load()
         pipeline = self._pipeline
@@ -337,8 +345,8 @@ class WhisperTranscriber(BaseTranscriber):
         limit = config.max_new_tokens(samples.size / config.SAMPLE_RATE_HZ, self.multilingual)
         hotwords = self.hotwords() if biased else None
         if hotwords is None:
-            pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
-            return
+            result = pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
+            return self._detected(result)
         heard: list[str] = []
 
         def collect(piece: str) -> bool:
@@ -355,7 +363,7 @@ class WhisperTranscriber(BaseTranscriber):
             )
         elif self.selection and self.selection.kind == "NPU":
             pipeline.generate(samples, streamer=streamer, max_new_tokens=limit, **options)  # type: ignore[attr-defined]
-            return
+            return ""
         else:
             pipeline.generate(  # type: ignore[attr-defined]
                 samples,
@@ -375,3 +383,10 @@ class WhisperTranscriber(BaseTranscriber):
             if looped or vocabulary.echoes(biased_text, "".join(heard)):
                 text = "".join(heard)
         streamer(text)
+        return ""
+
+    def _detected(self, result: object) -> str:
+        # A forced language comes back as itself, so only auto mode says anything.
+        if not self.multilingual or self.language != config.AUTO_LANGUAGE:
+            return ""
+        return str(getattr(result, "language", "") or "")

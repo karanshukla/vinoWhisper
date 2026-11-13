@@ -19,11 +19,14 @@ class FakeTranscriber:
         self.raises = raises
         self.seen = None
         self.biased = None
+        self.language = ""
 
-    def transcribe_stream(self, samples, biased=False):
+    def transcribe_stream(self, samples, biased=False, heard=None):
         self.seen = samples
         self.biased = biased
         yield from self.words
+        if heard is not None and self.language:
+            heard(self.language)
         if self.raises is not None:
             raise self.raises
 
@@ -62,6 +65,16 @@ def test_only_a_request_that_asks_gets_the_vocabulary(client, fake):
     assert fake.biased is False
     client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Vocabulary": "1"}).get_data()
     assert fake.biased is True
+
+
+def test_the_language_heard_follows_the_text_only_when_asked(client, fake):
+    fake.language = "fr"
+    assert client.post("/transcribe", data=pcm(1)).get_data(as_text=True) == "ab"
+    asked = client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Language": "1"})
+    assert asked.get_data(as_text=True) == "ab\0fr"
+    fake.language = ""
+    quiet = client.post("/transcribe", data=pcm(1), headers={"X-Vinowhisper-Language": "1"})
+    assert quiet.get_data(as_text=True) == "ab"
 
 
 @pytest.mark.parametrize("body", [b"", b"\0" * 5, b"\0" * 7])

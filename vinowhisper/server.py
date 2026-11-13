@@ -12,7 +12,13 @@ from werkzeug.serving import make_server
 
 from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
 from .canary import CanaryTranscriber
-from .client import BACKGROUND, PRIORITY_HEADER, VOCABULARY_HEADER
+from .client import (
+    BACKGROUND,
+    LANGUAGE_HEADER,
+    LANGUAGE_MARK,
+    PRIORITY_HEADER,
+    VOCABULARY_HEADER,
+)
 from .transcriber import BaseTranscriber, WhisperTranscriber
 
 app = Flask(__name__)
@@ -78,9 +84,11 @@ def transcribe() -> Response:
 
     background = request.headers.get(PRIORITY_HEADER) == BACKGROUND
     biased = request.headers.get(VOCABULARY_HEADER) == "1"
-    stream = _track_in_flight(
-        transcriber.transcribe_stream(samples, biased), npu=True, live=not background
+    heard: list[str] = []
+    pieces = transcriber.transcribe_stream(
+        samples, biased, heard.append if request.headers.get(LANGUAGE_HEADER) == "1" else None
     )
+    stream = _track_in_flight(_then_language(pieces, heard), npu=True, live=not background)
     return Response(stream_with_context(stream), mimetype="text/plain; charset=utf-8")
 
 
@@ -197,6 +205,12 @@ def _wait_for_live(timeout_s: float) -> None:
             if _live_in_flight <= 0:
                 return
         time.sleep(0.05)
+
+
+def _then_language(pieces: Iterator[str], heard: list[str]) -> Iterator[str]:
+    yield from pieces
+    if heard:
+        yield LANGUAGE_MARK + heard[-1]
 
 
 def _track_in_flight(stream: Iterator[str], npu: bool = False, live: bool = True) -> Iterator[str]:

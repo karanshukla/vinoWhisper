@@ -223,15 +223,16 @@ class CanaryTranscriber(BaseTranscriber):
 
     def _generate(
         self, samples: np.ndarray, streamer: Callable[[str], bool], biased: bool = False
-    ) -> None:
+    ) -> str:
         if self._pipeline is None:
             self.load()
         pieces = chunks(np.asarray(samples, dtype=np.float32))
         for n, piece in enumerate(pieces):
             if n and streamer(" "):
-                return
+                break
             if self._decode(piece, streamer):
-                return
+                break
+        return ""
 
     def _decode(self, samples: np.ndarray, streamer: Callable[[str], bool]) -> bool:
         import openvino as ov

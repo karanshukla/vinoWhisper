@@ -1,4 +1,5 @@
 import argparse
+import collections
 import contextlib
 import fcntl
 import json
@@ -92,6 +93,7 @@ class TranscriptWriter:
         self._device = "?"
         self._language = ""
         self._task = ""
+        self._heard: collections.Counter[str] = collections.Counter()
         self._model = ""
         self._bundle_on_close = False
         self._breaker = ParagraphBreaker()
@@ -109,6 +111,8 @@ class TranscriptWriter:
             self._started_at = self._clock()
             self._started = self._now()
         elif isinstance(event, events.Cycle):
+            if event.language:
+                self._heard[event.language] += len(event.confirmed)
             self._words(event.confirmed)
         elif isinstance(event, events.Silence):
             self._breaker.silence(event.elapsed_s)
@@ -145,7 +149,12 @@ class TranscriptWriter:
                 device=None if self._device == "?" else self._device,
                 playing=self._tracker.entries() if self._tracker else None,
                 model_id=config.served_model_id(self._model, self._language, self._task),
+                heard_language=self._heard_most(),
             )
+
+    def _heard_most(self) -> str | None:
+        heard = (+self._heard).most_common(1)
+        return heard[0][0] if heard else None
 
     def _words(self, words: list[str]) -> None:
         if not words:

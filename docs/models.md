@@ -54,6 +54,8 @@ when needed. Uninstalling removes it.
 
 ## Detect automatically
 
+With Whisper, the overlay and the terminal status bar show what it heard: `auto: fr`, or `auto: fr → en` when translating ([#189](https://github.com/karanshukla/vinoWhisper/issues/189), 2026-11-13). Each 12 s window is detected on its own, so the label changes only when two windows in a row agree, and stays `auto` until they first do. The server sends the language only to a client that asks (`X-Vinowhisper-Language: 1`), after the text and a NUL, since OpenVINO GenAI reports it once `generate()` returns. On the NPU, `StaticWhisperPipeline` fills `WhisperDecodedResults.language` with the bare code, with a streamer and under translate (2026.4.1, espeak-ng fr, de, es and en, all four right through the server). A forced language comes back as itself, so only auto sends one. Dictation does not ask.
+
 Canary has no language detection, but it doesn't need one to translate into English. With the wrong source language named in its prompt, it translated the same way: French audio named as German, German named as French, and English named as French all came out right (2026-11-06, two windows each). Named as English, French audio leaked French words. So with Canary, Detect automatically always means translate into English, and the prompt names `config.CANARY_AUTO_SOURCE` (`fr`). Transcribing in the detected language stays Whisper-only.
 
 ## Exporting Canary

@@ -990,6 +990,14 @@ on the wrong audio makes Whisper answer in that language, not fail. The token
 cap has a x1.25 multilingual margin that is a guess (synthetic speech peaked at
 4.9 tok/s); measure it on real speech.
 
+**Detected language (#189, 2026-11-13).** In auto mode `result.language` comes back
+filled on the NPU static pipeline (bare code, with a streamer, under translate too;
+measured on 2026.4.1 with espeak-ng fr/de/es/en, and the multilingual NPU export is on
+this laptop now). It travels after the text and a `\0`, only to clients sending
+`X-Vinowhisper-Language: 1` (captions and file imports); `Cycle.language` changes only
+when two windows agree, and bundles gain `session.heard_language`. Not yet seen on
+screen with real speech.
+
 ## Known gotchas
 
 - **NPU static-pipeline requirement, three real bugs found getting there.**
