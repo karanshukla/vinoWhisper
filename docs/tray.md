@@ -65,7 +65,7 @@ on any distro's libc. A local `cargo build` is 6.3MB (5.6MB before dictation) an
 the 135 crates it pulls in are a build-time cost only.
 
 A distro package is not available yet. Fedora cannot package the Python side:
-its openvino is 2025.1.0, older than the 2026.3.1 floor, and openvino-genai
+its openvino is 2025.1.0, older than the 2026.4.1 floor, and openvino-genai
 and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
 is planned. `vinowhisper-tray --export-desktop DIR` writes both desktop entries
 and the icons for a packager, with the launcher naming the `vinowhisper-tray` command

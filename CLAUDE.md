@@ -227,7 +227,7 @@ icon to bring it up, a keyboard shortcut (customisable), simple to install,
   not (yet) COPR.** Both were user decisions on 2026-09-12. A Rust binary
   inside a Python wheel was rejected outright. COPR is deferred, not refused:
   Fedora 44 cannot carry the Python side at all (openvino 2025.1.0 against a
-  2026.3.1 floor, and no openvino-genai, openvino-tokenizers or optimum), and
+  2026.4.1 floor (2026.3.1 then), and no openvino-genai, openvino-tokenizers or optimum), and
   its Rust crates are too old (smithay-client-toolkit 0.19, no cosmic-text or
   ksni), so it would be an overlay-only package with vendored crates.
   `--export-desktop` and the wizard's /usr/bin handling are the hooks left for

@@ -123,8 +123,13 @@ each distro's documentation, and the detection is covered by tests only.
 
 ## The OpenVINO version floor
 
-`openvino>=2026.3.1`, and the floor is exact rather than cautious: 2026.3.1 is
-the first *stable* release that can build the NPU static Whisper pipeline.
+`openvino>=2026.4.1`. 2026.3.1 is the first *stable* release that can build
+the NPU static Whisper pipeline, and was the floor until 1.6.1. The floor is now
+2026.4.1 because vinoSpeak and vinoPop pin exactly that release, and every
+process on one NPU should run the same OpenVINO (an NPU fault resets the device
+for all of them). 2026.4.1 also hardens the NPU's import of compiled blobs
+against malformed or forged cache files. It is a floor rather than a pin, so a
+later release still resolves; bump the other apps in step when it does.
 
 From 2026-08-03 to 2026-08-31 this project pinned nightly wheels from
 `storage.openvinotoolkit.org`, with prereleases allowed globally, because

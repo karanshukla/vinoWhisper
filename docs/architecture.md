@@ -98,7 +98,7 @@ switching would cost more than it buys:
   OpenVINO execution provider reaches the same compiler with that work moved
   into this repo.
 - Intel's `onnxruntime-openvino` bundles its own OpenVINO, 2025.4.1 as of
-  2026-09-28, and this project's floor is 2026.3.1.
+  2026-09-28, and this project's floor is 2026.4.1.
 - Both end in the same NPU plugin and compiler, so there is no speed to gain.
 
 ONNX Runtime would be a candidate only as the non-Intel backend, where

@@ -2042,9 +2042,9 @@ dev = [
 requires-dist = [
     { name = "flask" },
     { name = "numpy" },
-    { name = "openvino", specifier = ">=2026.3.1" },
-    { name = "openvino-genai", specifier = ">=2026.3.1.0" },
-    { name = "openvino-tokenizers", specifier = ">=2026.3.1.0" },
+    { name = "openvino", specifier = ">=2026.4.1" },
+    { name = "openvino-genai", specifier = ">=2026.4.1.0" },
+    { name = "openvino-tokenizers", specifier = ">=2026.4.1.0" },
     { name = "optimum", extras = ["openvino"], marker = "extra == 'export'" },
     { name = "requests" },
     { name = "rich" },
