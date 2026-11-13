@@ -10,6 +10,12 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-13
+
+### 🐛 Bug Fixes
+
+- **OpenVINO 2026.4.1 is now the minimum** (was 2026.3.1), for openvino, openvino-genai and openvino-tokenizers. vinoSpeak and vinoPop pin exactly that release, and apps sharing the NPU should run the same OpenVINO. 2026.4.1 also hardens the NPU's import of compiled blobs against malformed cache files. Details in `docs/install.md`.
+
 ## [1.6.0] - 2026-11-11
 
 ### 🚀 Features
