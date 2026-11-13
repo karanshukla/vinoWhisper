@@ -233,7 +233,13 @@ main() {
         fi
         # A running server keeps the old code; the socket starts the new one.
         systemctl --user try-restart vinowhisper-server.service 2>/dev/null || true
-        say "Updated to ${wheel%-py3-none-any.whl}. Restart the tray and settings window to use it."
+        # The tray's dictation child holds the old Python even when the binary is unchanged.
+        if [ -x "$BIN/vinowhisper-tray" ] && "$BIN/vinowhisper-tray" --help 2>/dev/null | grep -q '^  restart '; then
+            "$BIN/vinowhisper-tray" restart || true
+            say "Updated to ${wheel%-py3-none-any.whl}. Reopen the settings window if it is open."
+        else
+            say "Updated to ${wheel%-py3-none-any.whl}. Restart the tray and settings window to use it."
+        fi
         return
     fi
 

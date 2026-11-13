@@ -199,6 +199,9 @@ main() {
                 "$HOME/.local/bin/vinowhisper-gui"
             # The shortcut portal needs the launcher entry
             run "$HOME/.local/bin/vinowhisper-tray" --install --autostart
+            # A running tray keeps the old binary, and its dictation child the old Python.
+            run "$HOME/.local/bin/vinowhisper-tray" restart \
+                || warn "quit vinowhisper-tray from its menu and start it again to use this version"
         else
             warn "--gui needs a Rust toolchain (cargo), which is not installed:"
             warn "  https://rustup.rs, or your distro's rust/cargo package, then re-run with --gui"
@@ -221,6 +224,9 @@ main() {
         run uv tool uninstall vinowhisper
     fi
     run rm -f "${XDG_BIN_HOME:-$HOME/.local/bin}/vinowhisper-upgrade"
+
+    # A running server keeps the old code; the socket starts the new one.
+    run systemctl --user try-restart vinowhisper-server.service 2>/dev/null || true
 
     say "Handing over to vinowhisper-setup"
     run uv run --project "$INSTALL_DIR" vinowhisper-setup "${SETUP_ARGS[@]}"

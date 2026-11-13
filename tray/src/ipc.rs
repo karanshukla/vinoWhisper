@@ -122,19 +122,36 @@ pub fn send(request: Request) -> Result<String, SendError> {
     send_to(&socket_path().map_err(SendError::Io)?, request)
 }
 
+// Which process answers: an installer replacing the binary restarts it.
+pub fn running_pid() -> Result<rustix::process::Pid, SendError> {
+    let stream = connect(&socket_path().map_err(SendError::Io)?)?;
+    let pid = rustix::net::sockopt::socket_peercred(&stream)
+        .map_err(|err| SendError::Io(err.into()))?
+        .pid;
+    exchange(stream, Request::Ping)?;
+    Ok(pid)
+}
+
 fn send_to(path: &Path, request: Request) -> Result<String, SendError> {
-    let mut stream = match UnixStream::connect(path) {
-        Ok(stream) => stream,
+    exchange(connect(path)?, request)
+}
+
+fn connect(path: &Path) -> Result<UnixStream, SendError> {
+    match UnixStream::connect(path) {
+        Ok(stream) => Ok(stream),
         Err(err)
             if matches!(
                 err.kind(),
                 io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
             ) =>
         {
-            return Err(SendError::NotRunning);
+            Err(SendError::NotRunning)
         }
-        Err(err) => return Err(SendError::Io(err)),
-    };
+        Err(err) => Err(SendError::Io(err)),
+    }
+}
+
+fn exchange(mut stream: UnixStream, request: Request) -> Result<String, SendError> {
     stream
         .set_read_timeout(Some(TIMEOUT))
         .map_err(SendError::Io)?;
