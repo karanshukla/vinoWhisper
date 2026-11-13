@@ -298,6 +298,8 @@ def max_new_tokens(duration_s: float, multilingual: bool = False) -> int:
 
 
 SILENCE_RMS_THRESHOLD = 0.002
+# Less speech than this in a caption window, by the speech detector, and it is not decoded.
+CAPTION_MIN_SPEECH_S = 0.3
 
 NOISE_FLOOR_MARGIN = 2.0
 NOISE_FLOOR_MAX_RMS = 0.05

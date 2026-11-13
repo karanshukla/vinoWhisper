@@ -35,6 +35,8 @@ class Silence:
     elapsed_s: float
     rms: float
     sink_muted: bool | None
+    # Sound, but the speech detector heard nobody talking in it.
+    no_speech: bool = False
 
 
 @dataclass(frozen=True)

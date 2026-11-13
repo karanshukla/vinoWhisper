@@ -104,3 +104,28 @@ dropped.
 Some silence is normal, so the terminal only prints its "no signal" notice
 after 45 seconds of it. That much, while someone expects captions, is a
 symptom, and the notice points at the causes above.
+
+## Sound that is not speech (2026-11-13)
+
+Whisper writes words for whatever it is given, and the level gate passes anything
+louder than dead air, which the 20x gain then brings up to speech level. So since
+2026-11-13 the caption loop runs every captured chunk through Silero VAD (the same
+pinned model as file imports, `vad.py`) on the capture thread, and before each decode:
+
+- a window with under `config.CAPTION_MIN_SPEECH_S` (0.3s) of speech is not sent;
+  it is a `Silence` event with `no_speech` set, shown as "no speech" rather than "no
+  signal", and the 45-second dead-capture notice does not fire for it;
+- anything further than `TRIM_PAD_S` from speech is scaled by 1e-4 before the gain,
+  so a music bed or a hum between two sentences never reaches Whisper.
+
+`--no-speech-gate` turns it off. If the detector cannot load, `Ready.warnings` says so
+and captions decode every sound, as before.
+
+**It does not stop mumbling.** Silero detects a voice, not words. Measured on espeak-ng
+speech (2026-11-13): reversed speech and speech low-passed with a 30 to 120 tap filter
+all score a median 1.00, the same as clear speech, at either 0.5 or 0.8, while noise and
+a 120 Hz hum score 0. What would catch mumbling is Whisper's own confidence
+(`no_speech_prob` and the average log-probability), which the NPU static pipeline does
+not return; our own decode loop (`whisper_step.py`) has the logits. Auto language with
+translate makes it worse, since it forces English sentences out of a guessed language.
+Unit tests only; not yet run in a live caption session.
