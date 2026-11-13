@@ -70,6 +70,8 @@ class RichRenderer:
 
         self._device = "?"
         self._speech = ""
+        self._language = ""
+        self._task = ""
         self._degraded = False
         self._device_warning = ""
         self._state = ("starting", "yellow")
@@ -115,6 +117,7 @@ class RichRenderer:
     def handle(self, event: events.Event) -> None:
         if isinstance(event, events.Ready):
             self._device = event.device
+            self._language, self._task = event.language, event.task
             self._speech = events.speech_label(event.language, event.task)
             self._degraded = event.degraded
             self._device_warning = event.warnings[0] if event.warnings else ""
@@ -128,6 +131,8 @@ class RichRenderer:
             self._cycle_s = event.total_s
             self._cycle_history.append(event.total_s)
             self._pending = event.pending
+            if event.language:
+                self._speech = events.speech_label(self._language, self._task, event.language)
             self._add_words(event.confirmed)
         elif isinstance(event, events.Silence):
             self._rms = event.rms

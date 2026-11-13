@@ -60,6 +60,8 @@ pub struct Captions {
     phase: Phase,
     started_at: Instant,
     device: Option<String>,
+    language: String,
+    task: String,
     speech: String,
     degraded: bool,
     warning: Option<String>,
@@ -83,6 +85,8 @@ impl Captions {
             phase: Phase::Starting,
             started_at: Instant::now(),
             device: None,
+            language: String::new(),
+            task: String::new(),
             speech: String::new(),
             degraded: false,
             warning: None,
@@ -139,7 +143,9 @@ impl Captions {
                 task,
             } => {
                 self.device = Some(device);
-                self.speech = speech_label(&language, &task);
+                self.speech = speech_label(&language, &task, "");
+                self.language = language;
+                self.task = task;
                 self.degraded = degraded;
                 self.warning = warnings.into_iter().next();
                 self.phase = Phase::Live;
@@ -148,8 +154,12 @@ impl Captions {
                 confirmed,
                 pending,
                 total_s,
+                language,
             } => {
                 self.phase = Phase::Live;
+                if !language.is_empty() {
+                    self.speech = speech_label(&self.language, &self.task, &language);
+                }
                 self.silent_for = None;
                 if self.cycles.len() == LAG_HISTORY {
                     self.cycles.pop_front();
@@ -319,11 +329,16 @@ impl Captions {
     }
 }
 
-fn speech_label(language: &str, task: &str) -> String {
-    match (language, task) {
-        ("", _) => String::new(),
-        (language, "translate") => format!("{language} → en"),
-        (language, _) => language.to_owned(),
+fn speech_label(language: &str, task: &str, heard: &str) -> String {
+    let language = match (language, heard) {
+        ("", _) => return String::new(),
+        (language, "") => language.to_owned(),
+        (language, heard) => format!("{language}: {heard}"),
+    };
+    if task == "translate" {
+        format!("{language} → en")
+    } else {
+        language
     }
 }
 
@@ -345,6 +360,7 @@ mod tests {
             confirmed: confirmed.iter().map(|w| w.to_string()).collect(),
             pending: pending.iter().map(|w| w.to_string()).collect(),
             total_s: 1.2,
+            language: String::new(),
         }
     }
 
@@ -481,6 +497,7 @@ mod tests {
                 confirmed: vec![],
                 pending: vec![],
                 total_s,
+                language: String::new(),
             });
         }
         assert_eq!(captions.lag_s(), Some(4.0));
@@ -532,6 +549,36 @@ mod tests {
         assert_eq!(status("fr", "transcribe"), "live · NPU · fr");
         assert_eq!(status("auto", "translate"), "live · NPU · auto → en");
         assert_eq!(status("", ""), "live · NPU");
+    }
+
+    #[test]
+    fn the_language_heard_in_auto_mode_replaces_the_bare_auto() {
+        let status = |task: &str, heard: &str| {
+            let mut captions = Captions::new();
+            captions.apply(Event::Ready {
+                device: "NPU".into(),
+                degraded: false,
+                warnings: vec![],
+                language: "auto".into(),
+                task: task.into(),
+            });
+            captions.apply(Event::Cycle {
+                confirmed: vec![],
+                pending: vec![],
+                total_s: 1.0,
+                language: heard.into(),
+            });
+            let text: String = captions
+                .status()
+                .1
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect();
+            text
+        };
+        assert!(status("transcribe", "fr").starts_with("live · NPU · auto: fr ·"));
+        assert!(status("translate", "de").starts_with("live · NPU · auto: de → en ·"));
+        assert!(status("translate", "").starts_with("live · NPU · auto → en ·"));
     }
 
     #[test]

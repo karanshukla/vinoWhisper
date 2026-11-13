@@ -203,6 +203,11 @@ A session made from a file has one more key, and its `source` is the file's name
 `file` is absent on a live session. It is an addition inside `session`, so the
 format stays `vinowhisper-session/1`.
 
+With the language on auto and Whisper as the model, a session, live or from a
+file, also records `"heard_language": "fr"`: the language most of its words were
+heard in, counted per word across windows (#189, 2026-11-13). It is absent when
+nothing was detected, which is every session not on auto.
+
 A live session of system audio also names what was sending it
 ([#156](https://github.com/karanshukla/vinoWhisper/issues/156), 2026-11-09), in the
 order first seen:

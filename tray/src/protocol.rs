@@ -20,6 +20,8 @@ pub enum Event {
         #[serde(default)]
         pending: Vec<String>,
         total_s: f64,
+        #[serde(default)]
+        language: String,
     },
     Silence {
         elapsed_s: f64,
@@ -116,6 +118,7 @@ mod tests {
                 confirmed: vec!["I".into(), "don’t".into()],
                 pending: vec!["think".into(), "so".into()],
                 total_s: 1.19,
+                language: String::new(),
             })
         );
     }

@@ -177,7 +177,7 @@ def _text(path):
     return path.read_text(encoding="utf-8")
 
 
-def _cycle(confirmed):
+def _cycle(confirmed, language=""):
     return events.Cycle(
         index=1,
         captured_s=1.0,
@@ -190,6 +190,7 @@ def _cycle(confirmed):
         transcript=" ".join(confirmed),
         confirmed=confirmed,
         pending=["not", "yet"],
+        language=language,
     )
 
 
@@ -351,6 +352,31 @@ def test_a_finished_session_becomes_a_bundle_with_its_provenance(tmp_path):
     assert entry["model"] == config.MODEL_ID
     assert entry["device"] == "NPU"
     assert len(entry["revision"]) == 40
+
+
+def test_an_auto_session_records_the_language_most_words_were_heard_in(tmp_path):
+    clock = _Clock()
+    writer = _transcript(tmp_path, clock)
+    writer.event(events.Ready(device="NPU", language="auto", task="transcribe"))
+    writer.event(_cycle(["Bonjour."]))
+    writer.event(_cycle(["Merci", "beaucoup."], language="fr"))
+    writer.event(_cycle(["Guten", "Tag,", "wie", "geht's?"], language="de"))
+    writer.event(_cycle(["Au", "revoir."], language="fr"))
+    writer.event(_cycle([], language="es"))
+    writer.event(events.Stopped(flushed=[]))
+
+    saved = bundle.read(writer.path).session
+    assert saved["language"] == "auto"
+    assert saved["heard_language"] == "fr"
+
+
+def test_a_session_where_nothing_was_detected_records_no_heard_language(tmp_path):
+    clock = _Clock()
+    writer = _transcript(tmp_path, clock)
+    writer.event(events.Ready(device="NPU", language="en", task="transcribe"))
+    writer.event(_cycle(["Hello."]))
+    writer.event(events.Stopped(flushed=[]))
+    assert "heard_language" not in bundle.read(writer.path).session
 
 
 def test_a_canary_session_is_attested_as_canary(tmp_path):

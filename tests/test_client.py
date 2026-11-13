@@ -42,6 +42,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.server.priorities.append(self.headers.get(client.PRIORITY_HEADER))
         self.server.vocabulary.append(self.headers.get(client.VOCABULARY_HEADER))
         text = f"{len(received)} bytes, café".encode()
+        if self.headers.get(client.LANGUAGE_HEADER) == "1":
+            text += b"\0fr"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Transfer-Encoding", "chunked")
@@ -105,6 +107,16 @@ def test_only_a_client_made_for_dictation_asks_for_the_vocabulary(server):
     TranscriptionClient().transcribe(samples)
     TranscriptionClient(vocabulary=True).transcribe(samples)
     assert server.vocabulary == [None, "1"]
+
+
+def test_a_caption_client_reads_the_language_heard_off_the_end_of_the_text(server):
+    samples = np.zeros(1600, dtype=np.float32)
+    plain = TranscriptionClient()
+    assert plain.transcribe(samples)[0] == "6400 bytes, café"
+    assert plain.heard_language == ""
+    asking = TranscriptionClient(language=True)
+    assert asking.transcribe(samples)[0] == "6400 bytes, café"
+    assert asking.heard_language == "fr"
 
 
 def test_an_explicit_socket_path_wins(server, monkeypatch):

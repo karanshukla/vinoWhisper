@@ -371,6 +371,7 @@ mod tests {
             confirmed: vec!["hello".into()],
             pending: vec![],
             total_s: 1.0,
+            language: String::new(),
         });
         painter_without_fonts().paint(&mut canvas, 1.0, TextSize::Medium, &captions);
 

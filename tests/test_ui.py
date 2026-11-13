@@ -170,6 +170,17 @@ def test_the_panel_names_the_language_and_whether_it_translates():
     assert "·" not in title("", "").splitlines()[0]
 
 
+def test_the_panel_names_the_language_heard_in_auto_mode():
+    renderer = RichRenderer(console=make_console())
+    renderer.handle(events.Ready(device="NPU", language="auto", task="translate"))
+    renderer.handle(cycle(["Bonjour."]))
+    assert "NPU · auto → en" in render_panel(renderer)
+    renderer.handle(cycle(["Merci."], language="fr"))
+    assert "NPU · auto: fr → en" in render_panel(renderer)
+    renderer.handle(cycle(["Danke."]))
+    assert "NPU · auto: fr → en" in render_panel(renderer), "a cycle without one keeps it"
+
+
 def test_a_degraded_device_is_impossible_to_miss():
     renderer = RichRenderer(console=make_console(width=100))
     renderer.handle(

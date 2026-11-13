@@ -149,7 +149,7 @@ def test_the_fields_the_gui_reads_are_on_the_wire(capsys):
     """
     reads = {
         "Ready": {"device", "degraded", "warnings", "language", "task"},
-        "Cycle": {"confirmed", "pending", "total_s"},
+        "Cycle": {"confirmed", "pending", "total_s", "language"},
         "Silence": {"elapsed_s", "sink_muted"},
         "Stopped": {"flushed"},
     }
@@ -209,6 +209,11 @@ class _OneCycleRecorder:
 
 
 class _HostileClient:
+    heard_language = ""
+
+    def __init__(self, **_kwargs):
+        pass
+
     def wait_ready(self):
         return {"device": "CPU"}
 
@@ -229,6 +234,8 @@ def test_the_speech_label_shows_the_language_and_translation():
     assert events.speech_label("fr", "transcribe") == "fr"
     assert events.speech_label("auto", "translate") == "auto → en"
     assert events.speech_label("", "translate") == ""
+    assert events.speech_label("auto", "transcribe", "fr") == "auto: fr"
+    assert events.speech_label("auto", "translate", "de") == "auto: de → en"
 
 
 def test_a_stalled_transcription_window_shrinks_and_translate_is_left_alone():
@@ -273,6 +280,11 @@ def _windows_asked_for(monkeypatch, task):
         return recorders[-1]
 
     class Client:
+        heard_language = ""
+
+        def __init__(self, **_kwargs):
+            pass
+
         def wait_ready(self):
             return {"device": "NPU", "task": task}
 
@@ -291,6 +303,33 @@ def test_nothing_committing_for_seconds_shrinks_the_window_the_loop_asks_for(mon
 
 def test_translate_keeps_the_full_window_while_stalled(monkeypatch):
     assert set(_windows_asked_for(monkeypatch, "translate")) == {12.0}
+
+
+def test_the_language_heard_changes_only_once_two_windows_in_a_row_agree(monkeypatch):
+    heard = iter(["fr", "de", "de", "", "fr", "fr"])
+    asked = {}
+
+    class Client:
+        heard_language = ""
+
+        def __init__(self, **kwargs):
+            asked.update(kwargs)
+
+        def wait_ready(self):
+            return {"device": "NPU", "language": "auto"}
+
+        def transcribe(self, samples):
+            self.heard_language = next(heard)
+            return "", 0.1
+
+    monkeypatch.setattr(caption, "Recorder", _AdvancingRecorder)
+    monkeypatch.setattr(caption, "TranscriptionClient", Client)
+    cycles = [
+        e for e in caption.caption_events("output", None, 12.0) if isinstance(e, events.Cycle)
+    ]
+
+    assert asked == {"language": True}
+    assert [c.language for c in cycles] == ["", "", "de", "de", "de", "fr"]
 
 
 def _scripted(monkeypatch, tmp_path, *flags):

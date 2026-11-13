@@ -50,8 +50,10 @@ def feed(segmenter: transcribe.Segmenter, samples: np.ndarray) -> list[transcrib
 
 
 class FakeClient:
-    def __init__(self, texts=None, health=None):
+    def __init__(self, texts=None, health=None, heard=None):
         self.texts = list(texts or [])
+        self.heard = list(heard or [])
+        self.heard_language = ""
         self.health = health or {"device": "NPU", "language": "en", "task": "transcribe"}
         self.seen: list[tuple[int, bool]] = []
 
@@ -60,6 +62,7 @@ class FakeClient:
 
     def transcribe(self, samples, background=False):
         self.seen.append((samples.size, background))
+        self.heard_language = self.heard.pop(0) if self.heard else ""
         index = len(self.seen)
         return (self.texts.pop(0) if self.texts else f"Piece {index} said this."), 0.1
 
@@ -207,6 +210,18 @@ def test_a_file_ffmpeg_cannot_read_says_why(tmp_path):
 # ── the session it writes ────────────────────────────────────────────────────
 
 
+def test_auto_mode_records_the_language_most_of_the_words_were_heard_in(tmp_path):
+    audio = np.concatenate([speech(20.0), pcm.silence(4.0), speech(20.0)])
+    path = write_wav(tmp_path / "interview.wav", audio)
+    health = {"device": "NPU", "language": "auto", "task": "transcribe"}
+    client = FakeClient(["Bonjour.", "Guten Tag, wie geht es Ihnen?"], health, ["fr", "de"])
+    saved, _ = run(path, client, tmp_path)
+
+    read = bundle.read(saved)
+    assert read.session["language"] == "auto"
+    assert read.session["heard_language"] == "de"
+
+
 def test_a_file_becomes_a_session_the_sessions_window_can_read(tmp_path):
     audio = np.concatenate([speech(20.0), pcm.silence(4.0), speech(20.0)])
     path = write_wav(tmp_path / "lecture one.wav", audio)
@@ -224,6 +239,7 @@ def test_a_file_becomes_a_session_the_sessions_window_can_read(tmp_path):
     assert read.session["duration_s"] == 44
     assert read.session["source"] == "lecture one.wav"
     assert read.session["language"] == "en" and read.session["task"] == "transcribe"
+    assert "heard_language" not in read.session
     assert read.session["file"] == {
         "name": "lecture one.wav",
         "sha256": bundle.sha256(path.read_bytes()),
@@ -559,7 +575,7 @@ def test_a_detector_that_is_off_is_a_warning_on_the_ready_record(tmp_path):
 @pytest.fixture
 def command(monkeypatch, tmp_path):
     client = FakeClient()
-    monkeypatch.setattr(transcribe, "TranscriptionClient", lambda: client)
+    monkeypatch.setattr(transcribe, "TranscriptionClient", lambda **_kwargs: client)
     monkeypatch.setattr(transcribe.shutil, "which", no_tools)
     monkeypatch.setattr(transcribe.vad, "detector", lambda say: None)
     kicked = []
