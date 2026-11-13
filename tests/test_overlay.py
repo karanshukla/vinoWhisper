@@ -180,6 +180,27 @@ def test_a_digest_mismatch_fails_setup(monkeypatch):
     assert outcome.ok is False
 
 
+def test_a_tray_is_restarted_only_when_setup_put_a_new_binary_in_place(monkeypatch):
+    """A running tray keeps the binary it started from, so a new one does
+    nothing until it restarts; a tray setup merely found is left running.
+    """
+    fresh = Path.home() / ".local/bin/vinowhisper-tray"
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        wizard.Wizard, "execute", lambda self, argv, env=None: ran.append(argv) or True
+    )
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: None)
+    monkeypatch.setattr(overlay, "availability", lambda component: _pin_for(b"pinned"))
+    monkeypatch.setattr(overlay, "fetch", lambda pin, dest, get=None: fresh)
+    wizard.Wizard(assume_yes=True).install_overlay()
+    assert [str(fresh), "restart"] in ran
+
+    ran.clear()
+    monkeypatch.setattr(overlay, "installed", lambda bin_dir, component=overlay.TRAY: fresh)
+    wizard.Wizard(assume_yes=True).install_overlay()
+    assert ran and [str(fresh), "restart"] not in ran
+
+
 def test_a_copy_in_home_gets_a_launcher_and_a_packaged_one_does_not(monkeypatch, capsys):
     """A distro package ships its own launcher in /usr/share; writing a
     second one into the home directory would only shadow it.

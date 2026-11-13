@@ -13,6 +13,7 @@ mod paint;
 mod paste;
 mod protocol;
 mod raster;
+mod restart;
 mod session;
 mod shortcut;
 mod summaries;
@@ -59,6 +60,9 @@ Commands go to the running instance, starting one if there is none:
   summaries-ready
               notify about finished session summaries (the server sends
               this itself)
+  restart     quit the running instance and start this binary in its
+              place, in the tray: installers run it after replacing the
+              binary. Starts nothing when none is running
 
 Options:
   --hidden          start in the tray, captions off (for autostart)
@@ -88,6 +92,7 @@ $XDG_CONFIG_HOME/vinowhisper/gui.json and language.json.";
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     command: Option<Request>,
+    restart: bool,
     hidden: bool,
     source: Option<Source>,
     caption: Option<PathBuf>,
@@ -131,8 +136,12 @@ impl Args {
                     return Err(format!("unknown option {option}"));
                 }
                 word => {
-                    if parsed.command.is_some() {
+                    if parsed.command.is_some() || parsed.restart {
                         return Err(format!("one command at a time, got a second: {word:?}"));
+                    }
+                    if word == "restart" {
+                        parsed.restart = true;
+                        continue;
                     }
                     let request = Request::parse(word).filter(|request| *request != Request::Ping);
                     parsed.command =
@@ -170,6 +179,9 @@ fn main() -> ExitCode {
     }
     if args.install || args.autostart || args.uninstall || args.export_desktop.is_some() {
         return run_install(&args);
+    }
+    if args.restart {
+        return run_restart();
     }
 
     let request = args.command.unwrap_or(if args.hidden {
@@ -226,6 +238,86 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_restart() -> ExitCode {
+    let pid = match ipc::running_pid() {
+        Ok(pid) => pid,
+        Err(ipc::SendError::NotRunning) => {
+            println!("vinowhisper-tray is not running; nothing to restart");
+            return ExitCode::SUCCESS;
+        }
+        Err(ipc::SendError::Refused(reason)) => {
+            eprintln!("vinowhisper-tray: {reason}");
+            return ExitCode::FAILURE;
+        }
+        Err(ipc::SendError::Io(err)) => {
+            eprintln!("vinowhisper-tray: could not reach the running instance: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Over ssh, or from a service: quitting would leave nothing that can start it again.
+    if std::env::var_os("WAYLAND_DISPLAY").is_none_or(|display| display.is_empty()) {
+        eprintln!(
+            "vinowhisper-tray: no Wayland session here, so the running tray was left alone; \
+             quit it from its menu and start it again to use this version"
+        );
+        return ExitCode::FAILURE;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(err) => {
+            eprintln!("vinowhisper-tray: cannot find this binary: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let old = restart::cmdline(pid).unwrap_or_default();
+    let relaunch = relaunch_args(old.get(1..).unwrap_or_default());
+
+    if let Err(err) = ipc::send(Request::Quit)
+        && !matches!(err, ipc::SendError::NotRunning)
+    {
+        eprintln!("vinowhisper-tray: could not stop the running instance: {err:?}");
+        return ExitCode::FAILURE;
+    }
+    if !restart::wait_until(restart::EXIT_WAIT, || restart::exited(pid)) {
+        eprintln!(
+            "vinowhisper-tray: the running instance (pid {}) has not exited after {}s; \
+             not starting another",
+            pid.as_raw_nonzero(),
+            restart::EXIT_WAIT.as_secs()
+        );
+        return ExitCode::FAILURE;
+    }
+    if let Err(err) = restart::spawn_detached(&exe, &relaunch) {
+        eprintln!("vinowhisper-tray: could not start {}: {err}", exe.display());
+        return ExitCode::FAILURE;
+    }
+    let started = restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok());
+    if !started {
+        eprintln!(
+            "vinowhisper-tray: started {} but it is not answering; run it by hand to see why",
+            exe.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    println!("restarted vinowhisper-tray, in the tray (captions are off until shown)");
+    ExitCode::SUCCESS
+}
+
+// What the running instance was started with, minus the command: the new one starts in the tray.
+fn relaunch_args(old: &[String]) -> Vec<String> {
+    let mut args = vec!["--hidden".to_owned()];
+    let Ok(old) = Args::parse(old.iter().cloned()) else {
+        return args;
+    };
+    if let Some(source) = old.source {
+        args.extend(["--source".to_owned(), source.as_arg().to_owned()]);
+    }
+    if let Some(caption) = old.caption {
+        args.extend(["--caption".to_owned(), caption.display().to_string()]);
+    }
+    args
 }
 
 fn run_install(args: &Args) -> ExitCode {
@@ -285,13 +377,40 @@ mod tests {
     }
 
     #[test]
+    fn restart_is_a_command_of_its_own() {
+        let args = parse(&["restart"]).unwrap();
+        assert!(args.restart && args.command.is_none());
+        assert!(parse(&["restart", "show"]).is_err());
+        assert!(parse(&["show", "restart"]).is_err());
+    }
+
+    #[test]
+    fn a_restart_keeps_the_source_and_caption_but_not_the_visibility() {
+        let old =
+            |args: &[&str]| relaunch_args(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+        assert_eq!(old(&["--hidden"]), ["--hidden"]);
+        assert_eq!(old(&["show"]), ["--hidden"]);
+        assert_eq!(
+            old(&["--source", "mic", "--caption", "/opt/vw/caption"]),
+            [
+                "--hidden",
+                "--source",
+                "mic",
+                "--caption",
+                "/opt/vw/caption"
+            ]
+        );
+        assert_eq!(old(&["--made-up"]), ["--hidden"]);
+    }
+
+    #[test]
     fn bad_input_is_refused_with_a_reason() {
         assert!(
             parse(&["--source", "speakers"])
                 .unwrap_err()
                 .contains("'output' or 'mic'")
         );
-        assert!(parse(&["restart"]).unwrap_err().contains("unknown command"));
+        assert!(parse(&["reboot"]).unwrap_err().contains("unknown command"));
         assert_eq!(
             parse(&["dictate-press"]).unwrap().command,
             Some(Request::DictatePress)

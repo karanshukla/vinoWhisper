@@ -1068,4 +1068,5 @@ prefixed `[caption]`.
 | "no global shortcut" in the log | No GlobalShortcuts portal (Sway, niri, COSMIC) or one that leaves the key to you (Hyprland). Bind the commands [in the compositor](#without-a-shortcuts-portal) |
 | Dictation: "On the clipboard, not typed" | The paste was refused or failed; the text is on the clipboard. After refusing the portal dialog, restart the overlay to be asked again |
 | Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every key and state change |
+| Old behaviour after an upgrade | The tray that was running is still the old binary, and its dictation child the old Python. `vinowhisper-tray restart` quits it and starts the installed one in the tray (captions off); the installers and `vinowhisper-setup` run it themselves since 1.6.2, and it refuses outside a Wayland session (over ssh) rather than leave no tray (2026-11-13) |
 | Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

@@ -440,6 +440,7 @@ class Wizard:
             # No wlr-layer-shell, so the tray exits at start and an autostart entry fails every login.
             return Outcome(None, "skipped on GNOME, which has no layer-shell (docs/tray.md)")
         path = overlay.installed(BIN_DIR)
+        replaced = path is None
         if path is not None:
             self.say(f"  Found {path}")
         else:
@@ -451,6 +452,9 @@ class Wizard:
         if path.is_relative_to(Path.home()):
             self.run([str(path), "--install"], "add a launcher entry for it?")
         self.run([str(path), "--autostart"], "start it in the tray at login?")
+        if replaced:
+            # A tray already running keeps the binary it started from.
+            self.run([str(path), "restart"], "restart a running tray so it uses this one?")
 
         settings = self._install_settings_window()
         summary = f"{path} (open it from the app menu, or run vinowhisper-tray)"
