@@ -90,6 +90,8 @@ struct SessionsWindow {
     focused: bool,
     listed_once: bool,
     kde_header: Option<theme::KdeHeader>,
+    // The window's buttons and edges are drawn here, not by the desktop (vino-ui's `window`).
+    app_title_bar: bool,
     text_scale: Option<f32>,
     export_dialog: Option<ExportDialog>,
     exporter: Exporter,
@@ -113,6 +115,7 @@ impl SessionsWindow {
             focused: true,
             listed_once: false,
             kde_header: None,
+            app_title_bar: false,
             text_scale: None,
             export_dialog: None,
             exporter: Arc::new(sessions::export_with_dialog),
@@ -1292,6 +1295,25 @@ impl SessionsWindow {
             .show_separator_line(false)
             .frame(widgets::header_frame(header, p))
             .show(ui, |ui| {
+                if self.app_title_bar {
+                    vino_ui::window::drag(ui, ui.clip_rect(), "header");
+                    // Up in the window's corner, as the settings window's bar puts them, rather
+                    // than in a row: the header's first row differs between the list and a
+                    // session, and the rows under it keep their inset.
+                    let window = ctx.content_rect();
+                    let gap = vino_ui::window::BAR_GAP;
+                    let width = vino_ui::window::controls_width();
+                    let corner = egui::Rect::from_min_size(
+                        egui::pos2(window.right() - gap - width, window.top() + gap),
+                        egui::vec2(width, vino_ui::window::BUTTON),
+                    );
+                    // A child that takes no room from the header's own rows.
+                    vino_ui::window::controls(
+                        &mut ui.new_child(egui::UiBuilder::new().max_rect(corner)),
+                    );
+                    // The header is the handle, so a press on a label drags the window.
+                    ui.style_mut().interaction.selectable_labels = false;
+                }
                 if viewing {
                     self.viewer_header(ui, &state, header);
                 } else {
@@ -1300,6 +1322,9 @@ impl SessionsWindow {
                         vino_ui::logo::whisper(ui, 24.0);
                         widgets::window_title(ui, "Saved sessions", header.text);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if self.app_title_bar {
+                                ui.add_space(controls_room(ui));
+                            }
                             if ui.add(Button::ghost("Settings")).clicked() {
                                 forward::open_settings("sessions");
                             }
@@ -1355,6 +1380,13 @@ impl SessionsWindow {
                 });
             });
     }
+}
+
+// The width the window's buttons take from the right end of the header's first row, past
+// `header_frame`'s 20 inset, with 12 between them and the row's last button.
+fn controls_room(ui: &egui::Ui) -> f32 {
+    let room = vino_ui::window::controls_width() + vino_ui::window::BAR_GAP + 12.0;
+    (room - 20.0 - ui.spacing().item_spacing.x).max(0.0)
 }
 
 // A time stamp as a small tinted pill, a link into the transcript.
@@ -1415,6 +1447,10 @@ fn section(ui: &mut egui::Ui, title: &str, n: usize) {
 }
 
 impl eframe::App for SessionsWindow {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        vino_ui::input::faster_touchpad(raw);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         let focused = ctx.input(|input| input.focused);
@@ -1433,6 +1469,9 @@ impl eframe::App for SessionsWindow {
         }
         self.follow_summaries(ctx);
         self.show(ui);
+        if self.app_title_bar {
+            vino_ui::window::edges(ui);
+        }
     }
 }
 
@@ -1440,12 +1479,16 @@ const TITLE: &str = "vinoWhisper sessions";
 
 pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
     let open = open.map(Target::parse);
+    let app_title_bar = vino_ui::window::app_title_bar();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(TITLE)
-            .with_app_id(app_id)
-            .with_inner_size([820.0, 680.0])
-            .with_min_inner_size([340.0, 320.0]),
+        viewport: vino_ui::window::viewport(
+            egui::ViewportBuilder::default()
+                .with_title(TITLE)
+                .with_app_id(app_id)
+                .with_inner_size([820.0, 680.0])
+                .with_min_inner_size([340.0, 320.0]),
+            app_title_bar,
+        ),
         // See window::run: vsync stalls a window KWin considers hidden.
         glow_options: eframe::egui_glow::GlowConfiguration {
             vsync: false,
@@ -1463,6 +1506,7 @@ pub fn run(app_id: &str, open: Option<&str>) -> ExitCode {
             window.speaker = speak::find_on_path("vinospeak");
             window.open_in = settings.open_in;
             window.kde_header = theme::kde_header();
+            window.app_title_bar = app_title_bar;
             if let Some(target) = open {
                 window.open(&cc.egui_ctx, target);
             }
@@ -1548,6 +1592,33 @@ mod tests {
             Some(TITLE)
         );
         harness.get_by_role_and_label(Role::Button, "Settings");
+    }
+
+    #[test]
+    fn the_app_s_title_bar_puts_the_window_buttons_in_the_list_and_a_session() {
+        for app_title_bar in [true, false] {
+            let mut harness = harness(true);
+            harness.state_mut().window.app_title_bar = app_title_bar;
+            harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
+            harness.run();
+            let buttons = |harness: &Harness<'static, Under>| {
+                ["Minimise", "Maximise", "Close"].iter().all(|name| {
+                    harness
+                        .query_by_role_and_label(Role::Button, name)
+                        .is_some()
+                })
+            };
+            assert_eq!(buttons(&harness), app_title_bar);
+            harness.get_by_role_and_label(Role::Button, "Settings");
+            harness.state_mut().window.state.lock().unwrap().viewer = Viewer {
+                target: Some(Target::parse("/t/b.vwsession#transcript")),
+                text: Some(Ok("Hello.".into())),
+                ..Viewer::default()
+            };
+            harness.run();
+            assert_eq!(buttons(&harness), app_title_bar);
+            harness.get_by_role_and_label(Role::Button, "All sessions");
+        }
     }
 
     #[test]

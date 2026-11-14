@@ -240,6 +240,8 @@ struct SettingsWindow {
     canary: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
+    // The window's buttons and edges are drawn here, not by the desktop (vino-ui's `window`).
+    app_title_bar: bool,
     // The last factor read from the desktop: zoom follows it only when it changes, so a
     // Ctrl + or - since then is kept.
     text_scale: Option<f32>,
@@ -323,6 +325,7 @@ impl SettingsWindow {
             canary: false,
             focused: true,
             kde_header: None,
+            app_title_bar: false,
             text_scale: None,
             shortcuts: Arc::new(Mutex::new(Shortcuts::Asking)),
             shown: None,
@@ -1381,6 +1384,10 @@ fn tab_name(page: Page) -> String {
 }
 
 impl eframe::App for SettingsWindow {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        vino_ui::input::faster_touchpad(raw);
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if self.cleanup_dirty {
             self.cleanup.save();
@@ -1424,6 +1431,9 @@ impl eframe::App for SettingsWindow {
             self.notice = Some(reason);
         }
         let (saved_settings, saved_speech) = self.show(ui);
+        if self.app_title_bar {
+            vino_ui::window::edges(ui);
+        }
 
         if self.cleanup_dirty {
             self.cleanup_dirty = false;
@@ -1477,19 +1487,32 @@ impl SettingsWindow {
                 .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        vino_ui::logo::whisper(ui, 28.0);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.label(
-                                RichText::new("vinoWhisper")
-                                    .size(15.0)
-                                    .family(theme::bold()),
+                    // vino-ui's, which the window bar's row is centred on: the logo on the
+                    // nav items' icon column.
+                    let brand = ui
+                        .scope(|ui| {
+                            ui.style_mut().interaction.selectable_labels = false;
+                            widgets::sidebar_brand(
+                                ui,
+                                Some(vino_ui::logo::whisper),
+                                "vinoWhisper",
+                                "Settings",
                             );
-                            widgets::small(ui, "Settings");
-                        });
-                    });
+                        })
+                        .response
+                        .rect;
+                    if self.app_title_bar {
+                        // After the brand, so its name drags the window.
+                        let clip = ui.clip_rect();
+                        vino_ui::window::drag(
+                            ui,
+                            egui::Rect::from_x_y_ranges(
+                                clip.x_range(),
+                                clip.top()..=brand.bottom(),
+                            ),
+                            "brand",
+                        );
+                    }
                     ui.add_space(14.0);
                     a11y::tab_list(ui, "Pages");
                     for page in Page::ALL {
@@ -1527,14 +1550,23 @@ impl SettingsWindow {
                     bottom: 0,
                 }))
                 .show(ui, |ui| {
+                    if self.app_title_bar {
+                        vino_ui::window::drag(ui, ui.clip_rect(), "header");
+                    }
                     ui.horizontal(|ui| {
                         vino_ui::logo::whisper(ui, 22.0);
-                        ui.label(
-                            RichText::new("vinoWhisper")
-                                .size(15.0)
-                                .family(theme::bold())
-                                .color(header.text),
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("vinoWhisper")
+                                    .size(15.0)
+                                    .family(theme::bold())
+                                    .color(header.text),
+                            )
+                            .selectable(false),
                         );
+                        if self.app_title_bar {
+                            vino_ui::window::controls(ui);
+                        }
                     });
                     // Wrapped: at the desktop's largest text the tabs don't fit on one line.
                     ui.horizontal_wrapped(|ui| {
@@ -1551,6 +1583,23 @@ impl SettingsWindow {
                 });
         }
 
+        // With the app's title bar, a wide window's page title moves up out of the scroll
+        // area into a bar of its own, with the window buttons at its end: that bar is what
+        // the window is dragged by.
+        let bar = wide && self.app_title_bar;
+        let page = self.page;
+        let title = |ui: &mut egui::Ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            widgets::title(ui, page.title());
+            if page.beta() {
+                let tag = widgets::tag(ui, Tone::Warn, "Beta");
+                a11y::decorative(ui, tag.id);
+            }
+        };
+        if bar {
+            vino_ui::window::bar(ui, widgets::PAGE_INSET, title, |_| {});
+        }
+
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
@@ -1560,20 +1609,20 @@ impl SettingsWindow {
                     .inner_margin(egui::Margin {
                         left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
                         right: 0,
-                        top: if wide { 20 } else { 12 },
+                        top: match (wide, bar) {
+                            // The same 15 from title to content as in the scroll area.
+                            (_, true) => 2,
+                            (true, false) => 20,
+                            (false, false) => 12,
+                        },
                         bottom: 0,
                     }),
             )
             .show(ui, |ui| {
                 widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        widgets::title(ui, self.page.title());
-                        if self.page.beta() {
-                            let tag = widgets::tag(ui, Tone::Warn, "Beta");
-                            a11y::decorative(ui, tag.id);
-                        }
-                    });
+                    if !bar {
+                        ui.horizontal(title);
+                    }
                     match self.page {
                         Page::Shortcuts => self.shortcuts(ui),
                         Page::Captions => saved_settings = self.captions(ui),
@@ -1593,12 +1642,16 @@ const TITLE: &str = "vinoWhisper settings";
 
 pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
     let page = page.and_then(Page::parse);
+    let app_title_bar = vino_ui::window::app_title_bar();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(TITLE)
-            .with_app_id(app_id)
-            .with_inner_size([820.0, 680.0])
-            .with_min_inner_size([340.0, 320.0]),
+        viewport: vino_ui::window::viewport(
+            egui::ViewportBuilder::default()
+                .with_title(TITLE)
+                .with_app_id(app_id)
+                .with_inner_size([820.0, 680.0])
+                .with_min_inner_size([340.0, 320.0]),
+            app_title_bar,
+        ),
         // With vsync, a swap waits on a frame callback KWin holds back from a window it
         // considers hidden, and the window stops answering pings. It only redraws on input.
         // eframe 0.37 skips the blocking swap on Wayland itself (egui#5136); this keeps X11 too.
@@ -1614,6 +1667,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
         Box::new(move |cc| {
             theme::install(&cc.egui_ctx);
             let mut window = SettingsWindow::new(page);
+            window.app_title_bar = app_title_bar;
             // Before the first frame, not at first focus: a window opened in the background
             // would otherwise draw its first frames small.
             window.follow_text_scale(&cc.egui_ctx, theme::desktop_text_scale());
@@ -1691,6 +1745,34 @@ mod tests {
 
     const WIDE: f32 = 820.0;
     const NARROW: f32 = 400.0;
+
+    #[test]
+    fn the_app_s_title_bar_has_the_window_buttons_and_the_title_once() {
+        for width in [WIDE, NARROW] {
+            for app_title_bar in [true, false] {
+                let mut harness = harness(Page::Captions, width);
+                harness.state_mut().window.app_title_bar = app_title_bar;
+                harness.run();
+                for name in ["Minimise", "Maximise", "Close"] {
+                    assert_eq!(
+                        harness
+                            .query_by_role_and_label(Role::Button, name)
+                            .is_some(),
+                        app_title_bar,
+                        "{name} at {width}, app_title_bar {app_title_bar}"
+                    );
+                }
+                // In the bar when wide, in the scroll area otherwise: never both.
+                assert_eq!(
+                    harness
+                        .query_all_by_role_and_label(Role::Heading, "Captions")
+                        .count(),
+                    1,
+                    "at {width}, app_title_bar {app_title_bar}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn every_page_is_a_named_tab_and_only_the_current_one_is_selected() {
