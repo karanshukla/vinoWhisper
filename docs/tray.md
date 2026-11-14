@@ -119,7 +119,7 @@ driven from three places instead:
 
 **Hidden means stopped.** Hiding the box also stops the caption process. A
 hidden box that kept transcribing would keep the server from ever idling out,
-and scale-to-zero is why the server is socket-activated at all
+and scale-to-zero is why the server is started on demand at all
 ([architecture.md](architecture.md)). Showing it again starts a fresh
 session, which also retries after an error.
 
@@ -160,7 +160,7 @@ Saved sessions are kept as `.vwsession` bundles and summarised in the background
 The sessions window (`vinowhisper-gui --sessions`) lists them, and the tray posts a
 notification when a summary is ready: see [sessions.md](sessions.md).
 
-Settings are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `systemctl --user stop vinowhisper-server.service` and lets socket activation start it on the new model; with a hand-started server, restart it yourself. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
+Settings are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `vinowhisper-server --stop`, and the next caption or dictation starts the server on the new model. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
 unreadable one is reported and ignored, and every field has a default, so a
 bad settings file never stops captions from starting. The top position is for
 video that burns its own subtitles into the bottom of the frame.

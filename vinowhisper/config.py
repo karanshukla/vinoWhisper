@@ -107,8 +107,8 @@ def check_language(language: str, task: str, model: str = DEFAULT_MODEL) -> None
         raise ValueError("translate turns speech into English; give the spoken language or auto")
 
 
-# Shared with vinowhisper-tray, whose tray writes it. Not baked into the systemd unit, so a
-# switch needs a server restart and no edited unit. A flag on the server overrides it.
+# Shared with vinowhisper-tray, whose tray writes it. The server reads it when it starts, so
+# a switch stops the server. A flag on the server overrides it.
 LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
 REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
@@ -211,8 +211,32 @@ DEFAULT_DEVICE = AUTO_DEVICE
 # Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
-# Relative to $XDG_RUNTIME_DIR, which the socket unit spells %t.
+# {"device": "NPU"|"GPU"|"CPU"|"auto"}, written by vinowhisper-setup --device. A flag on the
+# server overrides it.
+SERVER_FILE = _config_home() / "vinowhisper/server.json"
+# What the server prints, when a client started it (launch.py).
+SERVER_LOG = _state_home() / "vinowhisper/server.log"
+
+# Relative to $XDG_RUNTIME_DIR.
 SERVER_SOCKET_RELPATH = "vinowhisper/server.sock"
+
+
+def load_device(path: Path | None = None) -> str:
+    import json
+
+    try:
+        device = json.loads((path or SERVER_FILE).read_text(encoding="utf-8")).get("device")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_DEVICE
+    return device if isinstance(device, str) and device else DEFAULT_DEVICE
+
+
+def save_device(device: str, path: Path | None = None) -> None:
+    import json
+
+    path = path or SERVER_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"device": device}) + "\n", encoding="utf-8")
 
 
 def server_socket() -> Path | None:

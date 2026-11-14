@@ -1,14 +1,12 @@
 import contextlib
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-from . import config, source
+from . import config, launch, source
 
 LABEL = "Whisper small"
-SERVER_UNIT = "vinowhisper-server.service"
 
 
 def export_dirs() -> tuple[Path, ...]:
@@ -73,14 +71,8 @@ def model_status() -> dict:
 
 
 def stop_server() -> bool:
-    # As a language switch does (docs/tray.md); the socket stays, so the next use starts it.
-    try:
-        done = subprocess.run(
-            ["systemctl", "--user", "stop", SERVER_UNIT], check=False, capture_output=True
-        )
-    except OSError:
-        return False
-    return done.returncode == 0
+    # As a language switch does (docs/tray.md): the next use starts it again.
+    return launch.stop()
 
 
 def _remove(directory: Path) -> None:

@@ -388,7 +388,7 @@ def test_an_unreachable_server_exits_1_with_an_error_record_the_tray_reads(monke
     out, err = capsys.readouterr()
     assert _json_records(out)[-1]["event"] == "Error"
     assert "vinowhisper-doctor" in _json_records(out)[-1]["message"]
-    assert "systemctl --user status vinowhisper-server.socket" in err
+    assert str(config.SERVER_LOG) in err
 
 
 def test_a_capture_failure_exits_1_with_an_error_record(monkeypatch, capsys):

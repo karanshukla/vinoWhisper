@@ -10,6 +10,10 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+### 🎨 Changed
+
+- **The server no longer runs from systemd units.** Captions, dictation and file imports start `vinowhisper-server` themselves when nothing is listening on its socket, and it still exits after 5 minutes idle, so it works the same with or without systemd. `vinowhisper-server --stop` stops it (the tray's language switch and deleting Whisper use it), and its output is in `~/.local/state/vinowhisper/server.log` instead of the journal. An upgrade through `vinowhisper-upgrade`, or re-running `vinowhisper-setup`, removes `vinowhisper-server.socket` and `.service` from `~/.config/systemd/user`; a `--device` the old unit carried moves to `~/.config/vinowhisper/server.json`, where `vinowhisper-setup --device` now saves it. `vinowhisper-setup --print-units` is gone. The unit's seccomp restrictions went with it; the server keeps the `0077` umask and no-new-privileges. Details in `docs/architecture.md`.
+
 ## [1.7.0] - 2026-11-14
 
 ### 🚀 Features

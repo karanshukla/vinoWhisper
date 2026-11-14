@@ -150,13 +150,6 @@ def test_the_server_rejects_translating_english(capsys):
     assert "translate" in capsys.readouterr().err
 
 
-def test_the_unit_never_carries_the_language():
-    # The choice lives in language.json, so the tray can change it without editing a unit.
-    service, _socket = wizard.unit_files("auto")
-    assert "--language" not in service
-    assert "--task" not in service
-
-
 def test_the_language_file_round_trips(tmp_path):
     path = tmp_path / "vinowhisper/language.json"
     config.save_language("fr", "translate", path)

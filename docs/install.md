@@ -14,8 +14,7 @@ have none), clones the latest `vX.Y.Z` release tag rather than `main`
 the environment with `uv sync --locked`, so exactly what `uv.lock` pins and
 never a fresh resolve, and hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
-model export your device needs, and systemd units generated against the paths
-that actually exist. It prints every command before running it and asks first.
+model export your device needs. It prints every command before running it and asks first.
 `--yes` answers yes to everything and `--dry-run` no to everything, and piped
 stdin without `--yes` refuses rather than run sudo commands nobody agreed to.
 A step that is already done says so and is skipped. It never invents a package
@@ -55,11 +54,13 @@ failed to load a model, which is worse than not shipping at all. Stable
 2026.3.1 removed that constraint (see the version floor below).
 
 What it gets you: the five commands and the Python dependencies. What it cannot
-get you: an NPU driver, a model export, or systemd units. Run
+get you: an NPU driver or a model export. Run
 `vinowhisper-setup` afterwards for those, exactly as the installer script would.
 Re-run it after upgrading from 0.6.x or earlier too: the server moved from
-`127.0.0.1:8099` to a Unix socket in `$XDG_RUNTIME_DIR`, and the wizard is
-what rewrites the socket unit and restarts it.
+`127.0.0.1:8099` to a Unix socket in `$XDG_RUNTIME_DIR`. Re-run it after
+upgrading from 1.7 or earlier as well: the server no longer runs from systemd
+units, and the wizard removes the old ones (the release installer's upgrade
+does this itself).
 The export tooling (optimum, and torch with it) is the `export` extra, which
 the wizard offers to install when it gets to the model step;
 `pip install --extra-index-url https://download.pytorch.org/whl/cpu 'vinowhisper[export]'`
@@ -78,11 +79,10 @@ Silverblue, Kinoite, Bazzite, Aurora, Bluefin and openSUSE Aeon keep `/usr`
 read-only, so `dnf install` and `zypper install` cannot work there. Most of
 vinoWhisper never touches `/usr`: uv, the checkout, the virtualenv (with a
 uv-managed Python when the host's is 3.14), the model export, the commands
-in `~/.local/bin`, the systemd user units in `~/.config/systemd/user`, and the
-overlay's launcher and autostart entries are all in your home directory, and
-install the same way as anywhere else. Run them on the host, not in a toolbox:
-the server is a systemd user unit, and the units point at the paths that
-exist where setup ran.
+in `~/.local/bin`, and the overlay's launcher and autostart entries are all in
+your home directory, and install the same way as anywhere else. Run them on the
+host, not in a toolbox: the tray, the server and the audio they capture belong
+to the host's session.
 
 Host packages are the exception, and `vinowhisper-setup` and
 `vinowhisper-doctor` detect the image (`/run/ostree-booted`, or a read-only
@@ -221,7 +221,7 @@ digest covers every file, not just the weights, because `generation_config.json`
 decides how decoding behaves and `tokenizer.json` decides the text. A missing
 or truncated pin file downgrades to `unpinned` rather than breaking every
 export. Verification is deliberately not part of loading the model, since
-hashing takes about 1.2s and would land on the socket-activated cold start.
+hashing takes about 1.2s and would land on every cold start.
 
 `known_bad` entries come in two shapes: an exact combination measured broken,
 or a floor (`at_least`, as for transformers 5.4.0). A version the export does
@@ -332,9 +332,9 @@ curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/i
 
 It removes, in this order:
 
-- the server: `systemctl --user disable --now` on `vinowhisper-server.socket`
-  and `.service`, then both unit files from `~/.config/systemd/user`, then
-  `daemon-reload`;
+- the server: `vinowhisper-server --stop`, and the systemd units versions up to
+  1.7 ran it from, if they are still there (`systemctl --user disable --now`,
+  both unit files from `~/.config/systemd/user`, `daemon-reload`);
 - the tray (`vinowhisper-tray quit`) and what `vinowhisper-tray --install
   --autostart` wrote: launcher, settings and sessions entries, icons, the
   `.vwsession` file type and the login entry;

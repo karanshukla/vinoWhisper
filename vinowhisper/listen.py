@@ -16,6 +16,10 @@ def _systemd_socket_fd() -> int | None:
     return 3 if listen_fds >= 1 else None  # SD_LISTEN_FDS_START
 
 
+def activated() -> bool:
+    return _systemd_socket_fd() is not None
+
+
 class SocketError(Exception):
     pass
 
@@ -26,7 +30,7 @@ def _inherited_socket(fd: int) -> socket.socket:
         sock.detach()
         raise SocketError(
             "systemd passed a non-Unix socket: the installed socket unit predates the move "
-            "off TCP. Re-run `vinowhisper-setup` to rewrite it."
+            "off TCP. Re-run `vinowhisper-setup`, which removes it."
         )
     return sock
 
@@ -72,6 +76,6 @@ def listening_socket() -> socket.socket:
     if path is None:
         raise SocketError(
             "XDG_RUNTIME_DIR is not set, so there is nowhere private to put the server "
-            "socket. Start it from a login session, or let systemd do it."
+            "socket. Start it from a login session."
         )
     return _bind_socket(path)

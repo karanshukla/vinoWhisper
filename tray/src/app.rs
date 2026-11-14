@@ -193,6 +193,7 @@ pub struct App {
     dictator: Option<Dictator>,
     dictator_generation: u64,
     dictate_program: Option<PathBuf>,
+    server_program: Option<PathBuf>,
     clipboard: Option<Clipboard>,
     paster: Paster,
     media: Media,
@@ -344,6 +345,7 @@ pub fn run(options: Options) -> Result<(), String> {
         quitting: false,
         caption_program: session::find_caption(options.caption.as_deref()),
         dictate_program: session::find_sibling(session::DICTATE, options.caption.as_deref()),
+        server_program: session::find_sibling(session::SERVER, options.caption.as_deref()),
         caption_override: options.caption,
         autostart: install::autostart_enabled(),
         handle,
@@ -633,8 +635,9 @@ impl App {
     fn apply_speech(&mut self) {
         self.speech_pending += 1;
         let tx = self.tx.clone();
+        let server = self.server_program.clone();
         std::thread::spawn(move || {
-            session::stop_server();
+            session::stop_server(server.as_deref());
             let _ = tx.send(Command::SpeechApplied);
         });
     }

@@ -58,6 +58,13 @@ a shared directory such as `/tmp`, and it refuses a TCP socket passed by an
 old socket unit. If you installed before the move, re-run `vinowhisper-setup`
 (see the CHANGELOG).
 
+Since 2026-11-14 the server is started by whichever of its own clients connects
+first, not by a systemd socket unit, and `POST /quit` on the socket stops it.
+Both are open only to your user, like the rest of the socket. The systemd unit
+used to add seccomp-backed restrictions (address families, namespaces,
+personality); those went with the unit. The server still sets a `0077` umask and
+no-new-privileges on itself.
+
 ## The model download is verified
 
 `vinowhisper-setup` and `scripts/convert_model.sh` download ~1GB from Hugging

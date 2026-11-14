@@ -17,14 +17,15 @@
 #
 # A first install then runs vinowhisper-setup, which checks the capture tools
 # and NPU driver, exports the model once (that pulls CPU torch, the one
-# time), writes the systemd units and, with --gui, fetches the tray and window
+# time) and, with --gui, fetches the tray and window
 # binaries the wheel pins. An upgrade reinstalls the wheel, refreshes the tray
-# and window if they're installed, and restarts the server: the model stays.
+# and window if they're installed, and stops the server so the next use starts
+# the new one: the model stays.
 #
 # It keeps a checked copy of itself as vinowhisper-upgrade, which the settings
 # window's Update button runs with VINO_UPDATE_TAG set.
 #
-#   --uninstall removes it: the server units, the tray's menu and login
+#   --uninstall removes it: the server, the tray's menu and login
 #               entries, the commands in ~/.local/bin, the models and their
 #               caches. Saved sessions, settings and exported documents stay.
 #               Downloads nothing. `vinowhisper-upgrade --uninstall`.
@@ -88,6 +89,10 @@ uninstall() {
     if [ -x "$BIN/vinowhisper-tray" ]; then
         "$BIN/vinowhisper-tray" quit >/dev/null 2>&1 || true
     fi
+    if [ -x "$BIN/vinowhisper-server" ]; then
+        "$BIN/vinowhisper-server" --stop >/dev/null 2>&1 || true
+    fi
+    # The units earlier versions ran the server from.
     if command -v systemctl >/dev/null; then
         systemctl --user disable --now vinowhisper-server.socket vinowhisper-server.service \
             >/dev/null 2>&1 || true
@@ -216,8 +221,7 @@ main() {
     export PATH="$BIN:$PATH"
 
     say "Installing ${wheel%-py3-none-any.whl}"
-    # --force replaces an older one in place, at the same path, so the units
-    # vinowhisper-setup wrote keep pointing at it. uv's own Python, not a
+    # --force replaces an older one in place, at the same path. uv's own Python, not a
     # system or Homebrew python3.13 (Tumbleweed, Bluefin): removing that would
     # leave the tool's venv pointing at nothing. The env var, not
     # --managed-python, so an older uv already on PATH still runs it.
@@ -231,8 +235,9 @@ main() {
             say "Updating the tray and settings window"
             "$BIN/vinowhisper-setup" --gui --yes </dev/null
         fi
-        # A running server keeps the old code; the socket starts the new one.
-        systemctl --user try-restart vinowhisper-server.service 2>/dev/null || true
+        # A running server keeps the old code; the next use starts the new one. This
+        # also removes the systemd units earlier versions ran it from.
+        "$BIN/vinowhisper-server" --stop || true
         # The tray's dictation child holds the old Python even when the binary is unchanged.
         if [ -x "$BIN/vinowhisper-tray" ] && "$BIN/vinowhisper-tray" --help 2>/dev/null | grep -q '^  restart '; then
             "$BIN/vinowhisper-tray" restart || true

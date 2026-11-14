@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import os
 import sys
 import threading
@@ -104,6 +105,14 @@ def health() -> Response:
             "summaries": summariser.describe(),
         }
     )
+
+
+@app.route("/quit", methods=["POST"])
+def quit_server() -> Response:
+    # What `systemctl --user stop` was: a decode in flight is cut off with it.
+    response = jsonify({"stopping": True, "socket_activated": listen.activated()})
+    response.call_on_close(lambda: os._exit(0))
+    return response
 
 
 @app.route("/cleanup", methods=["POST"])
@@ -240,7 +249,7 @@ def _idle_watchdog(timeout_s: float) -> None:
             busy = _in_flight > 0 or summariser.active
         cleaner.unload_if_idle(config.CLEANUP_IDLE_UNLOAD_S)
         if not busy and idle_for >= timeout_s:
-            # _exit(0): a clean exit tells systemd this was an idle unload, not a crash.
+            # The next client to connect starts it again (launch.py).
             os._exit(0)
 
 
@@ -260,13 +269,24 @@ def _resume_summaries() -> None:
         summariser.kick()
 
 
+def _harden() -> None:
+    # What the systemd unit's UMask=0077 and NoNewPrivileges=yes were. Its seccomp filters
+    # went with it (SECURITY.md).
+    os.umask(0o077)
+    import ctypes
+
+    with contextlib.suppress(OSError, AttributeError):
+        ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0)  # PR_SET_NO_NEW_PRIVS
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="vinoWhisper transcription server.")
     parser.add_argument(
         "--device",
-        default=config.DEFAULT_DEVICE,
+        default=None,
         metavar="NPU|GPU|CPU|auto",
-        help="OpenVINO device to load the model on. 'auto' (the default) walks "
+        help=f"OpenVINO device to load the model on, overriding {config.SERVER_FILE} "
+        "(vinowhisper-setup --device writes it). 'auto' (the default) walks "
         f"{'>'.join(devices.PREFERENCE)} and warns when it lands below NPU; an "
         "explicit device is refused rather than downgraded if it is unavailable.",
     )
@@ -296,8 +316,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         f"{config.CANARY_MODEL} takes any of {len(config.CANARY_LANGUAGES)} languages by "
         "code (no auto) and translates them into English; it needs its own export.",
     )
+    parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop the running server and exit: the next caption, dictation or import "
+        "starts it again, on the settings as they are then. Also removes the systemd units "
+        "earlier versions installed, which nothing needs now.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
     args = parser.parse_args(argv)
+    if args.device is None:
+        args.device = config.load_device()
     args.language, args.task, args.model = config.resolve_language(
         args.language, args.task, args.model
     )
@@ -310,6 +339,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.stop:
+        from . import launch
+
+        for unit in launch.retire_units():
+            print(f"[vinowhisper-server] removed {unit}", file=sys.stderr)
+        if launch.stop():
+            return 0
+        print("[vinowhisper-server] the running server did not stop", file=sys.stderr)
+        return 1
+    _harden()
     # Before the model load, so a missing XDG_RUNTIME_DIR or a running server fails in a second.
     try:
         sock = listen.listening_socket()

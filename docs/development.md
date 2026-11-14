@@ -48,7 +48,7 @@ A checkout can be the install. Three pieces, each redeployed differently:
 
 ```bash
 uv sync --extra export
-uv run vinowhisper-setup     # links the commands into ~/.local/bin and writes the units against .venv
+uv run vinowhisper-setup     # links the commands into ~/.local/bin
 ```
 
 After that an edit is live in the next process that starts, with no reinstall.
@@ -60,9 +60,9 @@ Which process matters:
 - **The idle dictation child is long-lived.** The tray keeps one
   `vinowhisper-dictate --json` running to hide Python's import time, so a
   change to `dictate.py` needs a tray restart (below).
-- **Server changes need the server restarted**:
-  `systemctl --user restart vinowhisper-server.service`. Check
-  `pgrep -af vinowhisper-caption` first: a restart kills a live caption
+- **Server changes need the server stopped**: `vinowhisper-server --stop`,
+  and the next request starts the new code. Check
+  `pgrep -af vinowhisper-caption` first: stopping it kills a live caption
   session, and the next request pays the model load again.
 - **`pyproject.toml` changes** (a new entry point, a dependency) need
   `uv sync` again, and a new command needs `vinowhisper-setup` to link it.
@@ -131,7 +131,7 @@ rather than a defect in it:
 
 | Check | Why it is skipped |
 |---|---|
-| B404 | Flags `import subprocess` itself, in a program whose purpose is to drive pw-record, parec, pactl, optimum-cli and systemctl |
+| B404 | Flags `import subprocess` itself, in a program whose purpose is to drive pw-record, parec, pactl, optimum-cli and its own server |
 | B603 | Every call site passes a literal argv list with no shell. The variable parts (PipeWire node names from pw-dump, a `--target` the user typed) arrive as single argv elements |
 | B607 | pw-record, parec and pactl live in different places on different distros. They are found with `shutil.which` before use, and hardcoding `/usr/bin` would break the fallbacks |
 
@@ -182,8 +182,9 @@ upstream.
 ## Packaging
 
 `[tool.setuptools] packages = ["vinowhisper"]` is explicit because flat-layout
-auto-discovery sees the top-level `systemd/` directory, decides there are two
-packages, and refuses to build (confirmed 2026-08-03).
+auto-discovery refuses to build when it sees more than one top-level directory
+that could be a package (confirmed 2026-08-03 with `systemd/`, since removed;
+`tray/`, `gui/` and `settings/` are still there).
 
 These data files ride in the wheel:
 

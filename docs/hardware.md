@@ -31,10 +31,10 @@ in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 OpenVINO's device list says what is present, not what works. The documented
 case is below: a package reinstall rewrites the level-zero symlink, the NPU
 still enumerates, and `compile_model()` fails after the 10-30s model load. Left
-alone, the socket-activated server re-pays that load on every activation and
-fails again, `Restart=on-failure` retries, and systemd's start limit takes the
-socket down with it. The next `vinowhisper-caption` then gets a bare connection
-refused.
+alone, the server re-pays that load on every start and fails again, and every
+`vinowhisper-caption` waits out a model load to be told so. (Under the systemd
+units it ran from until 2026-11-14, `Restart=on-failure` retried and the start
+limit took the socket down with it.)
 
 So a device that fails to build a pipeline is written to
 `~/.config/vinowhisper/failed-devices.json` with the time and the first line

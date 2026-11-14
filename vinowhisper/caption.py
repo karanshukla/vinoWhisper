@@ -505,9 +505,8 @@ def main() -> int:
     except requests.RequestException as exc:
         print(
             f"\n[vinowhisper] server not reachable at {config.server_address()}: {exc}\n"
-            "  systemctl --user status vinowhisper-server.socket\n"
-            "  vinowhisper-doctor        # what is actually missing\n"
-            "  vinowhisper-setup         # install the units if they were never installed",
+            f"  {config.SERVER_LOG}       # what the server said\n"
+            "  vinowhisper-doctor        # what is actually missing",
             file=sys.stderr,
         )
         if json_out is not None:
