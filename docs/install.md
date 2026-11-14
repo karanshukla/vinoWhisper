@@ -261,6 +261,10 @@ Flatpak 1.14.6, no NPU, no GPU and no audio server:
 - `vinowhisper-transcribe` on 13 s of synthesised speech: the server started in a
   sandbox of its own, decoded on the CPU at 9x real time and wrote the session, and
   `vinowhisper-server --stop` from a third sandbox stopped it in half a second;
+- `vinowhisper-flatpak-update` between two `stable` bundles served from a local
+  directory: a bundle that did not match its `.sha256` was refused and nothing
+  changed; the right one was installed by the host's `flatpak`, the installed commit
+  changed, and the running server was stopped;
 - on headless Sway 1.9: the tray started, `toggle`, `hide`, `shortcuts`, `restart` and
   `quit` reached it from other sandboxes, the overlay drew the caption process's
   error (no audio server), and the settings window opened.
