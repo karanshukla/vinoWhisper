@@ -142,20 +142,8 @@ def test_a_failed_delete_is_an_error_not_a_success(models, monkeypatch, capsys):
     assert line["event"] == "error" and "Permission denied" in line["message"]
 
 
-def test_stop_server_asks_systemd_for_the_service_only(monkeypatch):
-    seen = []
-
-    class Done:
-        returncode = 0
-
-    monkeypatch.setattr(
-        whisper_model.subprocess, "run", lambda argv, **kw: seen.append(argv) or Done()
-    )
+def test_stop_server_goes_through_the_launcher(monkeypatch):
+    monkeypatch.setattr(whisper_model.launch, "stop", lambda: True)
     assert whisper_model.stop_server() is True
-    assert seen == [["systemctl", "--user", "stop", "vinowhisper-server.service"]]
-
-    def missing(argv, **kw):
-        raise FileNotFoundError("systemctl")
-
-    monkeypatch.setattr(whisper_model.subprocess, "run", missing)
+    monkeypatch.setattr(whisper_model.launch, "stop", lambda: False)
     assert whisper_model.stop_server() is False

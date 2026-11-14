@@ -61,9 +61,9 @@ work on it. The `hearing…` line is the words heard once and still waiting on a
 second opinion, so the two-cycle commit delay is _visible_ rather than felt as
 a freeze.
 
-**It scales to zero, the systemd way.** The NPU model load costs 10-30s, so
-something has to hold it. A socket unit owns a private Unix socket at boot with no process
-running, systemd spawns the server on the first connection, and the server
+**It scales to zero.** The NPU model load costs 10-30s, so
+something has to hold it. Nothing runs until you caption or dictate: the first
+client to find nobody on a private Unix socket starts the server, and the server
 exits itself after 5 minutes idle. Serverless, on your laptop, with no
 framework.
 
@@ -74,7 +74,7 @@ anything loads it.
 Details in [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md).
 
 **A missing NPU degrades instead of bricking.** Selection walks NPU, then GPU,
-then CPU, and a fallback is never silent: it shows up in the server journal, in
+then CPU, and a fallback is never silent: it shows up in the server's log, in
 `/health`, in `vinowhisper-doctor`, and on the status bar as a red border.
 
 **It tells you how to fix it.** Nearly every error path here prints the command
@@ -102,12 +102,19 @@ That checks the latest release's wheel against its `SHA256SUMS`, installs it wit
 [uv](https://docs.astral.sh/uv/) (fetching uv itself, hash-pinned, if you don't have it), and
 hands over to `vinowhisper-setup`, which is where every
 machine-specific decision happens: your capture tool, your NPU driver, the
-model export your device needs, and systemd units generated against paths that
-actually exist. It prints every command before running it and asks first.
+model export your device needs. It prints every command before running it and asks first.
 
 The desktop overlay (floating captions and dictation) is one more command:
 `vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
 checks it against a digest pinned in the Python package.
+
+Or as a **Flatpak**: each release has `vinowhisper-x86_64.flatpak`, which carries the
+overlay, the windows, OpenVINO and Intel's NPU and GPU drivers, so the host needs only
+the kernel's NPU driver. `flatpak install --user vinowhisper-x86_64.flatpak`, then
+`flatpak run --command=vinowhisper-setup io.github.karanshukla.vinowhisper` for the
+model. It has not been run on a desktop yet:
+[docs/install.md](https://docs.vinowhisper.com/install/#flatpak) says what has and has
+not been checked.
 
 To upgrade, use **Check for updates** on the settings window's About page, or run
 `vinowhisper-upgrade`. It installs the new release's wheel, refreshes the overlay and window
@@ -124,11 +131,11 @@ Or from PyPI, if you would rather wire up the machine yourself:
 
 ```bash
 pip install vinowhisper   # needs Python 3.11-3.13
-vinowhisper-setup         # still worth running: NPU driver, model export, units
+vinowhisper-setup         # still worth running: NPU driver, model export
 ```
 
-pip gets you the commands. It cannot get you an NPU driver, a model export or
-systemd units, which is what `vinowhisper-setup` is for either way.
+pip gets you the commands. It cannot get you an NPU driver or a model export,
+which is what `vinowhisper-setup` is for either way.
 [docs/install.md](https://docs.vinowhisper.com/install/)
 covers installing from a checkout and the OpenVINO version floor.
 
@@ -201,7 +208,7 @@ vinowhisper-tray --install --autostart     # launcher entry, and the tray at log
 
 vinowhisper-setup                         # guided install; re-runnable, idempotent
 vinowhisper-setup --dry-run               # print the plan, change nothing
-vinowhisper-setup --print-units           # the systemd units it would generate
+vinowhisper-server --stop                 # unload the model now; the next use starts it again
 vinowhisper-setup --gui                   # just the optional overlay and dictation
 vinowhisper-setup --ovfetch               # just ovfetch, NPU driver data for the doctor
 vinowhisper-upgrade --uninstall           # remove it, models included; sessions and settings stay

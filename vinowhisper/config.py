@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from . import sandbox
+
 
 def _data_home() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
@@ -25,7 +27,7 @@ TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
 SUMMARIES_FILE = _config_home() / "vinowhisper/summaries.json"
 # The summariser's own bookkeeping: failures, declined summaries, and where backfill starts.
 SESSIONS_STATE_FILE = _state_home() / "vinowhisper/sessions.json"
-# Finished summaries the tray has not announced yet; relative to $XDG_RUNTIME_DIR.
+# Finished summaries the tray has not announced yet; relative to runtime_dir().
 SUMMARIES_READY_RELPATH = "vinowhisper/summaries-ready.json"
 # What the summariser is on right now, for the Sessions page; gone when it is idle.
 SUMMARISING_RELPATH = "vinowhisper/summarising.json"
@@ -107,8 +109,8 @@ def check_language(language: str, task: str, model: str = DEFAULT_MODEL) -> None
         raise ValueError("translate turns speech into English; give the spoken language or auto")
 
 
-# Shared with vinowhisper-tray, whose tray writes it. Not baked into the systemd unit, so a
-# switch needs a server restart and no edited unit. A flag on the server overrides it.
+# Shared with vinowhisper-tray, whose tray writes it. The server reads it when it starts, so
+# a switch stops the server. A flag on the server overrides it.
 LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
 REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
@@ -211,16 +213,48 @@ DEFAULT_DEVICE = AUTO_DEVICE
 # Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
-# Relative to $XDG_RUNTIME_DIR, which the socket unit spells %t.
+# {"device": "NPU"|"GPU"|"CPU"|"auto"}, written by vinowhisper-setup --device. A flag on the
+# server overrides it.
+SERVER_FILE = _config_home() / "vinowhisper/server.json"
+# What the server prints, when a client started it (launch.py).
+SERVER_LOG = _state_home() / "vinowhisper/server.log"
+
+# Relative to runtime_dir().
 SERVER_SOCKET_RELPATH = "vinowhisper/server.sock"
 
 
-def server_socket() -> Path | None:
+def load_device(path: Path | None = None) -> str:
+    import json
+
+    try:
+        device = json.loads((path or SERVER_FILE).read_text(encoding="utf-8")).get("device")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_DEVICE
+    return device if isinstance(device, str) and device else DEFAULT_DEVICE
+
+
+def save_device(device: str, path: Path | None = None) -> None:
+    import json
+
+    path = path or SERVER_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"device": device}) + "\n", encoding="utf-8")
+
+
+def runtime_dir() -> Path | None:
     # None, never a /tmp fallback: anywhere shared would let another user squat the path.
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "")
-    if not os.path.isabs(runtime_dir):
+    raw = os.environ.get("XDG_RUNTIME_DIR", "")
+    if not os.path.isabs(raw):
         return None
-    return Path(runtime_dir) / SERVER_SOCKET_RELPATH
+    app = sandbox.flatpak_id()
+    # The rest of a sandbox's runtime dir is its own: only this part is shared by the
+    # tray, the server and each command, which Flatpak runs in a sandbox apiece.
+    return Path(raw) / "app" / app if app else Path(raw)
+
+
+def server_socket() -> Path | None:
+    directory = runtime_dir()
+    return None if directory is None else directory / SERVER_SOCKET_RELPATH
 
 
 def server_address() -> str:
@@ -329,6 +363,8 @@ CANARY_EXPORT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts/export_
 CANARY_EXPORT_URL = (
     "https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/export_canary.py"
 )
+# In the Flatpak, where the app's own Python is read-only: a venv for optimum and torch.
+EXPORT_ENV_DIR = _data_home() / "vinowhisper/export-env"
 CONVERT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "convert_model.sh"
 # optimum writes a full-size intermediate to $TMPDIR, and /tmp is often tmpfs (RAM).
 EXPORT_TMP_ROOT = _cache_home() / "vinowhisper/export-tmp"

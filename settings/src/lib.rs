@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod sandbox;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
@@ -497,6 +499,15 @@ pub fn sessions_entry_shown_in(data: &Path) -> bool {
     sessions_entry_in(data).is_file()
 }
 
+/// Where the sessions entry goes: the host's menu reads the real home's, not the
+/// Flatpak's own data.
+pub fn apps_data_home() -> PathBuf {
+    match sandbox::flatpak_id() {
+        Some(_) => sandbox::host_data_home(),
+        None => data_home(),
+    }
+}
+
 /// Write or remove the entry; `gui` is the vinowhisper-gui it runs with `--sessions`.
 pub fn show_sessions_entry_in(data: &Path, show: bool, gui: &Path) -> io::Result<()> {
     let path = sessions_entry_in(data);
@@ -513,20 +524,28 @@ pub fn show_sessions_entry_in(data: &Path, show: bool, gui: &Path) -> io::Result
 }
 
 pub fn sessions_desktop_entry(gui: &Path) -> String {
+    let exec = match sandbox::flatpak_id() {
+        // Written on the host, where the path inside the sandbox means nothing.
+        Some(app) => sandbox::host_exec("vinowhisper-gui", app),
+        None => exec_arg(&gui.to_string_lossy()),
+    };
+    sessions_entry_running(&exec)
+}
+
+fn sessions_entry_running(exec: &str) -> String {
     format!(
         "[Desktop Entry]
 Type=Application
 Name=vinoWhisper Sessions
 GenericName=Saved Caption Sessions
 Comment=Transcripts and summaries of saved caption sessions
-Exec={} --sessions
+Exec={exec} --sessions
 Icon={APP_ICON}
 Terminal=false
 Categories=Utility;Accessibility;
 Keywords=transcript;summary;sessions;captions;subtitles;whisper;
 StartupNotify=false
-",
-        exec_arg(&gui.to_string_lossy())
+"
     )
 }
 

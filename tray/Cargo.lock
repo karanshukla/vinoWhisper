@@ -263,6 +263,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "configparser"
+version = "3.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031ad3d167622974ed636505ae4556267ed4aa2aea0464122fa6bc9698a32825"
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1190,6 +1196,7 @@ checksum = "c55852ad0175d1bc093d6e8d2277b77ac603664781425837c555d52e719b480e"
 name = "vinowhisper-settings"
 version = "1.7.0"
 dependencies = [
+ "configparser",
  "serde",
  "serde_json",
 ]

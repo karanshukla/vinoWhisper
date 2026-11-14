@@ -272,9 +272,17 @@ struct SettingsWindow {
 }
 
 // The release installer leaves itself as ~/.local/bin/vinowhisper-upgrade, which installs a
-// release's wheel, tray and this window; without it (a checkout) About links to the release.
+// release's wheel, tray and this window. A release's Flatpak bundle installs the next one
+// with vinowhisper-flatpak-update. Without either (a checkout) About links to the release.
 fn updater() -> vino_ui::update::Updater {
     let updater = vino_ui::update::Updater::new(vino_ui::App::Whisper, env!("CARGO_PKG_VERSION"));
+    if vinowhisper_settings::sandbox::flatpak_id().is_some() {
+        return if vinowhisper_settings::sandbox::is_release() {
+            updater.with_command(["vinowhisper-flatpak-update"])
+        } else {
+            updater
+        };
+    }
     match std::env::var_os("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".local/bin/vinowhisper-upgrade"))
     {
@@ -333,7 +341,7 @@ impl SettingsWindow {
             notice: None,
             speech_note: None,
             summaries: Summaries::default(),
-            apps_data: vinowhisper_settings::data_home(),
+            apps_data: vinowhisper_settings::apps_data_home(),
             in_app_menu: false,
             app_menu_error: None,
             summaries_dirty: false,

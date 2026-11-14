@@ -10,5 +10,7 @@ repository = "https://github.com/karanshukla/vinoWhisper"
 publish = false
 
 [dependencies]
+# /.flatpak-info is a GKeyFile. No dependencies of its own.
+configparser = "3.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

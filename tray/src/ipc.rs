@@ -79,9 +79,9 @@ pub enum SendError {
 }
 
 pub fn socket_path() -> io::Result<PathBuf> {
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join(SOCKET_NAME)),
-        _ => {
+    match crate::settings::sandbox::runtime_dir() {
+        Some(dir) => Ok(dir.join(SOCKET_NAME)),
+        None => {
             let uid = rustix::process::getuid().as_raw();
             let dir = std::env::temp_dir().join(format!("vinowhisper-tray-{uid}"));
             Ok(private_dir(&dir)?.join(SOCKET_NAME))
@@ -114,6 +114,13 @@ fn private_dir(dir: &Path) -> io::Result<&Path> {
 }
 
 fn same_user(stream: &UnixStream) -> bool {
+    // In the Flatpak every command is a sandbox with a pid namespace of its own, so the
+    // peer's pid reads as 0, which rustix's UCred cannot hold: the lookup comes back as
+    // an error and every command would be turned away. The socket there is in the
+    // app's own 0700 runtime directory, which only this user's sandboxes of it can reach.
+    if crate::settings::sandbox::flatpak_id().is_some() {
+        return true;
+    }
     rustix::net::sockopt::socket_peercred(stream)
         .is_ok_and(|cred| cred.uid == rustix::process::getuid())
 }

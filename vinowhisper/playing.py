@@ -4,7 +4,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from . import capture
+from . import capture, sandbox
 
 MPRIS_PREFIX = "org.mpris.MediaPlayer2."
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
@@ -21,9 +21,12 @@ Entry = dict[str, str]
 
 
 def _busctl(*args: str) -> object:
-    if capture._which("busctl") is None:
-        return None
     argv = ["busctl", "--user", "--json=short", "--timeout=1", *args]
+    if sandbox.flatpak_id() is not None:
+        # The Flatpak's runtime has no busctl; the host's talks to the same session bus.
+        argv = sandbox.host_argv(argv)
+    elif capture._which("busctl") is None:
+        return None
     try:
         done = subprocess.run(
             argv, capture_output=True, text=True, timeout=_CALL_TIMEOUT_S, check=True

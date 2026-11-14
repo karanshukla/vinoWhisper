@@ -12,7 +12,7 @@ from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
-from . import config
+from . import config, launch
 
 # The host part is never resolved: every http:// request in the session goes to the socket.
 BASE_URL = "http://vinowhisper"
@@ -27,39 +27,61 @@ LANGUAGE_MARK = "\x00"
 
 
 class _UnixConnection(HTTPConnection):
-    def __init__(self, *args: Any, socket_path: str | None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, socket_path: str | None, autostart: bool = True, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._socket_path = socket_path
+        self._autostart = autostart
 
-    def _new_conn(self) -> socket.socket:
-        if self._socket_path is None:
-            raise NewConnectionError(self, f"no server socket: {config.server_address()}")
+    def _connect(self, path: str) -> socket.socket:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if isinstance(self.timeout, int | float):
             sock.settimeout(self.timeout)
         try:
-            sock.connect(self._socket_path)
-        except TimeoutError as exc:
+            sock.connect(path)
+        except OSError:
             sock.close()
-            raise ConnectTimeoutError(self, f"{self._socket_path} timed out") from exc
-        except OSError as exc:
-            sock.close()
-            raise NewConnectionError(self, f"{self._socket_path}: {exc}") from exc
+            raise
         return sock
+
+    def _new_conn(self) -> socket.socket:
+        path = self._socket_path
+        if path is None:
+            raise NewConnectionError(self, f"no server socket: {config.server_address()}")
+        try:
+            try:
+                return self._connect(path)
+            except (FileNotFoundError, ConnectionRefusedError):
+                if not self._autostart:
+                    raise
+            # Nobody is listening: the server exits when idle, and whoever connects next
+            # starts it, as a socket unit did.
+            try:
+                launch.ensure(Path(path))
+            except launch.StartError as exc:
+                raise NewConnectionError(self, str(exc)) from exc
+            return self._connect(path)
+        except TimeoutError as exc:
+            raise ConnectTimeoutError(self, f"{path} timed out") from exc
+        except OSError as exc:
+            raise NewConnectionError(self, f"{path}: {exc}") from exc
 
 
 class _UnixConnectionPool(HTTPConnectionPool):
     ConnectionCls = _UnixConnection
 
-    def __init__(self, socket_path: str | None) -> None:
+    def __init__(self, socket_path: str | None, autostart: bool = True) -> None:
         # maxsize: requests' own default, so concurrent callers reuse connections.
-        super().__init__("vinowhisper", maxsize=10, socket_path=socket_path)
+        super().__init__("vinowhisper", maxsize=10, socket_path=socket_path, autostart=autostart)
 
 
 class UnixSocketAdapter(HTTPAdapter):
-    def __init__(self, socket_path: Path | None) -> None:
+    def __init__(self, socket_path: Path | None, autostart: bool = True) -> None:
         super().__init__()
-        self._pool = _UnixConnectionPool(None if socket_path is None else str(socket_path))
+        self._pool = _UnixConnectionPool(
+            None if socket_path is None else str(socket_path), autostart
+        )
 
     def get_connection_with_tls_context(
         self,
@@ -78,13 +100,13 @@ class UnixSocketAdapter(HTTPAdapter):
         self._pool.close()
 
 
-def session(socket_path: Path | None = None) -> requests.Session:
+def session(socket_path: Path | None = None, autostart: bool = True) -> requests.Session:
     result = requests.Session()
     # Never through a proxy, which requests would otherwise take from http_proxy.
     result.trust_env = False
     # No https:// adapter and nothing over TCP: a stray URL fails instead of leaving the machine.
     result.adapters.clear()
-    result.mount("http://", UnixSocketAdapter(socket_path or config.server_socket()))
+    result.mount("http://", UnixSocketAdapter(socket_path or config.server_socket(), autostart))
     return result
 
 

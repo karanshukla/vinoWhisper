@@ -50,6 +50,10 @@ fn is_zombie(stat: &str) -> bool {
 
 // Own session and no inherited pipes: an installer waiting on its output must not wait on the tray.
 pub fn spawn_detached(exe: &Path, args: &[String]) -> io::Result<()> {
+    spawn_detached_child(exe, args).map(drop)
+}
+
+pub fn spawn_detached_child(exe: &Path, args: &[String]) -> io::Result<std::process::Child> {
     let mut command = Command::new(exe);
     command
         .args(args)
@@ -60,7 +64,7 @@ pub fn spawn_detached(exe: &Path, args: &[String]) -> io::Result<()> {
     unsafe {
         command.pre_exec(|| rustix::process::setsid().map(drop).map_err(io::Error::from));
     }
-    command.spawn().map(drop)
+    command.spawn()
 }
 
 #[cfg(test)]

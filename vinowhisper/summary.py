@@ -418,18 +418,18 @@ def pending(directory: Path | None = None, state: dict | None = None) -> list[Pa
 
 
 def _send_tray(request: str) -> None:
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime:
+    runtime = config.runtime_dir()
+    if runtime is None:
         return
     with contextlib.suppress(OSError), socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(2.0)
-        sock.connect(str(Path(runtime) / TRAY_SOCKET))
+        sock.connect(str(runtime / TRAY_SOCKET))
         sock.sendall(f"{request}\n".encode())
         sock.recv(256)
 
 
 def announce(ready: list[dict], runtime_dir: str | None = None) -> None:
-    runtime = runtime_dir or os.environ.get("XDG_RUNTIME_DIR")
+    runtime = runtime_dir or config.runtime_dir()
     if not runtime or not ready:
         return
     path = Path(runtime) / config.SUMMARIES_READY_RELPATH
@@ -447,7 +447,7 @@ def announce(ready: list[dict], runtime_dir: str | None = None) -> None:
 
 
 def _runtime_file(relpath: str, runtime_dir: str | None = None) -> Path | None:
-    runtime = runtime_dir or os.environ.get("XDG_RUNTIME_DIR")
+    runtime = runtime_dir or config.runtime_dir()
     return Path(runtime) / relpath if runtime else None
 
 

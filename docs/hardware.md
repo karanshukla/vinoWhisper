@@ -16,7 +16,7 @@ typed it wants to know it didn't happen. The order itself is not configurable:
 there is no machine where the GPU over the NPU is the right default for this
 workload.
 
-A fallback is never silent. It appears in the server's journal, in `/health`,
+A fallback is never silent. It appears in the server's log (`~/.local/state/vinowhisper/server.log`), in `/health`,
 in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 
 ```
@@ -31,15 +31,15 @@ in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 OpenVINO's device list says what is present, not what works. The documented
 case is below: a package reinstall rewrites the level-zero symlink, the NPU
 still enumerates, and `compile_model()` fails after the 10-30s model load. Left
-alone, the socket-activated server re-pays that load on every activation and
-fails again, `Restart=on-failure` retries, and systemd's start limit takes the
-socket down with it. The next `vinowhisper-caption` then gets a bare connection
-refused.
+alone, the server re-pays that load on every start and fails again, and every
+`vinowhisper-caption` waits out a model load to be told so. (Under the systemd
+units it ran from until 2026-11-14, `Restart=on-failure` retried and the start
+limit took the socket down with it.)
 
 So a device that fails to build a pipeline is written to
 `~/.config/vinowhisper/failed-devices.json` with the time and the first line
 of the error, and `--device auto` skips it from the next start on. The skip is
-reported the same way a fallback is: journal, `/health`, the `Ready` event,
+reported the same way a fallback is: the server's log, `/health`, the `Ready` event,
 the status bar's `⚠` line, and the doctor. A missing or unreadable file means
 nothing has failed; the NPU is only ever skipped because a load on it said so.
 

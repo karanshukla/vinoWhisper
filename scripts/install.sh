@@ -225,8 +225,8 @@ main() {
     fi
     run rm -f "${XDG_BIN_HOME:-$HOME/.local/bin}/vinowhisper-upgrade"
 
-    # A running server keeps the old code; the socket starts the new one.
-    run systemctl --user try-restart vinowhisper-server.service 2>/dev/null || true
+    # A running server keeps the old code; vinowhisper-setup stops it, and the next
+    # use starts the new one.
 
     say "Handing over to vinowhisper-setup"
     run uv run --project "$INSTALL_DIR" vinowhisper-setup "${SETUP_ARGS[@]}"

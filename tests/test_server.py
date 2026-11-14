@@ -218,6 +218,8 @@ def main_env(monkeypatch, tmp_path):
     monkeypatch.setattr(server.listen, "listening_socket", lambda: sock)
     monkeypatch.setattr(server, "make_server", lambda *a, **k: FakeServer())
     monkeypatch.setattr(server.threading, "Thread", FakeThread)
+    # Both are for the process's whole life, which here is the test run's.
+    monkeypatch.setattr(server, "_harden", lambda: None)
     monkeypatch.setattr(server, "transcriber", server.transcriber)
     FakeServer.served = False
     yield sock
@@ -435,3 +437,39 @@ def test_health_says_when_captions_or_dictation_are_in_use(client, fake, monkeyp
     # The dictation key going down counts before any audio has been sent.
     client.post("/cleanup/warm")
     assert client.get("/health").get_json()["live_active"] is True
+
+
+def test_quit_answers_and_then_exits(client, monkeypatch):
+    """The exit waits for the answer to be sent: launch.stop reads it to know how to wait."""
+    exits = []
+    monkeypatch.setattr(server.os, "_exit", exits.append)
+    response = client.post("/quit")
+    assert response.get_json() == {"stopping": True, "socket_activated": False}
+    response.close()
+    assert exits == [0]
+
+
+def test_quit_says_when_a_socket_unit_still_holds_the_socket(client, monkeypatch):
+    monkeypatch.setattr(server.os, "_exit", lambda code: None)
+    monkeypatch.setattr(server.listen, "activated", lambda: True)
+    assert client.post("/quit").get_json()["socket_activated"] is True
+
+
+def test_stop_stops_the_running_server_and_starts_none(monkeypatch, capsys):
+    monkeypatch.setattr(
+        server.listen, "listening_socket", lambda: pytest.fail("--stop started a server")
+    )
+    from vinowhisper import launch
+
+    stops = iter([True, False])
+    monkeypatch.setattr(launch, "stop", lambda: next(stops))
+    assert server.main(["--stop"]) == 0
+    assert server.main(["--stop"]) == 1
+    assert "did not stop" in capsys.readouterr().err
+
+
+def test_the_device_comes_from_the_saved_file_unless_given(monkeypatch):
+    assert server._parse_args([]).device == config.DEFAULT_DEVICE
+    config.save_device("GPU")
+    assert server._parse_args([]).device == "GPU"
+    assert server._parse_args(["--device", "CPU"]).device == "CPU"

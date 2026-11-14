@@ -1,13 +1,6 @@
-"""The guided install: the export commands and the generated units.
+"""The guided install: the export commands, and the server step that replaced the units."""
 
-The unit generation is the part worth pinning down. The old checked-in service
-file hardcoded ~/Development/vinoWhisper, which worked on exactly one machine;
-these assertions are what stop that regressing.
-"""
-
-import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from conftest import fake_version
@@ -40,82 +33,6 @@ def test_both_exports_agree_on_the_task_and_the_model():
 def test_an_unknown_variant_is_rejected():
     with pytest.raises(ValueError, match="npu"):
         wizard.export_argv("int8")
-
-
-def test_the_generated_service_points_into_this_environment():
-    service, _ = wizard.unit_files()
-    exec_start = next(line for line in service.splitlines() if line.startswith("ExecStart="))
-    assert str(sys.executable) in exec_start or "vinowhisper-server" in exec_start
-    # The old checked-in unit hardcoded this literal, unexpanded specifier
-    # path regardless of where the repo actually lived. A dynamically
-    # generated ExecStart legitimately contains "Development/vinoWhisper" as
-    # a substring on any machine whose checkout happens to live there, so
-    # this must check for the literal old string, not that substring.
-    assert "%h/Development/vinoWhisper" not in service
-
-
-def test_the_service_is_socket_activated_only():
-    """No [Install]: it is started by the socket unit, never enabled directly."""
-    service, socket = wizard.unit_files()
-    # A section header, not the comment explaining why there isn't one.
-    assert not any(line.strip() == "[Install]" for line in service.splitlines())
-    assert "Requires=vinowhisper-server.socket" in service
-    assert any(line.strip() == "[Install]" for line in socket.splitlines())
-    assert f"ListenStream=%t/{config.SERVER_SOCKET_RELPATH}" in socket
-
-
-def test_the_socket_is_private_to_the_user():
-    """Not a TCP port, which any local user could connect to, or bind first."""
-    _, socket = wizard.unit_files()
-    listen = [line for line in socket.splitlines() if line.startswith("ListenStream=")]
-    assert listen == ["ListenStream=%t/vinowhisper/server.sock"]
-    assert "SocketMode=0600" in socket.splitlines()
-    assert "DirectoryMode=0700" in socket.splitlines()
-
-
-def test_the_reference_socket_unit_matches_the_generated_one():
-    _, generated = wizard.unit_files()
-    reference = (Path(__file__).parent.parent / "systemd/vinowhisper-server.socket").read_text()
-
-    def directives(text):
-        return [line for line in text.splitlines() if line and line[0] not in ";#"]
-
-    assert directives(reference) == directives(generated)
-
-
-def test_reinstalling_rebinds_the_socket(monkeypatch, tmp_path):
-    """An existing install's socket keeps its old ListenStream until it is restarted."""
-    calls = []
-    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path)
-    monkeypatch.setattr(wizard, "_has_systemd", lambda: True)
-    monkeypatch.setattr(
-        wizard.subprocess,
-        "run",
-        lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
-    )
-    outcome = wizard.Wizard(assume_yes=True).install_units()
-    assert outcome.ok
-    assert "ListenStream=%t/" in (tmp_path / "vinowhisper-server.socket").read_text()
-    systemctl = [argv[2:] for argv in calls]
-    assert systemctl == [
-        ["daemon-reload"],
-        ["stop", "vinowhisper-server.service"],
-        ["reset-failed", "vinowhisper-server.service", "vinowhisper-server.socket"],
-        ["enable", "vinowhisper-server.socket"],
-        ["restart", "vinowhisper-server.socket"],
-    ]
-
-
-def test_the_device_choice_reaches_the_unit():
-    service, _ = wizard.unit_files(device="CPU")
-    assert "--device CPU" in service
-
-
-def test_print_units_writes_both_and_changes_nothing(capsys):
-    assert wizard.main(["--print-units"]) == 0
-    output = capsys.readouterr().out
-    assert "vinowhisper-server.service" in output
-    assert "vinowhisper-server.socket" in output
 
 
 def test_yes_and_dry_run_contradict_each_other():
@@ -234,39 +151,6 @@ def test_setup_only_fails_on_a_severe_digest_result(monkeypatch, capsys, status,
     assert (status == integrity.VERIFIED) == (printed.strip() == "")
 
 
-def _directives(unit: str) -> list[str]:
-    return [
-        line
-        for line in unit.splitlines()
-        if line and not line.startswith(("#", ";", "ExecStart=", "Documentation="))
-    ]
-
-
-def test_the_reference_service_matches_the_generated_one():
-    """The checked-in copy is what people read and hand-install; keep it honest."""
-    reference = Path(__file__).resolve().parent.parent / "systemd/vinowhisper-server.service"
-    service, _ = wizard.unit_files()
-    assert _directives(reference.read_text(encoding="utf-8")) == _directives(service)
-
-
-def test_characterization_the_service_hardening_leaves_the_accelerators_reachable():
-    """characterization: the hardening stops short of the obvious next steps.
-
-    MemoryDenyWriteExecute kills OpenVINO's CPU plugin, which JIT-compiles its
-    kernels. PrivateDevices hides /dev/accel and /dev/dri, so the NPU and GPU
-    vanish and "auto" quietly lands on the CPU. ProtectClock and the other
-    namespace settings need PrivateUsers in a user unit, which needs
-    unprivileged user namespaces, which not every distro allows. Adding any of
-    them is a hardware-tested change, not a tidy-up.
-    """
-    service, _ = wizard.unit_files()
-    directives = _directives(service)
-    assert "NoNewPrivileges=yes" in directives
-    assert "UMask=0077" in directives
-    for absent in ("MemoryDenyWriteExecute", "PrivateDevices", "ProtectClock", "PrivateUsers"):
-        assert not any(line.startswith(f"{absent}=") for line in directives)
-
-
 @pytest.fixture
 def venv_bin(monkeypatch, tmp_path):
     """A venv's bin/ holding every entry point, and an empty ~/.local/bin."""
@@ -343,29 +227,64 @@ def test_completion_from_a_wheel_is_skipped_not_failed(monkeypatch, tmp_path):
     assert not (tmp_path / "completions").exists()
 
 
-@pytest.mark.parametrize("failing", ["enable", "restart"])
-def test_a_failed_systemctl_fails_the_step_after_writing_the_units(monkeypatch, tmp_path, failing):
-    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path)
-    monkeypatch.setattr(wizard, "_has_systemd", lambda: True)
-    monkeypatch.setattr(
-        wizard.subprocess,
-        "run",
-        lambda argv, **kw: subprocess.CompletedProcess(argv, int(argv[2] == failing)),
+def _units(tmp_path, monkeypatch, device="CPU"):
+    units = tmp_path / "systemd/user"
+    units.mkdir(parents=True)
+    (units / "vinowhisper-server.service").write_text(
+        f"[Service]\nExecStart=/venv/bin/vinowhisper-server --device {device}\n"
     )
-    outcome = wizard.Wizard(assume_yes=True).install_units()
-    assert outcome.ok is False
-    assert f"systemctl --user {failing}` failed" in outcome.summary
-    assert (tmp_path / "vinowhisper-server.service").is_file()
-    assert (tmp_path / "vinowhisper-server.socket").is_file()
+    (units / "vinowhisper-server.socket").write_text("[Socket]\n")
+    monkeypatch.setattr(wizard.launch, "unit_dirs", lambda: [units])
+    return units
 
 
-def test_no_systemd_skips_the_units(monkeypatch, tmp_path):
-    monkeypatch.setattr(wizard, "UNIT_DIR", tmp_path / "units")
-    monkeypatch.setattr(wizard, "_has_systemd", lambda: False)
-    outcome = wizard.Wizard(assume_yes=True).install_units()
+def test_the_server_step_installs_nothing_and_stops_a_running_server(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(wizard.launch, "stop", lambda: stopped.append(True) or True)
+    outcome = wizard.Wizard(assume_yes=True).setup_server()
+    assert outcome.ok
+    assert "starts on first use" in outcome.summary
+    assert stopped == [True]
+    assert not config.SERVER_FILE.exists()
+
+
+def test_the_server_step_removes_units_an_earlier_version_installed(monkeypatch, tmp_path):
+    """The unit's device moves to server.json, which is where the server reads it now."""
+    units = _units(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(wizard.launch, "_systemctl", lambda *args: calls.append(args) or True)
+    monkeypatch.setattr(wizard.launch, "stop", lambda: True)
+    outcome = wizard.Wizard(assume_yes=True).setup_server()
+    assert outcome.ok and "old systemd units removed" in outcome.summary
+    assert not list(units.iterdir())
+    assert calls[0] == ("disable", "--now", *wizard.launch.UNITS)
+    assert ("daemon-reload",) in calls
+    assert config.load_device() == "CPU"
+
+
+def test_dry_run_leaves_the_old_units(monkeypatch, tmp_path):
+    units = _units(tmp_path, monkeypatch)
+    monkeypatch.setattr(wizard.launch, "stop", lambda: pytest.fail("stopped the server"))
+    outcome = wizard.Wizard(dry_run=True).setup_server()
     assert outcome.ok is None
-    assert "vinowhisper-server" in outcome.summary
-    assert not (tmp_path / "units").exists()
+    assert len(list(units.iterdir())) == 2
+
+
+def test_an_explicit_device_is_saved_and_a_plain_run_keeps_it(monkeypatch):
+    monkeypatch.setattr(wizard.launch, "stop", lambda: True)
+    assert wizard.Wizard(assume_yes=True, device="GPU").setup_server().ok
+    assert config.load_device() == "GPU"
+    again = wizard.Wizard(assume_yes=True)
+    assert again.device == "GPU"
+    assert again.setup_server().ok
+    assert config.load_device() == "GPU"
+
+
+def test_a_server_that_will_not_stop_fails_the_step(monkeypatch):
+    monkeypatch.setattr(wizard.launch, "stop", lambda: False)
+    outcome = wizard.Wizard(assume_yes=True).setup_server()
+    assert outcome.ok is False
+    assert "vinowhisper-server --stop" in outcome.summary
 
 
 STEPS = (
@@ -374,7 +293,7 @@ STEPS = (
     "check_device",
     "check_model",
     "save_language",
-    "install_units",
+    "setup_server",
     "link_binaries",
     "install_completion",
 )
@@ -397,10 +316,10 @@ def test_run_all_is_ready_when_every_step_passes(monkeypatch, capsys):
 
 
 def test_run_all_succeeds_but_lists_skipped_steps(monkeypatch, capsys):
-    _steps(monkeypatch, install_units=None)
+    _steps(monkeypatch, setup_server=None)
     wiz = wizard.Wizard(assume_yes=True)
     assert wiz.run_all() == 0
-    assert wiz.skipped == ["Systemd units"]
+    assert wiz.skipped == ["Server"]
     assert "left undone" in capsys.readouterr().out
 
 
@@ -414,7 +333,7 @@ def test_the_overlay_is_skipped_on_gnome(monkeypatch):
 
 
 def test_run_all_fails_when_any_step_fails(monkeypatch, capsys):
-    _steps(monkeypatch, check_model=False, install_units=None)
+    _steps(monkeypatch, check_model=False, setup_server=None)
     wiz = wizard.Wizard(assume_yes=True)
     assert wiz.run_all() == 1
     assert wiz.failed == ["Model export"]

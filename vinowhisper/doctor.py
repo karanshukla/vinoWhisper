@@ -18,6 +18,7 @@ from . import (
     ovfetch,
     recorder,
     replacements,
+    sandbox,
     style,
     vocabulary,
     whisper_step,
@@ -330,9 +331,8 @@ def _server() -> list[Result]:
             Result(
                 WARN,
                 "server",
-                f"not reachable at {address} ({exc.__class__.__name__}); "
-                "systemctl --user status vinowhisper-server.socket "
-                "(units from 0.6.x and earlier listen on TCP: re-run vinowhisper-setup)",
+                f"not reachable at {address} ({exc.__class__.__name__}: {exc}); "
+                f"its log is {config.SERVER_LOG}",
             )
         ]
     except ValueError:
@@ -345,7 +345,7 @@ def _server() -> list[Result]:
                 WARN,
                 "server version",
                 f"server is {payload['version']}, client is {__version__} — "
-                "systemctl --user restart vinowhisper-server.service",
+                "vinowhisper-server --stop (the next use starts the new one)",
             )
         )
     for warning in payload.get("warnings", []):
@@ -516,9 +516,19 @@ def _verdict(results: list[Result]) -> str | None:
     return None
 
 
+def _flatpak() -> list[Result]:
+    app = sandbox.flatpak_id()
+    if app is None:
+        return []
+    branch = sandbox.info_value("Instance", "branch") or "?"
+    kind = "a release" if branch == sandbox.RELEASE_BRANCH else "built from a checkout"
+    return [Result(OK, "flatpak", f"{app}, branch {branch} ({kind}); the host is below")]
+
+
 def collect(probe: bool = True) -> list[Result]:
     results: list[Result] = [
         Result(OK, "vinowhisper", __version__),
+        *_flatpak(),
         _python(),
         _distro(),
     ]

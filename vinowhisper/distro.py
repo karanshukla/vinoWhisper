@@ -3,6 +3,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 OS_RELEASE = Path("/etc/os-release")
+# In a Flatpak /etc/os-release is the runtime's; the host's, whose kernel driver and
+# groups the advice is about, is here.
+HOST_OS_RELEASE = Path("/run/host/os-release")
 ROOT = Path("/")
 
 # Image-based systems, where /usr is read-only and packages go into the next boot.
@@ -309,7 +312,12 @@ def _image(root: Path) -> str:
     return IMAGE_TRANSACTIONAL if tool else IMAGE_READ_ONLY
 
 
-def detect(path: Path = OS_RELEASE, root: Path = ROOT) -> Distro:
+def detect(path: Path | None = None, root: Path = ROOT) -> Distro:
+    if path is None:
+        from . import sandbox
+
+        hosted = sandbox.flatpak_id() is not None and HOST_OS_RELEASE.is_file()
+        path = HOST_OS_RELEASE if hosted else OS_RELEASE
     try:
         values = _parse_os_release(path.read_text(encoding="utf-8"))
     except OSError:

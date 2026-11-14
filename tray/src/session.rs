@@ -74,23 +74,26 @@ pub fn not_found_message() -> String {
     )
 }
 
-const SERVER_UNIT: &str = "vinowhisper-server.service";
+pub const SERVER: &str = "vinowhisper-server";
 
-/// Stops the server so the next connection starts it on the new language: the socket
-/// unit stays up and starts it again. Blocks until systemd has stopped it.
-pub fn stop_server() {
-    match Process::new("systemctl")
-        .args(["--user", "stop", SERVER_UNIT])
+/// Stops the server so the next connection starts it on the new language. Blocks until
+/// it has stopped.
+pub fn stop_server(program: Option<&Path>) {
+    let program = program.unwrap_or(Path::new(SERVER));
+    match Process::new(program)
+        .arg("--stop")
+        .stdin(Stdio::null())
         .status()
     {
         Ok(status) if status.success() => {}
         Ok(status) => eprintln!(
-            "[vinowhisper-tray] could not stop {SERVER_UNIT} ({status}); if you started \
-             vinowhisper-server by hand, restart it to pick up the new language"
+            "[vinowhisper-tray] {SERVER} --stop failed ({status}); run it by hand to pick up \
+             the new language"
         ),
         Err(err) => eprintln!(
-            "[vinowhisper-tray] could not run systemctl ({err}); restart vinowhisper-server \
-             to pick up the new language"
+            "[vinowhisper-tray] could not run {} ({err}); run {SERVER} --stop to pick up \
+             the new language",
+            program.display()
         ),
     }
 }

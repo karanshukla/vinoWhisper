@@ -27,7 +27,7 @@ confirmed in place.
 - **Source download** only feeds an export, so deleting it changes nothing that
   runs. A new export downloads it again.
 - **Delete Whisper** removes every export and the source download. If Whisper is
-  the speech model, it stops `vinowhisper-server.service` first, the way a
+  the speech model, it stops the server (`vinowhisper-server --stop`) first, the way a
   language switch does, and dictation and captions stay off until
   `vinowhisper-setup` exports it again. With Canary selected the server keeps
   running.

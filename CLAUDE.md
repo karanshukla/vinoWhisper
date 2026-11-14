@@ -508,6 +508,59 @@ table in `docs/tray.md`, "A personal vocabulary".
   dictation whose key press comes within 30 s of the last successful paste
   (`dictation::Spacing`). A guess, since focus is invisible. Unit tests only.
 
+## No systemd, and a Flatpak, added 2026-11-14
+
+Asked for by the user: "vinosearch got moved to a flatpak, do the same for vinowhisper",
+then "you may need to remove systemd first". Both follow vinoSearch's (its commits
+347540f and 82189bc). Write-ups: `docs/architecture.md` (the server), `docs/install.md`
+"Flatpak", `docs/development.md` "The Flatpak".
+
+- **The server is started by its clients, not a socket unit** (`launch.py`).
+  `client._UnixConnection` calls `launch.ensure` when the connect is refused or the
+  socket is missing, so every command gets it for free. `POST /quit` and
+  `vinowhisper-server --stop` replace `systemctl stop`. The device moved from the unit's
+  ExecStart to `server.json`. `--stop`, setup and the installers remove old units; the
+  server still accepts a systemd-passed socket so a leftover unit works meanwhile.
+  `tests/conftest.py` refuses every spawn, or a test with no server would start one.
+- **Lost with the unit:** `Restart=on-failure`, the journal (now
+  `~/.local/state/vinowhisper/server.log`), and the seccomp hardening. The
+  characterization test for the hardening was deleted with it, on purpose.
+- **Each `flatpak run` is its own sandbox** with its own pid namespace and runtime dir.
+  Only `$XDG_RUNTIME_DIR/app/<id>` is shared, so both sockets and the summary files go
+  there (`config.runtime_dir`, `settings::sandbox::runtime_dir`). Measured in a
+  container: a process started plainly dies with the sandbox that started it, so the
+  server and a restarted tray are started with `flatpak-spawn --latest-version`.
+- **The app id is the tray's `APP_ID`**, unchanged, so bound shortcuts survive a move to
+  the Flatpak. The price: it cannot sit beside a native install.
+- **The bundle has its own Python 3.13** (the 26.08 runtime's is 3.14) and no torch:
+  setup makes a venv under the app's data for the export extra.
+- **flatpak-builder's eu-strip breaks python-build-standalone's binary** even with
+  `no-debuginfo` on that module alone; it is off manifest-wide.
+- **A peer in another sandbox has pid 0** (another pid namespace), and rustix's
+  `UCred` holds a non-zero `Pid`, so `socket_peercred` reads as an error there and the
+  tray turned away every command. `ipc::same_user` skips the check in the Flatpak, where
+  the socket's directory is the app's own. Found on headless Sway, not by a unit test.
+- `/.flatpak-info` is read with `configparser` (the crate, and Python's module), at the
+  user's request for crates over hand-written parsers. Both treat `;` and `#` inside a
+  value as part of it; the crate's default does not, and a test pins that.
+- **Speed was checked at the user's request** (2026-11-14, cloud Xeon, CPU): decode is
+  the same in and out of the sandbox (0.86 s per 12 s window), `launch.ensure` adds
+  nothing measurable to a cold start, and three things were slower until fixed: the
+  bundle recompiled 17 stdlib modules at every start (now compiled in the manifest),
+  `--stop` imported Flask to send one request (now `launch.server_main`, 0.35 s to
+  0.1 s), and `launch`'s imports cost every command 4 ms (now inside its functions).
+  Tables in `docs/install.md` and `docs/architecture.md`. Nothing here is an NPU number.
+- **`flatpak-spawn` outlives its usefulness**: it stays while its child lives and holds
+  the caller's sandbox and pipes open. `launch.ensure` and the tray's `restart` kill it
+  (SIGKILL; it forwards the rest) once the child answers. The child is unaffected.
+- **Verified 2026-11-14 in a cloud container** (Flatpak 1.14.6; no NPU, GPU or audio):
+  the list at the end of `docs/install.md` "Flatpak": build, smoke test, a real CPU
+  export and decode across sandboxes, and the tray, overlay and window on headless Sway.
+  **Not verified anywhere:** the tray icon, portals, dictation, capture, the NPU inside
+  the sandbox, and Plasma. Flatpak 1.15.6+ gives apps a `wp_security_context_v1` Wayland connection;
+  Sway hides layer-shell and data-control from those, and what KWin does is unchecked.
+  If the overlay or the clipboard fails in the Flatpak, look there first.
+
 ## Architecture
 
 ```
@@ -523,7 +576,10 @@ vinowhisper/
   distro.py       /etc/os-release -> package names and install commands, per family
   client.py       TranscriptionClient, streaming HTTP over the server's Unix socket
   server.py       Flask on a Unix socket, socket-activated + self-idle-exit
-  listen.py       the server's socket: systemd's, or bound 0600 under $XDG_RUNTIME_DIR
+  listen.py       the server's socket: bound 0600 under the runtime dir, or a leftover unit's
+  launch.py       starting the server when a client finds nobody listening, and stopping it
+  sandbox.py      what /.flatpak-info says: the app id, the branch, argv for flatpak-spawn
+  flatpak_update.py  vinowhisper-flatpak-update: the Flatpak's Update button
   transcriber.py  BaseTranscriber (device, failures, streaming), WhisperTranscriber over WhisperPipeline
   canary.py       CanaryTranscriber: numpy mel features, tokenizer, our own NPU decode loop
   stitch.py       Stitcher, LocalAgreement-2 merge of overlapping transcripts
@@ -644,7 +700,9 @@ The server refuses to run without `XDG_RUNTIME_DIR` (no `/tmp` fallback) and
 refuses a TCP fd from a pre-move socket unit. The GUI never talks HTTP; it
 spawns the Python commands.
 
-**Socket-activated with self-idle-exit, not an always-on daemon.** Deliberate,
+**Started on demand with self-idle-exit, not an always-on daemon.** Until 2026-11-14
+this was a systemd socket unit; the clients start the server now (section above), and
+the reasoning below still holds with "the first client" for "systemd". Deliberate,
 discussed explicitly with the user, worth preserving the reasoning: the socket
 unit owns the socket at boot with no process running, systemd spawns the service
 on first connection (that is when the NPU load cost happens), and the service
@@ -972,7 +1030,7 @@ without the laptop; the tests fake `ctypes.CDLL`.
 `--language en|fr|de|es|auto` and `--task transcribe|translate` on the server
 (and `vinowhisper-setup`). They default to `~/.config/vinowhisper/language.json`,
 which the tray menu (Language, Translate to English) and setup write, not to the unit;
-the tray stops `vinowhisper-server.service` and socket activation restarts it. Flags
+the tray runs `vinowhisper-server --stop` and the next client restarts it. Flags
 override the file. The tray switch has unit tests only: it has never run in a live
 session (no NPU, and the tray needs a real Plasma/KDE one). `en` keeps
 whisper-small.en; anything else loads `openai/whisper-small` from its own

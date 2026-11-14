@@ -11,11 +11,22 @@ from pathlib import Path
 
 import requests
 
-from . import __version__, capture, config, devices, distro, integrity, overlay, ovfetch, style
+from . import (
+    __version__,
+    capture,
+    config,
+    devices,
+    distro,
+    integrity,
+    launch,
+    overlay,
+    ovfetch,
+    sandbox,
+    style,
+)
 from . import source as model_source
 
 BIN_DIR = Path.home() / ".local/bin"
-UNIT_DIR = Path.home() / ".config/systemd/user"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
 COMMANDS = (
     "caption",
@@ -51,19 +62,22 @@ class Wizard:
         self,
         assume_yes: bool = False,
         dry_run: bool = False,
-        device: str = "auto",
+        device: str | None = None,
         language: str | None = None,
         task: str | None = None,
         model: str | None = None,
     ):
         self.assume_yes = assume_yes
         self.dry_run = dry_run
-        self.device = device
+        # Only an explicit choice is written; a plain re-run keeps the saved one.
+        self.explicit_device = device is not None
+        self.device = device or config.load_device()
         # Only an explicit choice is written; a plain re-run keeps what the tray chose.
         self.explicit_language = language is not None or task is not None or model is not None
         self.language, self.task, self.model = config.resolve_language(language, task, model)
         self.multilingual = config.is_multilingual(self.language, self.task)
         self.distro = distro.detect()
+        self.flatpak = sandbox.flatpak_id() is not None
         self.failed: list[str] = []
         self.skipped: list[str] = []
 
@@ -101,6 +115,14 @@ class Wizard:
             self.say(f"  ✗ exited {exc.returncode}")
             return False
         return True
+
+    def install_export_extra(self) -> bool:
+        commands = export_extra_commands()
+        for argv in commands:
+            self.say(f"  $ {' '.join(argv)}")
+        if not self.confirm("install it?"):
+            return False
+        return all(self.execute(argv) for argv in commands)
 
     def step(self, title: str, action: Callable[[], Outcome], optional: bool = False) -> None:
         style.emit()
@@ -237,7 +259,7 @@ class Wizard:
         cli = optimum_cli()
         if cli is None:
             self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
-            if not self.run(export_extra_argv(), "install it?"):
+            if not self.install_export_extra():
                 return Outcome(None, "install the export extra, then re-run this")
             cli = optimum_cli()
             if cli is None:
@@ -339,58 +361,35 @@ class Wizard:
             return Outcome(False, f"could not write {config.LANGUAGE_FILE}: {exc}")
         return Outcome(True, f"{summary}, saved to {config.LANGUAGE_FILE}")
 
-    def install_units(self) -> Outcome:
-        if not _has_systemd():
-            return Outcome(
-                None,
-                "no systemd user session — start the server yourself with "
-                "`vinowhisper-server` before captioning",
-            )
-
-        service, socket = unit_files(device=self.device)
-        self.say(f"  Writing {UNIT_DIR}/vinowhisper-server.{{service,socket}}")
-        self.say("  ExecStart: " + _exec_start(self.device))
-        self.say(
-            "  Then: systemctl --user daemon-reload, stop vinowhisper-server.service "
-            "(drops a loaded model), reset-failed, enable and restart vinowhisper-server.socket"
+    def setup_server(self) -> Outcome:
+        # Nothing to install: the server is started by whichever command connects first and
+        # exits when idle. What is left to do is undo what earlier versions installed.
+        units = launch.old_units()
+        if units:
+            self.say("  The server no longer runs from systemd units; these are left over:")
+            for unit in units:
+                self.say(f"    {unit}")
+            self.say("  $ systemctl --user disable --now " + " ".join(launch.UNITS))
+            if not self.confirm("remove them?"):
+                return Outcome(None, "old units left in place; they still start the server")
+            launch.retire_units()
+        if self.explicit_device and self.device != config.load_device():
+            if self.dry_run:
+                return Outcome(None, f"would write device {self.device} to {config.SERVER_FILE}")
+            try:
+                config.save_device(self.device)
+            except OSError as exc:
+                return Outcome(False, f"could not write {config.SERVER_FILE}: {exc}")
+        if self.dry_run:
+            return Outcome(None, "would stop a running server, so the next use starts this one")
+        # A running server keeps the old code, device and model until it is stopped.
+        if not launch.stop():
+            return Outcome(False, "the running server did not stop; `vinowhisper-server --stop`")
+        removed = "old systemd units removed; " if units else ""
+        return Outcome(
+            True,
+            f"{removed}device {self.device}; the server starts on first use and exits when idle",
         )
-        if not self.confirm("install the systemd units?"):
-            return Outcome(None, "units not installed")
-
-        UNIT_DIR.mkdir(parents=True, exist_ok=True)
-        (UNIT_DIR / "vinowhisper-server.service").write_text(service, encoding="utf-8")
-        (UNIT_DIR / "vinowhisper-server.socket").write_text(socket, encoding="utf-8")
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
-        # Running units keep their old ExecStart/ListenStream (TCP through 0.6.x) until restarted.
-        subprocess.run(
-            ["systemctl", "--user", "stop", "vinowhisper-server.service"],
-            check=False,
-            capture_output=True,
-        )
-        # A new server refusing an old unit's TCP socket loops into the start limit.
-        subprocess.run(
-            [
-                "systemctl",
-                "--user",
-                "reset-failed",
-                "vinowhisper-server.service",
-                "vinowhisper-server.socket",
-            ],
-            check=False,
-            capture_output=True,
-        )
-        # The socket, never the service: the service is only ever socket-activated.
-        enabled = subprocess.run(
-            ["systemctl", "--user", "enable", "vinowhisper-server.socket"], check=False
-        )
-        if enabled.returncode:
-            return Outcome(False, "units written but `systemctl --user enable` failed")
-        restarted = subprocess.run(
-            ["systemctl", "--user", "restart", "vinowhisper-server.socket"], check=False
-        )
-        if restarted.returncode:
-            return Outcome(False, "units written but `systemctl --user restart` failed")
-        return Outcome(True, "socket unit enabled; the server starts on first use")
 
     def link_binaries(self) -> Outcome:
         bin_dir = Path(sys.executable).parent
@@ -541,13 +540,16 @@ class Wizard:
         self.step("Inference device", self.check_device)
         self.step("Model export", self.check_model)
         self.step("Language", self.save_language)
-        self.step("Systemd units", self.install_units)
-        self.step("Commands on PATH", self.link_binaries)
-        self.step("Bash completion", self.install_completion)
-        if os.environ.get("WAYLAND_DISPLAY"):
-            self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
-        if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
-            self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
+        self.step("Server", self.setup_server)
+        # The Flatpak carries its commands, the tray and the windows, and Flatpak exports
+        # their menu entries; nothing of it goes in ~/.local.
+        if not self.flatpak:
+            self.step("Commands on PATH", self.link_binaries)
+            self.step("Bash completion", self.install_completion)
+            if os.environ.get("WAYLAND_DISPLAY"):
+                self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
+            if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
+                self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
 
         style.emit()
         if self.failed:
@@ -620,6 +622,9 @@ def export_argv(
 
 
 def optimum_cli() -> str | None:
+    if sandbox.flatpak_id() is not None:
+        inside = config.EXPORT_ENV_DIR / "bin/optimum-cli"
+        return str(inside) if inside.exists() else None
     beside = Path(sys.executable).with_name("optimum-cli")
     if beside.exists():
         return str(beside)
@@ -667,6 +672,33 @@ def export_extra_argv() -> list[str]:
     ]
 
 
+def export_extra_commands() -> list[list[str]]:
+    if sandbox.flatpak_id() is None:
+        return [export_extra_argv()]
+    # /app is read-only, so the extra goes in a venv in the app's data that sees the
+    # bundled OpenVINO. The requirements are this package's own, read from its metadata.
+    from importlib.metadata import requires
+
+    extra = [
+        requirement.split(";")[0].strip()
+        for requirement in requires("vinowhisper") or []
+        if "extra ==" in requirement and "export" in requirement.split(";", 1)[1]
+    ]
+    env = config.EXPORT_ENV_DIR
+    return [
+        [sys.executable, "-m", "venv", "--system-site-packages", str(env)],
+        [
+            str(env / "bin/python"),
+            "-m",
+            "pip",
+            "install",
+            "--extra-index-url",
+            TORCH_CPU_INDEX,
+            *extra,
+        ],
+    ]
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -699,65 +731,9 @@ def _has_systemd() -> bool:
     return Path("/run/systemd/system").exists()
 
 
-def _exec_start(device: str = "auto") -> str:
-    script = Path(sys.executable).with_name("vinowhisper-server")
-    if script.exists():
-        return f"{script} --device {device}"
-    return f"{sys.executable} -m vinowhisper.server --device {device}"
-
-
-def unit_files(device: str = "auto") -> tuple[str, str]:
-    service = f"""\
-[Unit]
-Description=vinoWhisper transcription server
-Documentation=https://github.com/karanshukla/vinoWhisper
-Requires=vinowhisper-server.socket
-
-[Service]
-ExecStart={_exec_start(device)}
-Restart=on-failure
-RestartSec=2
-# Only seccomp-backed hardening: the namespace kind (ProtectClock, PrivateTmp,
-# ...) needs PrivateUsers in a user unit. No MemoryDenyWriteExecute (the CPU
-# plugin JITs) or PrivateDevices (the NPU and GPU are /dev/accel, /dev/dri).
-NoNewPrivileges=yes
-UMask=0077
-LockPersonality=yes
-SystemCallArchitectures=native
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-RestrictNamespaces=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-
-# Generated by vinowhisper-setup {__version__}. Re-run it after moving the
-# checkout or switching Python environments.
-#
-# No [Install]/WantedBy: this unit is socket-activated (see
-# vinowhisper-server.socket), not enabled or started directly. Systemd starts
-# it on the first connection and it self-exits after config.IDLE_TIMEOUT_S
-# idle; that clean exit(0) is not a failure, and Restart=on-failure only
-# covers real crashes.
-"""
-    socket = f"""\
-[Unit]
-Description=vinoWhisper transcription server socket
-Documentation=https://github.com/karanshukla/vinoWhisper
-
-[Socket]
-ListenStream=%t/{config.SERVER_SOCKET_RELPATH}
-SocketMode=0600
-DirectoryMode=0700
-Accept=no
-
-[Install]
-WantedBy=sockets.target
-"""
-    return service, socket
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Guided setup: capture tools, NPU driver, model export, systemd units.",
+        description="Guided setup: capture tools, NPU driver, model export.",
         epilog="Every step is idempotent; re-run it as often as you like.",
     )
     parser.add_argument(
@@ -774,10 +750,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--device",
-        default=config.DEFAULT_DEVICE,
+        default=None,
         metavar="NPU|GPU|CPU|auto",
-        help="Device to set up for. Decides which model export is needed and "
-        "what the generated systemd unit passes to the server.",
+        help="Device to set up for. Decides which model export is needed, and is saved to "
+        f"{config.SERVER_FILE} for the server; without it the saved choice is kept "
+        f"(default {config.DEFAULT_DEVICE}).",
     )
     parser.add_argument(
         "--language",
@@ -802,11 +779,6 @@ def main(argv: list[str] | None = None) -> int:
         "downloads its prebuilt export. Saved beside the language.",
     )
     parser.add_argument(
-        "--print-units",
-        action="store_true",
-        help="Print the systemd units that would be generated, then exit.",
-    )
-    parser.add_argument(
         "--gui",
         action="store_true",
         help="Install only the optional desktop app: the overlay and tray "
@@ -828,15 +800,13 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    if args.print_units:
-        service, socket = unit_files(args.device)
-        print(f"# {UNIT_DIR}/vinowhisper-server.service\n{service}")
-        print(f"# {UNIT_DIR}/vinowhisper-server.socket\n{socket}")
-        return 0
-
     if args.yes and args.dry_run:
         print("--yes and --dry-run contradict each other", file=sys.stderr)
         return 2
+
+    if sandbox.flatpak_id() is not None and (args.gui or args.ovfetch):
+        print("The Flatpak carries the tray, the windows and Intel's NPU driver: nothing to do.")
+        return 0
 
     wizard = Wizard(
         assume_yes=args.yes,

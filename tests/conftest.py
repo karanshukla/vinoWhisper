@@ -26,6 +26,21 @@ def fake_version(major: int, minor: int, micro: int = 0) -> _Version:
 
 
 @pytest.fixture(autouse=True)
+def no_real_server(monkeypatch, tmp_path):
+    """A client that finds nobody listening starts the server; a test must never do that,
+    read the user's server.json, or find units a real install left behind."""
+    from vinowhisper import launch
+
+    def refuse(argv):
+        raise OSError("tests do not start a server")
+
+    monkeypatch.setattr(launch, "_spawn", refuse)
+    monkeypatch.setattr(launch, "unit_dirs", lambda: [tmp_path / "no-units"])
+    monkeypatch.setattr(config, "SERVER_FILE", tmp_path / "no-server.json")
+    monkeypatch.setattr(config, "SERVER_LOG", tmp_path / "no-server.log")
+
+
+@pytest.fixture(autouse=True)
 def no_real_cleanup_settings(monkeypatch, tmp_path):
     """Dictation reads the user's cleanup.json and model; a test must never see either."""
     monkeypatch.setattr(config, "CLEANUP_FILE", tmp_path / "no-cleanup.json")

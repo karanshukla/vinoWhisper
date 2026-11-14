@@ -1,17 +1,44 @@
 # Design decision: scale-to-zero, not an always-on daemon
 
-Deliberately **socket-activated**, not a resident systemd service. Same
-lazy-load/idle-unload shape as serverless cold starts, via systemd's own
-primitives:
+Deliberately **started on demand**, not a resident service. Same
+lazy-load/idle-unload shape as serverless cold starts, with no service manager:
 
-- `vinowhisper-server.socket` owns the listening socket at boot,
-  `$XDG_RUNTIME_DIR/vinowhisper/server.sock`, readable by your user only. No
-  model loaded, no Python process running.
-- Systemd starts `vinowhisper-server.service` on the _first_ connection. That
-  is when the NPU model load (~10-30s) happens.
-- The service tracks its own last-request time and self-exits after
-  `config.IDLE_TIMEOUT_S` (5 min). The socket unit is untouched, so the next
-  caption session respawns it.
+- Nothing runs until something needs the server. No model loaded, no Python
+  process.
+- Every client (captions, dictation, a file import, the doctor) connects to
+  `$XDG_RUNTIME_DIR/vinowhisper/server.sock`. When nobody is listening, the
+  client starts `vinowhisper-server` itself (`vinowhisper/launch.py`), detached
+  and in its own session, waits for the socket and connects again. That is when
+  the NPU model load (~10-30s) happens. A lock beside the socket keeps two
+  clients arriving together to one server.
+- The server tracks its own last-request time and exits after
+  `config.IDLE_TIMEOUT_S` (5 min). The next client starts it again.
+
+What that costs, measured 2026-11-14 on a cloud Xeon with a stubbed model: the
+server takes 0.25-0.30 s from exec until its socket accepts (Python importing
+Flask and numpy, which systemd's start paid too), and `launch.ensure` returned in
+0.25 s, so the client adds nothing that shows; it probes the socket every 2 ms. With
+the server up, a request's connection is the same single `connect` as before. The
+launcher's own imports (subprocess, fcntl and the rest) are inside its functions:
+every command imports `launch`, and it adds 0.2 ms to their start. `vinowhisper-server
+--stop` is answered by `launch.server_main` before the server module is imported,
+0.1 s with a server running against 0.35 s through it, because the tray waits on it to
+switch language. `systemctl stop` was quicker still, by the cost of starting Python.
+
+Until 2026-11-14 a systemd socket unit held the socket and started the server.
+That tied it to systemd and cannot work in a Flatpak, which exports no units, so
+the clients do what the socket unit did. `vinowhisper-setup`, an upgrade and
+`vinowhisper-server --stop` remove the old units; until then a leftover socket
+unit keeps working, since the server still takes a socket systemd passes it.
+What systemd gave and this does not: `Restart=on-failure` (a crashed server is
+started by the next request instead, and `failures.py` still keeps a broken
+device from being retried forever) and the journal (below).
+
+The device, which the unit's `ExecStart` carried, is in
+`~/.config/vinowhisper/server.json` (`vinowhisper-setup --device` writes it; a
+`--device` on the server overrides it). The server's output goes to
+`~/.local/state/vinowhisper/server.log`, moved to `server.log.old` past 1 MB
+when a server starts.
 
 Why bother on a 16GB machine for a ~500MB model: the always-on version holds
 that RAM resident regardless of use, and relying on the kernel to swap it to
@@ -34,20 +61,16 @@ one after an OpenVINO or driver upgrade changes the cache key.
 cold start shows up as an explicit "waiting for the transcription server"
 line rather than as the captions appearing to be broken for 30 seconds.
 
-**Stopping it.** There's no daemon to manage day to day. The socket unit
-holds the socket with no process behind it until something connects, and the
-service self-exits after `IDLE_TIMEOUT_S` regardless. Two commands cover the
-rest:
+**Stopping it.** There's no daemon to manage day to day: the server exits
+after `IDLE_TIMEOUT_S` on its own. To drop the resident NPU process now:
 
 ```bash
-systemctl --user stop vinowhisper-server.service          # drop the resident NPU process now
-systemctl --user disable --now vinowhisper-server.socket  # full teardown
+vinowhisper-server --stop
 ```
 
-The socket unit is what respawns the service, so disabling it (not just the
-service) is the one to use before a reboot or when you're done with the tool
-for a while, otherwise the next `vinowhisper-caption` run just spawns it
-again on first connection.
+That posts `/quit` to the socket and waits for the server to go. A decode in
+flight is cut off, as `systemctl stop` did. Nothing is left behind to tear
+down: with no server and no client, nothing is running.
 
 ## The server itself
 
@@ -55,26 +78,22 @@ again on first connection.
   with no WAV container, because the client is a rolling buffer that never has
   a file. A body longer than one `MAX_WINDOW_S` window (plus 4KB) is refused
   with a 413 before it is read.
-- The service unit carries only the hardening a *user* unit can apply without
-  user namespaces: the seccomp-backed settings, `NoNewPrivileges` and
-  `UMask=0077`. `systemd-analyze security --offline` scores it 7.8, down from
-  9.6 (2026-10-02, systemd 255). The next steps are deliberately not taken:
-  `MemoryDenyWriteExecute` breaks OpenVINO's CPU plugin, which JIT-compiles
-  its kernels; `PrivateDevices` hides `/dev/accel` and `/dev/dri`, so the NPU
-  and GPU vanish and "auto" lands on the CPU; `ProtectClock`, `PrivateTmp`,
-  `ProtectHome` and the rest of the namespace settings turn on `PrivateUsers`
-  in a user unit, which needs unprivileged user namespaces. A CPU
-  `compile_model` ran under the added set on 2026-10-02; the NPU and GPU have
-  not.
+- It sets a `0077` umask and `PR_SET_NO_NEW_PRIVS` on itself when it starts,
+  which is what the old unit's `UMask=0077` and `NoNewPrivileges=yes` did. The
+  unit's seccomp-backed settings (`RestrictAddressFamilies`,
+  `RestrictNamespaces`, `LockPersonality` and the like) went with the unit on
+  2026-11-14 and nothing replaces them. For the record of what could not be
+  added even then: `MemoryDenyWriteExecute` breaks OpenVINO's CPU plugin, which
+  JIT-compiles its kernels, and `PrivateDevices` hides `/dev/accel` and
+  `/dev/dri`, so the NPU and GPU vanish and "auto" lands on the CPU.
 - Calls into the pipeline are serialized by a lock. `WhisperPipeline` is not
   documented as thread-safe, and the NPU static pipeline holds one set of
   compiled requests. The server is threaded only so `/health` answers during
   a decode.
 - The device is chosen before the model loads, so a fallback warning reaches
-  the journal and `/health` even when loading then fails on a missing export.
-- Started by hand rather than by the socket unit, it never idles out; the
-  unload applies only to a socket-activated start. It binds the same path
-  itself (`0600`, in a `0700` directory), refuses to start without
+  the log and `/health` even when loading then fails on a missing export.
+- It binds the socket itself (`0600`, in a `0700` directory), replacing one
+  left by a server that has exited, refuses to start without
   `XDG_RUNTIME_DIR`, and refuses if a server is already listening there.
 - It is a Unix socket rather than `127.0.0.1:8099` (the port until 0.6.x)
   because a localhost port belongs to no user: any local account could

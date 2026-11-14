@@ -44,8 +44,13 @@ impl Tray {
 
 pub fn spawn(tray: Tray) -> Option<Handle> {
     use ksni::blocking::TrayMethods;
-    // Assumed, not checked: at login this can start before Plasma's tray does.
-    match tray.assume_sni_available(true).spawn() {
+    // Assumed, not checked: at login this can start before Plasma's tray does. A Flatpak
+    // may not own the item's well-known name, so there it registers under its unique one.
+    match tray
+        .disable_dbus_name(crate::settings::sandbox::flatpak_id().is_some())
+        .assume_sni_available(true)
+        .spawn()
+    {
         Ok(handle) => Some(handle),
         Err(err) => {
             eprintln!(

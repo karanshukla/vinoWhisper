@@ -48,7 +48,7 @@ A checkout can be the install. Three pieces, each redeployed differently:
 
 ```bash
 uv sync --extra export
-uv run vinowhisper-setup     # links the commands into ~/.local/bin and writes the units against .venv
+uv run vinowhisper-setup     # links the commands into ~/.local/bin
 ```
 
 After that an edit is live in the next process that starts, with no reinstall.
@@ -60,9 +60,9 @@ Which process matters:
 - **The idle dictation child is long-lived.** The tray keeps one
   `vinowhisper-dictate --json` running to hide Python's import time, so a
   change to `dictate.py` needs a tray restart (below).
-- **Server changes need the server restarted**:
-  `systemctl --user restart vinowhisper-server.service`. Check
-  `pgrep -af vinowhisper-caption` first: a restart kills a live caption
+- **Server changes need the server stopped**: `vinowhisper-server --stop`,
+  and the next request starts the new code. Check
+  `pgrep -af vinowhisper-caption` first: stopping it kills a live caption
   session, and the next request pays the model load again.
 - **`pyproject.toml` changes** (a new entry point, a dependency) need
   `uv sync` again, and a new command needs `vinowhisper-setup` to link it.
@@ -131,7 +131,7 @@ rather than a defect in it:
 
 | Check | Why it is skipped |
 |---|---|
-| B404 | Flags `import subprocess` itself, in a program whose purpose is to drive pw-record, parec, pactl, optimum-cli and systemctl |
+| B404 | Flags `import subprocess` itself, in a program whose purpose is to drive pw-record, parec, pactl, optimum-cli and its own server |
 | B603 | Every call site passes a literal argv list with no shell. The variable parts (PipeWire node names from pw-dump, a `--target` the user typed) arrive as single argv elements |
 | B607 | pw-record, parec and pactl live in different places on different distros. They are found with `shutil.which` before use, and hardcoding `/usr/bin` would break the fallbacks |
 
@@ -182,8 +182,9 @@ upstream.
 ## Packaging
 
 `[tool.setuptools] packages = ["vinowhisper"]` is explicit because flat-layout
-auto-discovery sees the top-level `systemd/` directory, decides there are two
-packages, and refuses to build (confirmed 2026-08-03).
+auto-discovery refuses to build when it sees more than one top-level directory
+that could be a package (confirmed 2026-08-03 with `systemd/`, since removed;
+`tray/`, `gui/` and `settings/` are still there).
 
 These data files ride in the wheel:
 
@@ -206,6 +207,59 @@ These data files ride in the wheel:
 `openvino-tokenizers` is listed directly even though `openvino-genai` pulls it
 in. The NPU pipeline hard-depends on it, and a transitive-only dependency is
 one upstream packaging change from disappearing.
+
+### The Flatpak
+
+`packaging/flatpak/io.github.karanshukla.vinowhisper.yml` builds the bundle from
+the checkout it sits in ([install.md](install.md#flatpak) has the commands).
+What is not obvious from reading it:
+
+- **It brings its own Python 3.13**, a pinned python-build-standalone tarball.
+  The 26.08 runtime's is 3.14, which `requires-python` excludes because the
+  export cannot run on it.
+- **`requirements.txt` is generated** from `uv.lock` by
+  `scripts/flatpak_requirements.py` (`uv export`, plus the locked setuptools to
+  build the package itself), and pip installs it with `--require-hashes`. Re-run
+  the script after `uv lock`; `tests/test_flatpak.py` fails while a version in
+  it differs from the lock.
+- **Nothing is stripped, manifest-wide.** flatpak-builder's debug-info split
+  (`eu-strip`) rewrote the standalone `python3.13` so that it no longer started
+  ("no version information available", then a symbol lookup error), and it did
+  so although that module alone set `no-debuginfo` (found 2026-11-14,
+  flatpak-builder 1.4.2). The top-level `build-options` turn it off for every
+  module; cargo strips the Rust binaries itself.
+- **The whole Python tree is compiled to bytecode in the manifest.** The
+  standalone tarball ships none and `/app` is read-only once installed, so a
+  module left uncompiled is compiled again at every start. flatpak-builder
+  rewrites the `.pyc` timestamps to match what ostree checks out, which is why
+  they stay valid.
+- **`flatpak-spawn` is killed once what it started answers** (the server in
+  `launch.ensure`, the tray in `restart`). It otherwise lives as long as its
+  child and keeps the launching command's sandbox, and any pipe on it, open:
+  `flatpak run --command=vinowhisper-transcribe … | grep` did not return until
+  the server idled out. SIGKILL, because it forwards the signals it can catch.
+- The Rust module comes before the Python package in the manifest, so a Python
+  change rebuilds in seconds from flatpak-builder's cache.
+- **The Intel driver modules are vinoSearch's**, version for version, so the
+  two Flatpaks carry one NPU stack. Change them together.
+- **pip and cargo fetch at build time** (`--share=network`), each against a lock
+  with hashes, so this is not a Flathub-style offline manifest.
+- The app id is the tray's `APP_ID`. The portal keys the global shortcuts by
+  it, and Flatpak exports only files named for it, which is why the session
+  MIME package is renamed to `<id>.xml` in the manifest.
+
+`packaging/flatpak/smoke.sh` runs the installed bundle: every command's
+`--help`, one version across the tray and the Python package, OpenVINO finding
+the CPU from the bundled Python, the exported menu entries, and a client
+starting the server in a sandbox of its own. `flatpak.yml` runs it on the
+bundle it just built.
+
+The code that differs inside the sandbox reads `/.flatpak-info`
+(`vinowhisper/sandbox.py`, `settings/src/sandbox.rs`): the shared runtime
+directory, the server and the tray restarted as sandboxes of their own with
+`flatpak-spawn`, start at login through the Background portal, the update
+command, and setup's export venv. One build serves both, so none of it is
+behind a feature flag.
 
 ## The overlay's dependencies
 
@@ -281,7 +335,8 @@ startup per Tab, only on `--target`.
 | `bandit.yml` | pushes and PRs to main, and Mondays | The Bandit scan, into Security > Code scanning, then the same scan as a gate. Config is `[tool.bandit]`, so `poe security` matches it |
 | `audit.yml` | Mondays, and on changes to `uv.lock` or a `Cargo.lock` | pip-audit on the locked runtime and dev set, and on the export extra as a warning only (`transformers<5.4` carries two advisories whose fixes break the NPU export; see CLAUDE.md); `cargo audit` on the three Cargo locks |
 | `deps-canary.yml` | Mondays, and on changes to `pyproject.toml` or `uv.lock` | The full dependency set, which nothing on the PR path installs |
-| `release.yml` | a `v*` tag | Build (the tray binary runs `--version` and must be static; the wheel goes through `smoke_wheel.sh`), PyPI, GitHub Release |
+| `release.yml` | a `v*` tag | Build (the tray binary runs `--version` and must be static; the wheel goes through `smoke_wheel.sh`), PyPI, GitHub Release, then the Flatpak bundle |
+| `flatpak.yml` | PRs that touch `packaging/flatpak/` or the workflow; called by `release.yml`; by hand with a tag | Builds the Flatpak bundle, installs it and runs `packaging/flatpak/smoke.sh`. With a tag it builds that tag and attaches `vinowhisper-x86_64.flatpak` and its `.sha256` to the release |
 
 3.14 is left out of the test matrix on purpose, for the reason in
 [install.md](install.md). shellcheck runs on every script in `scripts/`; the
@@ -348,6 +403,12 @@ Pushing the tag runs `release.yml`:
 3. **pypi** publishes the same bytes with Trusted Publishing.
 4. **github-release** attaches the wheel, sdist, overlay binary and
    `SHA256SUMS`.
+5. **flatpak** (`flatpak.yml`) builds the bundle from the tag, installs it, runs
+   the smoke test and attaches `vinowhisper-x86_64.flatpak` with its own
+   `.sha256`, the two names the Flatpak's Update button downloads. It runs
+   last and separately, so a failed bundle build leaves the release and PyPI as
+   they are; re-run it from the Actions tab (Flatpak → Run workflow) with the
+   tag. The bundle is not in `SHA256SUMS`, which is written before it exists.
 
 The split is about permissions. `build` holds no token, `pypi` holds only
 `id-token: write`, and only `github-release` can write to the repo. PyPI goes

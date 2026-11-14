@@ -1,0 +1,79 @@
+name: Flatpak
+
+# The Flatpak bundle: built and run on a pull request that touches its packaging, and
+# built from a tag and attached to that tag's release by release.yml. Run it from the
+# Actions tab with a tag to rebuild an existing release's bundle. docs/development.md
+
+on:
+  pull_request:
+    paths:
+      - packaging/flatpak/**
+      - .github/workflows/flatpak.yml
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and upload to
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload to, e.g. v1.8.0
+        required: true
+
+permissions: {}
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # to attach the bundle to the release
+    env:
+      TAG: ${{ inputs.tag }}
+      APP: io.github.karanshukla.vinowhisper
+      BUNDLE: vinowhisper-x86_64.flatpak
+    steps:
+      # The manifest builds the checkout it sits in: this one, at the tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          persist-credentials: false
+      - name: Install Flatpak Builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak dbus-bin dbus-daemon
+          # Ubuntu 24.04 lets only programs with an AppArmor profile create
+          # user namespaces, which bwrap (every Flatpak sandbox) needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder \
+            org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//26.08
+      # Branch stable: a build from a checkout is master, and only a stable
+      # build offers to install the next release's bundle over itself.
+      - name: Build
+        run: |
+          # Under a session bus: the Builder app asks the host's flatpak for
+          # the SDK through it, and a runner has none.
+          dbus-run-session -- flatpak run --filesystem="$HOME" org.flatpak.Builder --user --force-clean \
+            --disable-rofiles-fuse --default-branch=stable --repo="$RUNNER_TEMP/repo" \
+            --state-dir "$RUNNER_TEMP/flatpak-state" "$RUNNER_TEMP/flatpak-build" \
+            "packaging/flatpak/$APP.yml"
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            "$RUNNER_TEMP/repo" "$BUNDLE" "$APP" stable
+          sha256sum "$BUNDLE" > "$BUNDLE.sha256"
+          ls -l "$BUNDLE"
+      # The bundle as a user gets it: installed from the file, on branch stable, every
+      # command starting, and OpenVINO finding the CPU (a runner has no NPU or GPU).
+      - name: Smoke test
+        run: |
+          sha256sum -c "$BUNDLE.sha256"
+          flatpak install --user -y --noninteractive --bundle "$BUNDLE"
+          flatpak list --user --app --columns=ref | grep -Fx "$APP/x86_64/stable"
+          dbus-run-session -- packaging/flatpak/smoke.sh "$APP" "${TAG#v}"
+      - name: Upload
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" "$BUNDLE" "$BUNDLE.sha256" --clobber
