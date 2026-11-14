@@ -251,3 +251,28 @@ def test_the_device_file_falls_back_to_auto(tmp_path):
     assert config.load_device(broken) == config.DEFAULT_DEVICE
     broken.write_text('{"device": 3}')
     assert config.load_device(broken) == config.DEFAULT_DEVICE
+
+
+def test_stopping_does_not_load_the_server_or_the_client(socket_path):
+    """The tray waits on `vinowhisper-server --stop` to switch language, and systemctl,
+    which this replaced, took no third of a second to import Flask and numpy."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from vinowhisper import launch; status = launch.server_main(['--stop']); "
+        "heavy = [m for m in ('flask', 'numpy', 'requests', 'vinowhisper.server') "
+        "if m in sys.modules]; print(status, heavy)"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert done.stdout.strip() == "0 []"
+
+
+def test_the_server_command_still_runs_the_server(monkeypatch):
+    from vinowhisper import server
+
+    seen = []
+    monkeypatch.setattr(server, "main", lambda argv=None: seen.append(argv) or 0)
+    assert launch.server_main(["--device", "CPU"]) == 0
+    assert launch.server_main(["--stop", "--device", "CPU"]) == 0
+    assert seen == [["--device", "CPU"], ["--stop", "--device", "CPU"]]

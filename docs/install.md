@@ -252,6 +252,22 @@ What differs from the native install:
   `flatpak run io.github.karanshukla.vinowhisper toggle` and `... dictate-press` /
   `dictate-release` as in [tray.md](tray.md).
 
+**What the sandbox costs**, measured 2026-11-14 on a 4-core cloud Xeon, CPU device,
+the bundle's own binaries inside the sandbox and outside it:
+
+| | In the Flatpak | Same binaries, no sandbox |
+|---|---|---|
+| A 12 s window decoded (median of 8) | 0.86 s | 0.86 s |
+| The server from nothing until its socket accepts | 0.34 s | 0.25-0.30 s |
+| `flatpak run` of a command, before it starts | 0.07 s | |
+
+Decoding is the same. A cold start pays about 60 ms for the server's own sandbox, and
+each `flatpak run` about 70 ms; the tray starts its caption and dictation processes
+inside its own sandbox, so neither pays that. The bundle's Python is compiled to
+bytecode at build time, standard library included: `/app` is read-only, so anything
+left uncompiled would be compiled again at every start (17 modules were, before).
+None of this is an NPU measurement.
+
 **Not yet run on a desktop.** What was run, 2026-11-14, in a cloud container with
 Flatpak 1.14.6, no NPU, no GPU and no audio server:
 

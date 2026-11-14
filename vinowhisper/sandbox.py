@@ -1,4 +1,3 @@
-import configparser
 import os
 from pathlib import Path
 
@@ -8,6 +7,9 @@ RELEASE_BRANCH = "stable"
 
 
 def info_value(section: str, key: str, info: Path | None = None) -> str | None:
+    # Imported here: only the Flatpak reads the file, and every command imports this module.
+    import configparser
+
     # A GKeyFile: `=` only, keys as written, and `;` is a list separator, not a comment.
     parser = configparser.RawConfigParser(
         delimiters=("=",), comment_prefixes=("#",), strict=False, interpolation=None
@@ -29,11 +31,14 @@ def flatpak_id(info: Path | None = None) -> str | None:
     return os.environ.get("FLATPAK_ID") or info_value("Application", "name", info)
 
 
+SPAWN = "flatpak-spawn"
+
+
 def host_argv(argv: list[str]) -> list[str]:
-    return ["flatpak-spawn", "--host", *argv]
+    return [SPAWN, "--host", *argv]
 
 
 def instance_argv(argv: list[str]) -> list[str]:
     # A sandbox of its own, of the newest installed build: what is started plainly dies
     # with the window or command whose sandbox it was started in.
-    return ["flatpak-spawn", "--latest-version", *argv]
+    return [SPAWN, "--latest-version", *argv]

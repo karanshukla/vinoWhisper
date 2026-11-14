@@ -268,11 +268,19 @@ fn run_restart_sandboxed() -> ExitCode {
         .map(|arg| arg.to_string_lossy().into_owned())
         .chain(["--hidden".to_owned()])
         .collect();
-    if let Err(err) = restart::spawn_detached(spawn.get_program().as_ref(), &args) {
-        eprintln!("vinowhisper-tray: could not run flatpak-spawn: {err}");
-        return ExitCode::FAILURE;
-    }
-    if !restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok()) {
+    let mut helper = match restart::spawn_detached_child(spawn.get_program().as_ref(), &args) {
+        Ok(helper) => helper,
+        Err(err) => {
+            eprintln!("vinowhisper-tray: could not run flatpak-spawn: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let started = restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok());
+    // flatpak-spawn stays as long as the tray it started, and this command's sandbox with
+    // it. The tray does not need it: killed, not asked, since it passes a signal on.
+    let _ = helper.kill();
+    let _ = helper.wait();
+    if !started {
         eprintln!("vinowhisper-tray: started the new build but it is not answering");
         return ExitCode::FAILURE;
     }

@@ -228,6 +228,18 @@ What is not obvious from reading it:
   so although that module alone set `no-debuginfo` (found 2026-11-14,
   flatpak-builder 1.4.2). The top-level `build-options` turn it off for every
   module; cargo strips the Rust binaries itself.
+- **The whole Python tree is compiled to bytecode in the manifest.** The
+  standalone tarball ships none and `/app` is read-only once installed, so a
+  module left uncompiled is compiled again at every start. flatpak-builder
+  rewrites the `.pyc` timestamps to match what ostree checks out, which is why
+  they stay valid.
+- **`flatpak-spawn` is killed once what it started answers** (the server in
+  `launch.ensure`, the tray in `restart`). It otherwise lives as long as its
+  child and keeps the launching command's sandbox, and any pipe on it, open:
+  `flatpak run --command=vinowhisper-transcribe … | grep` did not return until
+  the server idled out. SIGKILL, because it forwards the signals it can catch.
+- The Rust module comes before the Python package in the manifest, so a Python
+  change rebuilds in seconds from flatpak-builder's cache.
 - **The Intel driver modules are vinoSearch's**, version for version, so the
   two Flatpaks carry one NPU stack. Change them together.
 - **pip and cargo fetch at build time** (`--share=network`), each against a lock

@@ -14,6 +14,17 @@ lazy-load/idle-unload shape as serverless cold starts, with no service manager:
 - The server tracks its own last-request time and exits after
   `config.IDLE_TIMEOUT_S` (5 min). The next client starts it again.
 
+What that costs, measured 2026-11-14 on a cloud Xeon with a stubbed model: the
+server takes 0.25-0.30 s from exec until its socket accepts (Python importing
+Flask and numpy, which systemd's start paid too), and `launch.ensure` returned in
+0.25 s, so the client adds nothing that shows; it probes the socket every 2 ms. With
+the server up, a request's connection is the same single `connect` as before. The
+launcher's own imports (subprocess, fcntl and the rest) are inside its functions:
+every command imports `launch`, and it adds 0.2 ms to their start. `vinowhisper-server
+--stop` is answered by `launch.server_main` before the server module is imported,
+0.1 s with a server running against 0.35 s through it, because the tray waits on it to
+switch language. `systemctl stop` was quicker still, by the cost of starting Python.
+
 Until 2026-11-14 a systemd socket unit held the socket and started the server.
 That tied it to systemd and cannot work in a Flatpak, which exports no units, so
 the clients do what the socket unit did. `vinowhisper-setup`, an upgrade and

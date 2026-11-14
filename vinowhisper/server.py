@@ -342,12 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.stop:
         from . import launch
 
-        for unit in launch.retire_units():
-            print(f"[vinowhisper-server] removed {unit}", file=sys.stderr)
-        if launch.stop():
-            return 0
-        print("[vinowhisper-server] the running server did not stop", file=sys.stderr)
-        return 1
+        return launch.stop_command()
     _harden()
     # Before the model load, so a missing XDG_RUNTIME_DIR or a running server fails in a second.
     try:

@@ -105,6 +105,33 @@ def test_a_missing_portal_falls_back_to_starting_the_server_here(tmp_path, monke
     assert tried == ["flatpak-spawn", sys.executable]
 
 
+def test_the_spawn_helper_is_let_go_once_the_server_listens(tmp_path, monkeypatch):
+    """characterization: flatpak-spawn lives as long as the server it started, and keeps
+    the launching command's sandbox and its stdout open with it, so `... | grep` never
+    ended. It is killed, not terminated: it forwards SIGTERM to the server. Measured in
+    the sandbox 2026-11-14: the server keeps answering after the helper is killed."""
+    _info(tmp_path, monkeypatch)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    up = iter([False, False, True])
+    monkeypatch.setattr(launch, "running", lambda path: next(up))
+    killed = []
+    helper = SimpleNamespace(poll=lambda: None, kill=lambda: killed.append("helper"))
+    spawned = []
+    monkeypatch.setattr(launch, "_spawn", lambda argv: spawned.append(argv[0]) or helper)
+    launch.ensure()
+    assert spawned == ["flatpak-spawn"] and killed == ["helper"]
+
+
+def test_a_server_started_natively_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "INFO", tmp_path / "absent")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    up = iter([False, False, True])
+    monkeypatch.setattr(launch, "running", lambda path: next(up))
+    process = SimpleNamespace(poll=lambda: None, kill=lambda: pytest.fail("killed the server"))
+    monkeypatch.setattr(launch, "_spawn", lambda argv: process)
+    launch.ensure()
+
+
 def test_setup_in_the_flatpak_skips_what_the_bundle_carries(tmp_path, monkeypatch, capsys):
     _info(tmp_path, monkeypatch)
     ran = []

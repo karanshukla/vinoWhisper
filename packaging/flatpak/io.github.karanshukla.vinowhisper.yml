@@ -64,6 +64,12 @@ modules:
     build-commands:
       - install -d /app/lib/vinowhisper/python
       - cp -a bin lib /app/lib/vinowhisper/python/
+      # The tarball has no bytecode and /app is read-only once installed, so what
+      # is not compiled here is compiled again at every start.
+      - >-
+        /app/lib/vinowhisper/python/bin/python3 -m compileall -q -j 0
+        -x '/(test|tests|idlelib|turtledemo|tkinter|ensurepip)/'
+        /app/lib/vinowhisper/python/lib/python3.13
       - install -Dm644 lib/python3.13/LICENSE.txt /app/share/licenses/python/LICENSE.txt
 
   # What uv.lock pins, by hash: OpenVINO 2026.4.1 with its GenAI and
@@ -174,34 +180,6 @@ modules:
       - install -Dm644 igc-LICENSE.md /app/share/licenses/intel-graphics-compiler/LICENSE.md
       - install -Dm644 usr/local/lib/igc2/NOTICES.txt /app/share/licenses/intel-graphics-compiler/NOTICES.txt
 
-  - name: vinowhisper
-    buildsystem: simple
-    sources:
-      - type: dir
-        path: ../..
-        skip:
-          - .git
-          - .claude
-          - .venv
-          - tray
-          - gui
-          - settings
-          - site
-          - docs
-          - tests
-    build-commands:
-      # setuptools came with the pinned packages, so nothing is fetched.
-      - >-
-        /app/lib/vinowhisper/python/bin/python3 -m pip install --no-cache-dir
-        --disable-pip-version-check --no-index --no-deps --no-build-isolation .
-      - install -d /app/bin
-      - |
-        set -e
-        for command in /app/lib/vinowhisper/python/bin/vinowhisper-*; do
-          ln -s ../lib/vinowhisper/python/bin/"${command##*/}" /app/bin/
-        done
-      - install -Dm644 LICENSE /app/share/licenses/vinowhisper/LICENSE
-
   # The tray and overlay, and the settings and sessions windows.
   - name: vinowhisper-desktop
     buildsystem: simple
@@ -241,3 +219,33 @@ modules:
       # Flatpak exports a MIME package only under the app's own id.
       - mv /app/share/mime/packages/$FLATPAK_ID-session.xml /app/share/mime/packages/$FLATPAK_ID.xml
       - install -Dm644 $FLATPAK_ID.metainfo.xml /app/share/metainfo/$FLATPAK_ID.metainfo.xml
+
+  # After the Rust module, so a change to the Python package does not build
+  # the tray and the windows again.
+  - name: vinowhisper
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .claude
+          - .venv
+          - tray
+          - gui
+          - settings
+          - site
+          - docs
+          - tests
+    build-commands:
+      # setuptools came with the pinned packages, so nothing is fetched.
+      - >-
+        /app/lib/vinowhisper/python/bin/python3 -m pip install --no-cache-dir
+        --disable-pip-version-check --no-index --no-deps --no-build-isolation .
+      - install -d /app/bin
+      - |
+        set -e
+        for command in /app/lib/vinowhisper/python/bin/vinowhisper-*; do
+          ln -s ../lib/vinowhisper/python/bin/"${command##*/}" /app/bin/
+        done
+      - install -Dm644 LICENSE /app/share/licenses/vinowhisper/LICENSE

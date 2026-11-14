@@ -1,20 +1,22 @@
 import contextlib
-import fcntl
 import os
-import shlex
-import shutil
 import socket
-import subprocess  # nosec B404 - fixed argv, never a shell
 import sys
-import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import config, sandbox
 
+# Every client imports this module and almost none starts a server, so what only a start
+# or a stop needs (subprocess, fcntl, shutil, shlex, threading) is imported where used.
+if TYPE_CHECKING:
+    import subprocess
+
 START_WAIT_S = 20.0
 STOP_WAIT_S = 10.0
-_POLL_S = 0.05
+# How long a client can wait past the moment the server binds its socket.
+_POLL_S = 0.002
 LOG_MAX_BYTES = 1 << 20
 _LOG_TAIL_LINES = 6
 
@@ -57,7 +59,10 @@ def _open_log() -> int:
     return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 
 
-def _spawn(argv: list[str]) -> subprocess.Popen:
+def _spawn(argv: list[str]) -> "subprocess.Popen":
+    import subprocess  # nosec B404 - fixed argv, never a shell
+    import threading
+
     log = _open_log()
     try:
         process = subprocess.Popen(  # nosec B603 - server_commands is this interpreter
@@ -96,6 +101,8 @@ def ensure(path: Path | None = None, wait_s: float = START_WAIT_S) -> None:
         )
     if running(path):
         return
+    import fcntl
+
     try:
         _private_dir(path.parent)
         lock = os.open(path.with_name("server.lock"), os.O_WRONLY | os.O_CREAT, 0o600)
@@ -115,6 +122,11 @@ def ensure(path: Path | None = None, wait_s: float = START_WAIT_S) -> None:
                 raise StartError(f"could not start vinowhisper-server for {path}: {exc}") from exc
             while time.monotonic() < deadline:
                 if running(path):
+                    if argv[0] == sandbox.SPAWN:
+                        # flatpak-spawn stays for as long as what it started, and this
+                        # command's sandbox and its pipes with it. The server does not
+                        # need it: killed, not asked, since it passes a signal on.
+                        process.kill()
                     return
                 status = process.poll()
                 if status is not None:
@@ -134,23 +146,39 @@ def ensure(path: Path | None = None, wait_s: float = START_WAIT_S) -> None:
         os.close(lock)
 
 
+def _quit(path: Path) -> bool:
+    # The standard library, not the client: stopping must not cost the imports a
+    # transcription needs (requests, numpy), since the tray waits on it to switch language.
+    import http.client
+    import json
+
+    class Connection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(self.timeout)
+            self.sock.connect(str(path))
+
+    connection = Connection("vinowhisper", timeout=config.CONNECT_TIMEOUT_S)
+    try:
+        connection.request("POST", "/quit", headers={"Content-Length": "0"})
+        response = connection.getresponse()
+        body = response.read()
+        if response.status != 200:
+            raise ValueError(f"/quit answered {response.status}")
+        return bool(json.loads(body).get("socket_activated"))
+    except http.client.HTTPException as exc:
+        raise ValueError(str(exc)) from exc
+    finally:
+        connection.close()
+
+
 def stop(path: Path | None = None, wait_s: float = STOP_WAIT_S) -> bool:
-    import requests
-
-    from . import client
-
     path = path or config.server_socket()
     if path is None or not running(path):
         return True
     try:
-        with client.session(path, autostart=False) as session:
-            response = session.post(
-                f"{client.BASE_URL}/quit",
-                timeout=(config.CONNECT_TIMEOUT_S, config.CONNECT_TIMEOUT_S),
-            )
-            response.raise_for_status()
-            activated = bool(response.json().get("socket_activated"))
-    except (requests.RequestException, ValueError):
+        activated = _quit(path)
+    except (OSError, ValueError, AttributeError):
         # A server from before /quit, on a socket unit not yet retired.
         return _systemctl("stop", UNITS[1])
     if activated:
@@ -164,7 +192,30 @@ def stop(path: Path | None = None, wait_s: float = STOP_WAIT_S) -> bool:
     return False
 
 
+def stop_command() -> int:
+    for unit in retire_units():
+        print(f"[vinowhisper-server] removed {unit}", file=sys.stderr)
+    if stop():
+        return 0
+    print("[vinowhisper-server] the running server did not stop", file=sys.stderr)
+    return 1
+
+
+def server_main(argv: list[str] | None = None) -> int:
+    # vinowhisper-server's entry point. --stop is answered here, before the server module
+    # and what it imports (Flask, numpy) are loaded.
+    args = sys.argv[1:] if argv is None else argv
+    if args == ["--stop"]:
+        return stop_command()
+    from . import server
+
+    return server.main(argv)
+
+
 def _systemctl(*args: str) -> bool:
+    import shutil
+    import subprocess  # nosec B404 - fixed argv, never a shell
+
     if shutil.which("systemctl") is None:
         return False
     try:
@@ -193,6 +244,8 @@ def _unit_device(service: Path) -> str | None:
         return None
     for line in lines:
         if line.startswith("ExecStart="):
+            import shlex
+
             try:
                 words = shlex.split(line.removeprefix("ExecStart="))
             except ValueError:

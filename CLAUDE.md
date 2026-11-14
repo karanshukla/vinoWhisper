@@ -543,6 +543,16 @@ then "you may need to remove systemd first". Both follow vinoSearch's (its commi
 - `/.flatpak-info` is read with `configparser` (the crate, and Python's module), at the
   user's request for crates over hand-written parsers. Both treat `;` and `#` inside a
   value as part of it; the crate's default does not, and a test pins that.
+- **Speed was checked at the user's request** (2026-11-14, cloud Xeon, CPU): decode is
+  the same in and out of the sandbox (0.86 s per 12 s window), `launch.ensure` adds
+  nothing measurable to a cold start, and three things were slower until fixed: the
+  bundle recompiled 17 stdlib modules at every start (now compiled in the manifest),
+  `--stop` imported Flask to send one request (now `launch.server_main`, 0.35 s to
+  0.1 s), and `launch`'s imports cost every command 4 ms (now inside its functions).
+  Tables in `docs/install.md` and `docs/architecture.md`. Nothing here is an NPU number.
+- **`flatpak-spawn` outlives its usefulness**: it stays while its child lives and holds
+  the caller's sandbox and pipes open. `launch.ensure` and the tray's `restart` kill it
+  (SIGKILL; it forwards the rest) once the child answers. The child is unaffected.
 - **Verified 2026-11-14 in a cloud container** (Flatpak 1.14.6; no NPU, GPU or audio):
   the list at the end of `docs/install.md` "Flatpak": build, smoke test, a real CPU
   export and decode across sandboxes, and the tray, overlay and window on headless Sway.
