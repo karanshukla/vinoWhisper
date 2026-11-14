@@ -1,6 +1,7 @@
 import contextlib
 import fcntl
 import os
+import shlex
 import shutil
 import socket
 import subprocess  # nosec B404 - fixed argv, never a shell
@@ -9,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config
+from . import config, sandbox
 
 START_WAIT_S = 20.0
 STOP_WAIT_S = 10.0
@@ -38,6 +39,15 @@ def server_argv() -> list[str]:
     return [sys.executable, "-m", "vinowhisper.server"]
 
 
+def server_commands() -> list[list[str]]:
+    argv = server_argv()
+    if sandbox.flatpak_id() is None:
+        return [argv]
+    # In the Flatpak the server gets a sandbox of its own, and one started inside this
+    # one is the fallback where the portal that makes them is missing.
+    return [sandbox.instance_argv(argv), argv]
+
+
 def _open_log() -> int:
     path = config.SERVER_LOG
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -47,11 +57,11 @@ def _open_log() -> int:
     return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 
 
-def _spawn() -> subprocess.Popen:
+def _spawn(argv: list[str]) -> subprocess.Popen:
     log = _open_log()
     try:
-        process = subprocess.Popen(  # nosec B603 - server_argv is this interpreter
-            server_argv(),
+        process = subprocess.Popen(  # nosec B603 - server_commands is this interpreter
+            argv,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=log,
@@ -96,25 +106,28 @@ def ensure(path: Path | None = None, wait_s: float = START_WAIT_S) -> None:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if running(path):
             return
-        try:
-            process = _spawn()
-        except OSError as exc:
-            raise StartError(f"could not start vinowhisper-server for {path}: {exc}") from exc
         deadline = time.monotonic() + wait_s
-        while time.monotonic() < deadline:
-            if running(path):
-                return
-            if process.poll() is not None:
-                break
-            time.sleep(_POLL_S)
-        else:
-            raise StartError(
-                f"vinowhisper-server did not listen on {path} within {wait_s:.0f}s; "
-                f"its log is {config.SERVER_LOG}"
-            )
+        status: int | None = None
+        for argv in server_commands():
+            try:
+                process = _spawn(argv)
+            except OSError as exc:
+                raise StartError(f"could not start vinowhisper-server for {path}: {exc}") from exc
+            while time.monotonic() < deadline:
+                if running(path):
+                    return
+                status = process.poll()
+                if status is not None:
+                    break
+                time.sleep(_POLL_S)
+            else:
+                raise StartError(
+                    f"vinowhisper-server did not listen on {path} within {wait_s:.0f}s; "
+                    f"its log is {config.SERVER_LOG}"
+                )
         tail = log_tail()
         raise StartError(
-            f"vinowhisper-server exited as it started (status {process.returncode}); "
+            f"vinowhisper-server exited as it started (status {status}); "
             f"its log is {config.SERVER_LOG}" + (f"\n{tail}" if tail else "")
         )
     finally:
@@ -180,7 +193,10 @@ def _unit_device(service: Path) -> str | None:
         return None
     for line in lines:
         if line.startswith("ExecStart="):
-            words = line.split()
+            try:
+                words = shlex.split(line.removeprefix("ExecStart="))
+            except ValueError:
+                return None
             if "--device" in words[:-1]:
                 return words[words.index("--device") + 1]
     return None

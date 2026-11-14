@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import distro, failures
+from . import distro, failures, sandbox
 
 PREFERENCE = ("NPU", "GPU", "CPU")
 
@@ -341,6 +341,7 @@ COMPILER_ROUTES = (
     (LEGACY_COMPILER_LIB.encode(), (LEGACY_COMPILER_LIB,)),
 )
 
+FLATPAK_LIBRARY_DIR = "/app/lib"
 LIBRARY_DIRS = (
     "/usr/lib64",
     "/usr/lib/x86_64-linux-gnu",
@@ -375,6 +376,9 @@ def library_dirs() -> list[Path]:
     raw = os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
     prefix = ovfetch_npu_prefix()
     first = [str(prefix)] if prefix is not None else []
+    if sandbox.flatpak_id() is not None:
+        # The Flatpak's own Level Zero loader, NPU driver and compiler.
+        first.append(FLATPAK_LIBRARY_DIR)
     for text in first + [entry for entry in raw if entry] + list(LIBRARY_DIRS):
         try:
             path = Path(text)

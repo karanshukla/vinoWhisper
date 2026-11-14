@@ -74,7 +74,7 @@ anything loads it.
 Details in [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md).
 
 **A missing NPU degrades instead of bricking.** Selection walks NPU, then GPU,
-then CPU, and a fallback is never silent: it shows up in the server journal, in
+then CPU, and a fallback is never silent: it shows up in the server's log, in
 `/health`, in `vinowhisper-doctor`, and on the status bar as a red border.
 
 **It tells you how to fix it.** Nearly every error path here prints the command
@@ -107,6 +107,14 @@ model export your device needs. It prints every command before running it and as
 The desktop overlay (floating captions and dictation) is one more command:
 `vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
 checks it against a digest pinned in the Python package.
+
+Or as a **Flatpak**: each release has `vinowhisper-x86_64.flatpak`, which carries the
+overlay, the windows, OpenVINO and Intel's NPU and GPU drivers, so the host needs only
+the kernel's NPU driver. `flatpak install --user vinowhisper-x86_64.flatpak`, then
+`flatpak run --command=vinowhisper-setup io.github.karanshukla.vinowhisper` for the
+model. It has not been run on a desktop yet:
+[docs/install.md](https://docs.vinowhisper.com/install/#flatpak) says what has and has
+not been checked.
 
 To upgrade, use **Check for updates** on the settings window's About page, or run
 `vinowhisper-upgrade`. It installs the new release's wheel, refreshes the overlay and window

@@ -29,9 +29,7 @@ pub struct Notice {
 }
 
 fn ready_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|dir| !dir.is_empty())
-        .map(|dir| PathBuf::from(dir).join(READY_RELPATH))
+    crate::settings::sandbox::runtime_dir().map(|dir| dir.join(READY_RELPATH))
 }
 
 pub fn take_ready(path: &Path) -> Vec<Ready> {

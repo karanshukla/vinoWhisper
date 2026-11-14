@@ -133,6 +133,13 @@ fn write_icons(data: &Path) -> io::Result<Vec<PathBuf>> {
 }
 
 pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
+    if settings::sandbox::flatpak_id().is_some() {
+        // --install has nothing to write: Flatpak exported the entries with the bundle.
+        return match autostart {
+            true => self::autostart(caption),
+            false => Ok(Vec::new()),
+        };
+    }
     install_into(
         &Dirs::from_env(),
         &std::env::current_exe()?,
@@ -142,14 +149,24 @@ pub fn install(autostart: bool, caption: Option<&Path>) -> io::Result<Vec<PathBu
 }
 
 pub fn autostart(caption: Option<&Path>) -> io::Result<Vec<PathBuf>> {
+    if let Some(app) = settings::sandbox::flatpak_id() {
+        portal_autostart(true)?;
+        return Ok(vec![settings::sandbox::host_autostart_entry(app)]);
+    }
     autostart_into(&Dirs::from_env(), &std::env::current_exe()?, caption)
 }
 
 pub fn autostart_enabled() -> bool {
-    Dirs::from_env().autostart().exists()
+    match settings::sandbox::flatpak_id() {
+        Some(app) => settings::sandbox::host_autostart_entry(app).exists(),
+        None => Dirs::from_env().autostart().exists(),
+    }
 }
 
 pub fn set_autostart(enabled: bool, caption: Option<&Path>) -> io::Result<()> {
+    if settings::sandbox::flatpak_id().is_some() {
+        return portal_autostart(enabled);
+    }
     set_autostart_in(
         &Dirs::from_env(),
         &std::env::current_exe()?,
@@ -160,7 +177,52 @@ pub fn set_autostart(enabled: bool, caption: Option<&Path>) -> io::Result<()> {
 }
 
 pub fn uninstall() -> io::Result<Vec<PathBuf>> {
+    if settings::sandbox::flatpak_id().is_some() {
+        return uninstall_from_host();
+    }
     uninstall_from(&Dirs::from_env())
+}
+
+// In the Flatpak the launcher, icons and file type are the bundle's own, and starting at
+// login is the Background portal's: it writes and removes the entry on the host. Blocks
+// until the desktop answers.
+fn portal_autostart(enabled: bool) -> io::Result<()> {
+    use ashpd::desktop::background::Background;
+    let granted = async_io::block_on(async {
+        let request = Background::request()
+            .reason("Captions and dictation from the tray, ready at login")
+            .auto_start(enabled)
+            .dbus_activatable(false)
+            .command([COMMAND, "--hidden"]);
+        request.send().await?.response()
+    })
+    .map_err(|err| io::Error::other(format!("the desktop's Background portal: {err}")))?;
+    if enabled && !granted.auto_start() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the desktop did not allow vinoWhisper to start at login",
+        ));
+    }
+    Ok(())
+}
+
+// What the Flatpak leaves outside itself: the login entry, and the sessions window's
+// app menu entry when Settings added one. `flatpak uninstall` removes the rest.
+fn uninstall_from_host() -> io::Result<Vec<PathBuf>> {
+    let autostart = settings::sandbox::host_autostart_entry(APP_ID);
+    let had_autostart = autostart.exists();
+    portal_autostart(false)?;
+    let mut removed = Vec::new();
+    if had_autostart && !autostart.exists() {
+        removed.push(autostart);
+    }
+    let sessions = settings::sessions_entry_in(&settings::apps_data_home());
+    match std::fs::remove_file(&sessions) {
+        Ok(()) => removed.push(sessions),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    Ok(removed)
 }
 
 pub fn export(data_dir: &Path) -> io::Result<Vec<PathBuf>> {

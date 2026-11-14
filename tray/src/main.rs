@@ -240,7 +240,50 @@ fn main() -> ExitCode {
     }
 }
 
+// In the Flatpak the running tray is in another sandbox: its pid and command line are out
+// of sight, and the build to start is the newest installed, not the one this runs from.
+fn run_restart_sandboxed() -> ExitCode {
+    let gone = || matches!(ipc::send(Request::Ping), Err(ipc::SendError::NotRunning));
+    if gone() {
+        println!("vinowhisper-tray is not running; nothing to restart");
+        return ExitCode::SUCCESS;
+    }
+    if let Err(err) = ipc::send(Request::Quit)
+        && !matches!(err, ipc::SendError::NotRunning)
+    {
+        eprintln!("vinowhisper-tray: could not stop the running instance: {err:?}");
+        return ExitCode::FAILURE;
+    }
+    if !restart::wait_until(restart::EXIT_WAIT, gone) {
+        eprintln!(
+            "vinowhisper-tray: the running instance has not exited after {}s; not starting \
+             another",
+            restart::EXIT_WAIT.as_secs()
+        );
+        return ExitCode::FAILURE;
+    }
+    let spawn = settings::sandbox::latest_instance("vinowhisper-tray");
+    let args: Vec<String> = spawn
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .chain(["--hidden".to_owned()])
+        .collect();
+    if let Err(err) = restart::spawn_detached(spawn.get_program().as_ref(), &args) {
+        eprintln!("vinowhisper-tray: could not run flatpak-spawn: {err}");
+        return ExitCode::FAILURE;
+    }
+    if !restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok()) {
+        eprintln!("vinowhisper-tray: started the new build but it is not answering");
+        return ExitCode::FAILURE;
+    }
+    println!("restarted vinowhisper-tray, in the tray (captions are off until shown)");
+    ExitCode::SUCCESS
+}
+
 fn run_restart() -> ExitCode {
+    if settings::sandbox::flatpak_id().is_some() {
+        return run_restart_sandboxed();
+    }
     let pid = match ipc::running_pid() {
         Ok(pid) => pid,
         Err(ipc::SendError::NotRunning) => {

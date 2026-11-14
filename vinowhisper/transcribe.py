@@ -354,7 +354,7 @@ def _decode_piece(client: _Client, samples: np.ndarray, health: dict) -> str:
                     raise TranscribeError(
                         f"the server failed on a piece {PIECE_ATTEMPTS} times ({exc}); "
                         "nothing was saved\n"
-                        "  journalctl --user -u vinowhisper-server has the reason"
+                        f"  {config.SERVER_LOG} has the reason"
                     ) from exc
                 raise
             time.sleep(PIECE_RETRY_PAUSE_S)

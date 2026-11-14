@@ -121,6 +121,163 @@ Two things differ from a mutable install:
 None of this has run on an image-based system yet: the commands are from
 each distro's documentation, and the detection is covered by tests only.
 
+## Flatpak
+
+A `.flatpak` bundle holds everything: the server and every command, the tray and
+overlay, the settings and sessions windows, a Python 3.13 of its own, OpenVINO, and
+Intel's NPU and GPU drivers. The host needs only the kernel's NPU driver (`intel_vpu`)
+and its firmware. Each release has it as `vinowhisper-x86_64.flatpak`, with its
+checksum:
+
+```bash
+curl -fLO https://github.com/karanshukla/vinoWhisper/releases/latest/download/vinowhisper-x86_64.flatpak
+curl -fLO https://github.com/karanshukla/vinoWhisper/releases/latest/download/vinowhisper-x86_64.flatpak.sha256
+sha256sum -c vinowhisper-x86_64.flatpak.sha256
+flatpak install --user vinowhisper-x86_64.flatpak
+```
+
+The runtime (`org.freedesktop.Platform` 26.08) comes from Flathub if it isn't
+installed yet. Then get a speech model, once, in a terminal:
+
+```bash
+flatpak run --command=vinowhisper-setup io.github.karanshukla.vinowhisper
+```
+
+That is the same wizard as everywhere else, with less to do: it checks the device and
+exports Whisper for it. The export needs optimum and torch, which the bundle does not
+carry (they would triple it). The wizard offers to put them in a venv under the app's
+own data, `~/.var/app/io.github.karanshukla.vinowhisper/data/vinowhisper/export-env`,
+1.3 GB that only exports use; delete the folder once you have your models if you
+want the space back. The windows' hints say "run vinowhisper-setup"; in the Flatpak
+that is the command above. Or skip the export altogether: open vinoWhisper from the app
+menu, and Settings → Speech downloads Canary 1B v2, which needs no export
+([models.md](models.md)).
+
+Open **vinoWhisper** from the app menu for the tray, the overlay and dictation.
+**Start at login** in the tray's menu asks the desktop's Background portal, which
+writes the login entry itself.
+
+To update, use **Update** on the settings window's About page. It downloads the new
+release's bundle and checksum, refuses the bundle unless the checksum matches, has the
+host's `flatpak` install it where this one is installed, checks the installed build
+is the release it asked for, and then stops the server and restarts the tray so both
+run the new build. Reopen the settings window to run its new version too. A
+system-wide install (`flatpak install --system`) asks for an administrator's password
+first, as any system Flatpak install does. By hand, download and check the new bundle
+as above and run the same `flatpak install --user vinowhisper-x86_64.flatpak`, then:
+
+```bash
+flatpak run --command=vinowhisper-server io.github.karanshukla.vinowhisper --stop
+flatpak run io.github.karanshukla.vinowhisper restart
+```
+
+Only a release bundle (branch `stable`) updates itself; a bundle built from a checkout
+(branch `master`) links to the release page instead. To move from one to a release,
+run `flatpak uninstall io.github.karanshukla.vinowhisper//master` first (the models,
+sessions and settings under `~/.var/app` stay) and install the release's bundle. To
+build the bundle from a checkout:
+
+```bash
+flatpak install --user flathub org.flatpak.Builder org.freedesktop.Sdk//26.08 \
+  org.freedesktop.Sdk.Extension.rust-stable//26.08
+flatpak run --filesystem=$HOME org.flatpak.Builder --user --install --force-clean \
+  --repo=repo build packaging/flatpak/io.github.karanshukla.vinowhisper.yml
+flatpak build-bundle repo vinowhisper.flatpak io.github.karanshukla.vinowhisper
+```
+
+Every command is there under its usual name:
+`flatpak run --command=vinowhisper-caption io.github.karanshukla.vinowhisper`, and the
+same for `vinowhisper-doctor`, `vinowhisper-transcribe FILE` and the rest. An alias
+saves the typing:
+
+```bash
+alias vw='flatpak run io.github.karanshukla.vinowhisper'        # vw toggle, vw dictate
+```
+
+What it is allowed, and why:
+
+| Permission | For |
+|---|---|
+| `--device=all` | the NPU (`/dev/accel`), which nothing narrower exposes, the GPU, and `/dev/uinput`, which types a dictation's Shift+Insert |
+| `--filesystem=home` | recordings given to `vinowhisper-transcribe`, the paths `--record` and `--transcript` name, the sessions window's app menu entry, and reading the login entry the portal wrote |
+| `--share=network` | downloading the models, and checking for a release |
+| `--socket=wayland` | the overlay, and the settings and sessions windows |
+| `--filesystem=xdg-run/pipewire-0` | `pw-record` and `pw-dump`: system audio, the microphone, and what is playing |
+| `--socket=pulseaudio` | `pactl` and `parec`, through PipeWire's PulseAudio server or a real one |
+| `--talk-name=org.kde.StatusNotifierWatcher` | the tray icon |
+| `--talk-name=org.freedesktop.Notifications`, `--talk-name=org.a11y.Bus` | finished summaries, and screen reader announcements |
+| `--talk-name=org.mpris.MediaPlayer2.*` | pausing players while you dictate |
+| `--talk-name=org.freedesktop.FileManager1` | Show in folder |
+| `--talk-name=org.freedesktop.Flatpak` | installing an update with the host's `flatpak`, and asking the host's `busctl` what is playing (`flatpak-spawn --host`) |
+
+The global shortcuts, start at login, the file dialogs and the remote-desktop
+fallback for typing are portals, which need no permission.
+
+What differs from the native install:
+
+- **Its settings, models and sessions are its own**, under
+  `~/.var/app/io.github.karanshukla.vinowhisper` (`config/vinowhisper`,
+  `data/vinowhisper/models`, `data/vinowhisper/transcripts`). To bring a native
+  install's along, with neither running:
+
+  ```bash
+  app=~/.var/app/io.github.karanshukla.vinowhisper
+  mkdir -p $app/config $app/data
+  cp -a ~/.config/vinowhisper $app/config/
+  cp -a ~/.local/share/vinowhisper $app/data/
+  ```
+
+  The exports are the same files, so nothing is exported again. vinoSearch finds the
+  sessions in either place (karanshukla/vinoSearch, from the release after v11).
+- **Don't run it beside a native install.** Both are `io.github.karanshukla.vinowhisper`
+  to the desktop, on purpose: the portal keeps your shortcuts under that name, so they
+  carry over. A native install's launcher in `~/.local/share/applications` hides the
+  Flatpak's, so remove the native one first (`vinowhisper-upgrade --uninstall` keeps
+  your sessions and settings).
+- **Each command runs in a sandbox of its own**, so the tray's socket and the server's
+  are in `$XDG_RUNTIME_DIR/app/io.github.karanshukla.vinowhisper`, the one part of the
+  runtime directory they share. The server is started in its own sandbox too
+  (`flatpak-spawn`), so closing the window that happened to start it does not stop it.
+  Its log is `~/.var/app/io.github.karanshukla.vinowhisper/.local/state/vinowhisper/server.log`.
+- **The launcher, icons and `.vwsession` file type come with it**, exported by Flatpak;
+  `vinowhisper-tray --install` has nothing to write. The Sessions page's app menu
+  switch still writes its entry in `~/.local/share/applications`, which
+  `vinowhisper-tray --uninstall` removes with the login entry; `flatpak uninstall`
+  alone leaves those two files.
+- **What was playing** is read with the host's `busctl` (`flatpak-spawn --host`): the
+  runtime has none.
+- `vinowhisper-setup` installs no packages there. Its advice about the kernel driver
+  and the `render` group names the host's distro, read from `/run/host/os-release`.
+- On sway, Hyprland and the like, bind
+  `flatpak run io.github.karanshukla.vinowhisper toggle` and `... dictate-press` /
+  `dictate-release` as in [tray.md](tray.md).
+
+**Not yet run on a desktop.** What was run, 2026-11-14, in a cloud container with
+Flatpak 1.14.6, no NPU, no GPU and no audio server:
+
+- the build, and `packaging/flatpak/smoke.sh` on the installed bundle;
+- `vinowhisper-setup --yes --device CPU` inside it: the export venv, the pinned
+  Whisper source downloaded and checked, and the stateful export;
+- `vinowhisper-transcribe` on 13 s of synthesised speech: the server started in a
+  sandbox of its own, decoded on the CPU at 9x real time and wrote the session, and
+  `vinowhisper-server --stop` from a third sandbox stopped it in half a second;
+- on headless Sway 1.9: the tray started, `toggle`, `hide`, `shortcuts`, `restart` and
+  `quit` reached it from other sandboxes, the overlay drew the caption process's
+  error (no audio server), and the settings window opened.
+
+Untested anywhere: the NPU and GPU from inside the sandbox, capture, the tray icon,
+the shortcut and Background portals, dictation's clipboard and paste, and Plasma. Two
+things to check first on a desktop. Flatpak 1.15.6 and later give a sandboxed app a
+restricted Wayland connection (`wp_security_context_v1`), which the container's 1.14.6
+does not, and a compositor may withhold `wlr-layer-shell` (the overlay; Sway does) or
+the data-control clipboard (dictation) from it. And `restart` starts the tray through
+Flatpak's portal, which needs the session's D-Bus environment to hold
+`WAYLAND_DISPLAY`: Plasma and GNOME put it there, and a Sway config needs the usual
+`exec dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP`.
+
+`flatpak uninstall io.github.karanshukla.vinowhisper` removes it; add `--delete-data`
+to delete its models, sessions and settings too.
+
 ## The OpenVINO version floor
 
 `openvino>=2026.4.1`. 2026.3.1 is the first *stable* release that can build

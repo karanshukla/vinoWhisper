@@ -473,7 +473,7 @@ def test_a_server_error_is_not_called_unreachable(tmp_path, no_pause):
     path = write_wav(tmp_path / "memo.wav", speech(2.0))
     client = Flaky(failures=transcribe.PIECE_ATTEMPTS, error=requests.HTTPError("500 Server Error"))
     with pytest.raises(
-        transcribe.TranscribeError, match="server failed on a piece.*\n.*journalctl"
+        transcribe.TranscribeError, match="server failed on a piece.*\n.*server.log"
     ):
         run(path, client, tmp_path)
 

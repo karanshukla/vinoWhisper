@@ -18,6 +18,7 @@ from . import (
     ovfetch,
     recorder,
     replacements,
+    sandbox,
     style,
     vocabulary,
     whisper_step,
@@ -515,9 +516,19 @@ def _verdict(results: list[Result]) -> str | None:
     return None
 
 
+def _flatpak() -> list[Result]:
+    app = sandbox.flatpak_id()
+    if app is None:
+        return []
+    branch = sandbox.info_value("Instance", "branch") or "?"
+    kind = "a release" if branch == sandbox.RELEASE_BRANCH else "built from a checkout"
+    return [Result(OK, "flatpak", f"{app}, branch {branch} ({kind}); the host is below")]
+
+
 def collect(probe: bool = True) -> list[Result]:
     results: list[Result] = [
         Result(OK, "vinowhisper", __version__),
+        *_flatpak(),
         _python(),
         _distro(),
     ]

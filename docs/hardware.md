@@ -16,7 +16,7 @@ typed it wants to know it didn't happen. The order itself is not configurable:
 there is no machine where the GPU over the NPU is the right default for this
 workload.
 
-A fallback is never silent. It appears in the server's journal, in `/health`,
+A fallback is never silent. It appears in the server's log (`~/.local/state/vinowhisper/server.log`), in `/health`,
 in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 
 ```
@@ -39,7 +39,7 @@ limit took the socket down with it.)
 So a device that fails to build a pipeline is written to
 `~/.config/vinowhisper/failed-devices.json` with the time and the first line
 of the error, and `--device auto` skips it from the next start on. The skip is
-reported the same way a fallback is: journal, `/health`, the `Ready` event,
+reported the same way a fallback is: the server's log, `/health`, the `Ready` event,
 the status bar's `⚠` line, and the doctor. A missing or unreadable file means
 nothing has failed; the NPU is only ever skipped because a load on it said so.
 

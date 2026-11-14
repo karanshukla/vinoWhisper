@@ -31,7 +31,7 @@ def no_real_server(monkeypatch, tmp_path):
     read the user's server.json, or find units a real install left behind."""
     from vinowhisper import launch
 
-    def refuse():
+    def refuse(argv):
         raise OSError("tests do not start a server")
 
     monkeypatch.setattr(launch, "_spawn", refuse)

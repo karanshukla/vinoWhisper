@@ -87,6 +87,7 @@ pub enum Command {
     OpenSettings,
     OpenVocabulary,
     SetAutostart(bool),
+    AutostartSet(Result<bool, String>),
     Shortcut(shortcut::State),
     DictateKey {
         down: bool,
@@ -412,6 +413,11 @@ impl App {
             Command::OpenSettings => self.open_settings(&[]),
             Command::OpenVocabulary => self.open_settings(&["--page".into(), "speech".into()]),
             Command::SetAutostart(enabled) => self.set_autostart(enabled),
+            Command::AutostartSet(Ok(enabled)) => self.autostart = enabled,
+            Command::AutostartSet(Err(err)) => {
+                eprintln!("[vinowhisper-tray] could not change start at login: {err}");
+                self.autostart = install::autostart_enabled();
+            }
             Command::Shortcut(state) => self.shortcut_state = state,
             Command::DictateKey { down } => {
                 let action = self.dictation.key(down, Instant::now());
@@ -1075,6 +1081,17 @@ impl App {
     }
 
     fn set_autostart(&mut self, enabled: bool) {
+        if crate::settings::sandbox::flatpak_id().is_some() {
+            // The portal may ask the user first; the overlay keeps drawing meanwhile.
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let set = install::set_autostart(enabled, None)
+                    .map(|()| enabled)
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(Command::AutostartSet(set));
+            });
+            return;
+        }
         match install::set_autostart(enabled, self.caption_override.as_deref()) {
             Ok(()) => self.autostart = enabled,
             Err(err) => eprintln!("[vinowhisper-tray] could not change start at login: {err}"),

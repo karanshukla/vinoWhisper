@@ -220,3 +220,14 @@ jobs:
             --title "v${VERSION}" \
             --notes-file RELEASE_NOTES.md \
             --verify-tag
+
+  # The Flatpak bundle, built from the same tag once the release exists. The Flatpak's
+  # Update button downloads its two assets by name (vinowhisper/flatpak_update.py).
+  flatpak:
+    needs: github-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write # to attach the bundle to the release
+    uses: ./.github/workflows/flatpak.yml
+    with:
+      tag: ${{ github.ref_name }}

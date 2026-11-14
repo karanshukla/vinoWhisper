@@ -21,6 +21,7 @@ from . import (
     launch,
     overlay,
     ovfetch,
+    sandbox,
     style,
 )
 from . import source as model_source
@@ -76,6 +77,7 @@ class Wizard:
         self.language, self.task, self.model = config.resolve_language(language, task, model)
         self.multilingual = config.is_multilingual(self.language, self.task)
         self.distro = distro.detect()
+        self.flatpak = sandbox.flatpak_id() is not None
         self.failed: list[str] = []
         self.skipped: list[str] = []
 
@@ -113,6 +115,14 @@ class Wizard:
             self.say(f"  ✗ exited {exc.returncode}")
             return False
         return True
+
+    def install_export_extra(self) -> bool:
+        commands = export_extra_commands()
+        for argv in commands:
+            self.say(f"  $ {' '.join(argv)}")
+        if not self.confirm("install it?"):
+            return False
+        return all(self.execute(argv) for argv in commands)
 
     def step(self, title: str, action: Callable[[], Outcome], optional: bool = False) -> None:
         style.emit()
@@ -249,7 +259,7 @@ class Wizard:
         cli = optimum_cli()
         if cli is None:
             self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
-            if not self.run(export_extra_argv(), "install it?"):
+            if not self.install_export_extra():
                 return Outcome(None, "install the export extra, then re-run this")
             cli = optimum_cli()
             if cli is None:
@@ -531,12 +541,15 @@ class Wizard:
         self.step("Model export", self.check_model)
         self.step("Language", self.save_language)
         self.step("Server", self.setup_server)
-        self.step("Commands on PATH", self.link_binaries)
-        self.step("Bash completion", self.install_completion)
-        if os.environ.get("WAYLAND_DISPLAY"):
-            self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
-        if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
-            self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
+        # The Flatpak carries its commands, the tray and the windows, and Flatpak exports
+        # their menu entries; nothing of it goes in ~/.local.
+        if not self.flatpak:
+            self.step("Commands on PATH", self.link_binaries)
+            self.step("Bash completion", self.install_completion)
+            if os.environ.get("WAYLAND_DISPLAY"):
+                self.step("Desktop overlay (optional)", self.install_overlay, optional=True)
+            if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
+                self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
 
         style.emit()
         if self.failed:
@@ -609,6 +622,9 @@ def export_argv(
 
 
 def optimum_cli() -> str | None:
+    if sandbox.flatpak_id() is not None:
+        inside = config.EXPORT_ENV_DIR / "bin/optimum-cli"
+        return str(inside) if inside.exists() else None
     beside = Path(sys.executable).with_name("optimum-cli")
     if beside.exists():
         return str(beside)
@@ -653,6 +669,33 @@ def export_extra_argv() -> list[str]:
         "--extra-index-url",
         TORCH_CPU_INDEX,
         requirement,
+    ]
+
+
+def export_extra_commands() -> list[list[str]]:
+    if sandbox.flatpak_id() is None:
+        return [export_extra_argv()]
+    # /app is read-only, so the extra goes in a venv in the app's data that sees the
+    # bundled OpenVINO. The requirements are this package's own, read from its metadata.
+    from importlib.metadata import requires
+
+    extra = [
+        requirement.split(";")[0].strip()
+        for requirement in requires("vinowhisper") or []
+        if "extra ==" in requirement and "export" in requirement.split(";", 1)[1]
+    ]
+    env = config.EXPORT_ENV_DIR
+    return [
+        [sys.executable, "-m", "venv", "--system-site-packages", str(env)],
+        [
+            str(env / "bin/python"),
+            "-m",
+            "pip",
+            "install",
+            "--extra-index-url",
+            TORCH_CPU_INDEX,
+            *extra,
+        ],
     ]
 
 
@@ -760,6 +803,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.yes and args.dry_run:
         print("--yes and --dry-run contradict each other", file=sys.stderr)
         return 2
+
+    if sandbox.flatpak_id() is not None and (args.gui or args.ovfetch):
+        print("The Flatpak carries the tray, the windows and Intel's NPU driver: nothing to do.")
+        return 0
 
     wizard = Wizard(
         assume_yes=args.yes,

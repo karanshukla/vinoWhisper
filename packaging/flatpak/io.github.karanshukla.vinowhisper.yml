@@ -1,0 +1,243 @@
+# vinoWhisper as a Flatpak: the server and every command, the tray and overlay,
+# and the settings and sessions windows, with a Python of its own, OpenVINO and
+# Intel's NPU and GPU drivers under /app. Intel's prebuilt Ubuntu packages are
+# unpacked as they are; nothing from the host's /usr is loaded. Built from this
+# checkout; see docs/install.md.
+#
+#   flatpak run --filesystem=$HOME org.flatpak.Builder --user --install --force-clean \
+#     --state-dir ~/.cache/vinowhisper/flatpak/state \
+#     ~/.cache/vinowhisper/flatpak/build packaging/flatpak/io.github.karanshukla.vinowhisper.yml
+app-id: io.github.karanshukla.vinowhisper
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: vinowhisper-tray
+finish-args:
+  # /dev/accel/accel0 (NPU) is only exposed by `all`; it covers the GPU's
+  # /dev/dri for OpenVINO and the windows, and /dev/uinput, which types a
+  # dictation's Shift+Insert.
+  - --device=all
+  # Recordings given to vinowhisper-transcribe and the paths --record and
+  # --transcript name, the sessions entry the Sessions page adds to the app
+  # menu, and the autostart entry the Background portal writes.
+  - --filesystem=home
+  # Downloading the models, and checking for a release.
+  - --share=network
+  # The overlay, and the settings and sessions windows. Wayland only.
+  - --socket=wayland
+  # pw-record and pw-dump: system audio, the microphone and what is playing.
+  - --filesystem=xdg-run/pipewire-0
+  # pactl and parec, through PipeWire's PulseAudio server or a real one.
+  - --socket=pulseaudio
+  # The tray icon.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Summaries and screen reader announcements.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.a11y.Bus
+  # Pausing players while dictating.
+  - --talk-name=org.mpris.MediaPlayer2.*
+  # Show in folder.
+  - --talk-name=org.freedesktop.FileManager1
+  # flatpak-spawn --host: installing an update with the host's flatpak, and
+  # asking the host's busctl what is playing (the runtime has none).
+  - --talk-name=org.freedesktop.Flatpak
+  - --env=OCL_ICD_VENDORS=/app/etc/OpenCL/vendors
+# Nothing is stripped or has its debug info split off: eu-strip leaves the
+# prebuilt Python unable to start, Intel's libraries come as they are, and
+# cargo strips the tray and the windows itself.
+build-options:
+  no-debuginfo: true
+  strip: false
+
+modules:
+  # CPython 3.13 (python-build-standalone 20260718): the runtime's is 3.14,
+  # which the model export cannot run on (docs/install.md).
+  - name: python
+    buildsystem: simple
+    sources:
+      - type: archive
+        url: https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.13.14%2B20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+        sha256: 571a710c62520b26dbadbd16e8850e24565c01dea94440223bc16caa21614021
+        strip-components: 1
+    build-commands:
+      - install -d /app/lib/vinowhisper/python
+      - cp -a bin lib /app/lib/vinowhisper/python/
+      - install -Dm644 lib/python3.13/LICENSE.txt /app/share/licenses/python/LICENSE.txt
+
+  # What uv.lock pins, by hash: OpenVINO 2026.4.1 with its GenAI and
+  # tokenizers, Flask, requests, numpy and Rich.
+  - name: python-packages
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    sources:
+      - type: file
+        path: requirements.txt
+    build-commands:
+      - >-
+        /app/lib/vinowhisper/python/bin/python3 -m pip install --no-cache-dir
+        --disable-pip-version-check --only-binary=:all: --require-hashes -r requirements.txt
+      # The NPU compiler needs libtbb.so.12 by soname.
+      - ln -s vinowhisper/python/lib/python3.13/site-packages/openvino/libs/libtbb.so.12 /app/lib/libtbb.so.12
+
+  # Level Zero loader, oneapi-src/level-zero v1.35.0 (Ubuntu 24.04 deb).
+  - name: level-zero
+    buildsystem: simple
+    sources:
+      - type: file
+        url: https://github.com/oneapi-src/level-zero/releases/download/v1.35.0/libze1_1.35.0+u24.04_amd64.deb
+        sha256: 8420f4fd710a44bed054afad2f7e0fbc408d8b3e266a2b5464bd4ab71a0dfcf3
+        dest-filename: libze1.deb
+      - type: file
+        url: https://raw.githubusercontent.com/oneapi-src/level-zero/v1.35.0/LICENSE
+        sha256: f2e82047a47ca742088331ae2bc85b97949ed1e97dfa057cdafd03e8709fc0a2
+    build-commands:
+      - ar x libze1.deb data.tar.gz && tar xzf data.tar.gz
+      - cp -a usr/lib/x86_64-linux-gnu/libze_loader.so* /app/lib/
+      - install -Dm644 LICENSE /app/share/licenses/level-zero/LICENSE
+
+  # NPU user-mode driver and its compiler, intel/linux-npu-driver v1.35.0.
+  # The firmware package is left out: the host kernel loads firmware.
+  - name: npu-driver
+    buildsystem: simple
+    sources:
+      - type: archive
+        url: https://github.com/intel/linux-npu-driver/releases/download/v1.35.0/linux-npu-driver-v1.35.0.20260722-29947505341-ubuntu2404.tar.gz
+        sha256: 398343e53fdac6023ad0856ef88bb6011b1e12447a112be55e85e27ef7f96c66
+        strip-components: 0
+      - type: file
+        url: https://raw.githubusercontent.com/intel/linux-npu-driver/v1.35.0/LICENSE.md
+        sha256: 451963b6682694730dbe4889fff2ef1c20def68992e2594880c15a28e6c87be5
+      - type: file
+        url: https://raw.githubusercontent.com/intel/linux-npu-driver/v1.35.0/third-party-programs.txt
+        sha256: 7ae92abe83bee3b7bac9197a4b9a151cecfce28ed8eb0a8cbd4ace5ee4ccb75a
+    build-commands:
+      - |
+        set -e
+        for d in intel-level-zero-npu_*.deb intel-driver-compiler-npu_*.deb; do
+          ar p "$d" data.tar.gz | tar xz
+        done
+      # The driver opens the compiler loader from its own directory.
+      - cp -a usr/lib/x86_64-linux-gnu/libze_intel_npu.so* usr/lib/x86_64-linux-gnu/libopenvino_intel_npu_compiler*.so /app/lib/
+      - install -Dm644 LICENSE.md /app/share/licenses/linux-npu-driver/LICENSE.md
+      - install -Dm644 third-party-programs.txt /app/share/licenses/linux-npu-driver/third-party-programs.txt
+
+  # GPU: Intel's OpenCL driver (compute-runtime 26.40.40196.8), gmmlib
+  # 22.10.2 and IGC v2.42.6, the set that release names.
+  - name: gpu-driver
+    buildsystem: simple
+    sources:
+      - type: file
+        url: https://github.com/intel/compute-runtime/releases/download/26.40.40196.8/intel-opencl-icd_26.40.40196.8-0_amd64.deb
+        sha256: 96046069e94680b761df6e83ddc64244721178b826e3e1f8af3ca104cfd0c7c2
+        dest-filename: opencl-icd.deb
+      - type: file
+        url: https://github.com/intel/compute-runtime/releases/download/26.40.40196.8/libigdgmm12_22.10.2_amd64.deb
+        sha256: 053fceadb84a1d2f9a30a0d1bc9b16424b3f1a90cc49900fcd80aadcf25c8a4d
+        dest-filename: gmm.deb
+      - type: file
+        url: https://github.com/intel/intel-graphics-compiler/releases/download/v2.42.6/intel-igc-core-2_2.42.6+23070_amd64.deb
+        sha256: e20539632f2d99875d8f8b225d5da58b31f98baa54bb47c6328aa98ec473ab9d
+        dest-filename: igc-core.deb
+      - type: file
+        url: https://github.com/intel/intel-graphics-compiler/releases/download/v2.42.6/intel-igc-opencl-2_2.42.6+23070_amd64.deb
+        sha256: 7f5593cf828503ffb8450967768bde9209e22753bc576296e846b5a751011fa3
+        dest-filename: igc-opencl.deb
+      - type: file
+        url: https://raw.githubusercontent.com/intel/intel-graphics-compiler/v2.42.6/LICENSE.md
+        sha256: 8b2cd951f44d1fbe6adcf112e1f3a0cc989c89c8889a1c48dea5f7ece10ba9c9
+        dest-filename: igc-LICENSE.md
+      - type: file
+        url: https://raw.githubusercontent.com/intel/gmmlib/intel-gmmlib-22.10.2/LICENSE.md
+        sha256: 8b7446825df3f8b0268307e272aa6aaaf78351c83161d860d02c913c22666c48
+        dest-filename: gmmlib-LICENSE.md
+      - type: file
+        url: https://raw.githubusercontent.com/intel/compute-runtime/26.40.40196.8/LICENSE.md
+        sha256: 987a002c6c9eb75290d9937735641ef4f4b670591ee79e1ac8edebe16a81872e
+        dest-filename: compute-runtime-LICENSE.md
+    build-commands:
+      - |
+        set -e
+        for d in opencl-icd.deb gmm.deb igc-core.deb igc-opencl.deb; do
+          ar p "$d" data.tar.zst | tar x --zstd
+        done
+      - install -d /app/lib/intel-opencl /app/etc/OpenCL/vendors
+      - cp -a usr/lib/x86_64-linux-gnu/intel-opencl/libigdrcl.so /app/lib/intel-opencl/
+      - cp -a usr/lib/x86_64-linux-gnu/libigdgmm.so.12* usr/local/lib/lib*.so* /app/lib/
+      - echo /app/lib/intel-opencl/libigdrcl.so > /app/etc/OpenCL/vendors/intel.icd
+      - install -Dm644 compute-runtime-LICENSE.md /app/share/licenses/compute-runtime/LICENSE.md
+      - install -Dm644 usr/share/doc/intel-opencl-icd/copyright /app/share/licenses/compute-runtime/copyright
+      - install -Dm644 gmmlib-LICENSE.md /app/share/licenses/gmmlib/LICENSE.md
+      - install -Dm644 igc-LICENSE.md /app/share/licenses/intel-graphics-compiler/LICENSE.md
+      - install -Dm644 usr/local/lib/igc2/NOTICES.txt /app/share/licenses/intel-graphics-compiler/NOTICES.txt
+
+  - name: vinowhisper
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .claude
+          - .venv
+          - tray
+          - gui
+          - settings
+          - site
+          - docs
+          - tests
+    build-commands:
+      # setuptools came with the pinned packages, so nothing is fetched.
+      - >-
+        /app/lib/vinowhisper/python/bin/python3 -m pip install --no-cache-dir
+        --disable-pip-version-check --no-index --no-deps --no-build-isolation .
+      - install -d /app/bin
+      - |
+        set -e
+        for command in /app/lib/vinowhisper/python/bin/vinowhisper-*; do
+          ln -s ../lib/vinowhisper/python/bin/"${command##*/}" /app/bin/
+        done
+      - install -Dm644 LICENSE /app/share/licenses/vinowhisper/LICENSE
+
+  # The tray and overlay, and the settings and sessions windows.
+  - name: vinowhisper-desktop
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/vinowhisper-desktop/cargo
+      # Cargo fetches the crates.
+      build-args:
+        - --share=network
+    sources:
+      - type: dir
+        path: ../../tray
+        dest: tray
+        skip:
+          - target
+      - type: dir
+        path: ../../gui
+        dest: gui
+        skip:
+          - target
+      - type: dir
+        path: ../../settings
+        dest: settings
+        skip:
+          - target
+      - type: file
+        path: io.github.karanshukla.vinowhisper.metainfo.xml
+    build-commands:
+      - cargo build --release --locked --manifest-path tray/Cargo.toml
+      - cargo build --release --locked --manifest-path gui/Cargo.toml
+      - install -Dm755 tray/target/release/vinowhisper-tray /app/bin/vinowhisper-tray
+      - install -Dm755 gui/target/release/vinowhisper-gui /app/bin/vinowhisper-gui
+      # The app menu entries, icons and the .vwsession file type, from the
+      # templates a native install writes.
+      - /app/bin/vinowhisper-tray --export-desktop /app/share
+      # Flatpak exports a MIME package only under the app's own id.
+      - mv /app/share/mime/packages/$FLATPAK_ID-session.xml /app/share/mime/packages/$FLATPAK_ID.xml
+      - install -Dm644 $FLATPAK_ID.metainfo.xml /app/share/metainfo/$FLATPAK_ID.metainfo.xml

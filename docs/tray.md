@@ -672,7 +672,7 @@ How the prompt is passed, where it is:
   decoded with each gave the same text, and every dictation piece is under 30 s.
 - **At most 120 tokens**, which is about 30 names (the test names took four tokens
   each), of at most 100 terms of 64 characters. Terms past the token limit are left
-  out, in file order, and the server's journal says how many were used. The prompt
+  out, in file order, and the server's log says how many were used. The prompt
   shares Whisper's 448 decoder positions with the answer and OpenVINO GenAI does not
   trim it: a prompt of 899 tokens returned `, Qu, Qu` with no error. The answer's
   token limit is lowered by the prompt's length.

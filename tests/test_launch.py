@@ -82,7 +82,7 @@ def socket_path(monkeypatch):
 def servers(socket_path, monkeypatch):
     started = []
 
-    def spawn():
+    def spawn(argv):
         instance = _Server(str(socket_path), _Handler)
         threading.Thread(target=instance.serve_forever, daemon=True).start()
         started.append(instance)
@@ -126,14 +126,14 @@ def test_a_socket_left_by_a_server_that_exited_starts_a_new_one(servers, socket_
 
 def test_a_server_that_exits_as_it_starts_is_an_error_with_its_log(monkeypatch, socket_path):
     config.SERVER_LOG.write_text("[vinowhisper-server] no export at /models\n")
-    monkeypatch.setattr(launch, "_spawn", lambda: _Process(returncode=1))
+    monkeypatch.setattr(launch, "_spawn", lambda argv: _Process(returncode=1))
     with pytest.raises(launch.StartError, match="no export at /models") as raised:
         launch.ensure()
     assert str(config.SERVER_LOG) in str(raised.value)
 
 
 def test_a_server_that_never_listens_times_out(monkeypatch, socket_path):
-    monkeypatch.setattr(launch, "_spawn", lambda: _Process())
+    monkeypatch.setattr(launch, "_spawn", lambda argv: _Process())
     with pytest.raises(launch.StartError, match="did not listen"):
         launch.ensure(wait_s=0.2)
 
@@ -146,13 +146,13 @@ def test_a_failed_start_reaches_the_caller_as_a_connection_error(socket_path):
 
 def test_without_a_runtime_dir_nothing_is_started(monkeypatch):
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    monkeypatch.setattr(launch, "_spawn", lambda: pytest.fail("started a server"))
+    monkeypatch.setattr(launch, "_spawn", lambda argv: pytest.fail("started a server"))
     with pytest.raises(launch.StartError, match="XDG_RUNTIME_DIR"):
         launch.ensure()
 
 
 def test_a_session_can_decline_to_start_the_server(monkeypatch, socket_path):
-    monkeypatch.setattr(launch, "_spawn", lambda: pytest.fail("started a server"))
+    monkeypatch.setattr(launch, "_spawn", lambda argv: pytest.fail("started a server"))
     with (
         client.session(autostart=False) as session,
         pytest.raises(requests.ConnectionError, match="server.sock"),
@@ -167,7 +167,7 @@ def test_stop_asks_the_server_to_quit_and_waits_for_it(servers, socket_path):
 
 
 def test_stop_with_no_server_starts_none(monkeypatch, socket_path):
-    monkeypatch.setattr(launch, "_spawn", lambda: pytest.fail("started a server"))
+    monkeypatch.setattr(launch, "_spawn", lambda argv: pytest.fail("started a server"))
     assert launch.stop() is True
 
 

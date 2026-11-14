@@ -59,6 +59,7 @@ vinowhisper-session = "vinowhisper.session:main"
 vinowhisper-canary = "vinowhisper.canary:main"
 vinowhisper-whisper = "vinowhisper.whisper_model:main"
 vinowhisper-transcribe = "vinowhisper.transcribe:main"
+vinowhisper-flatpak-update = "vinowhisper.flatpak_update:main"
 
 [build-system]
 requires = ["setuptools>=77"]  # PEP 639 license expressions
