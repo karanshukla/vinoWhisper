@@ -1300,17 +1300,7 @@ impl SessionsWindow {
                     // Up in the window's corner, as the settings window's bar puts them, rather
                     // than in a row: the header's first row differs between the list and a
                     // session, and the rows under it keep their inset.
-                    let window = ctx.content_rect();
-                    let gap = vino_ui::window::BAR_GAP;
-                    let width = vino_ui::window::controls_width();
-                    let corner = egui::Rect::from_min_size(
-                        egui::pos2(window.right() - gap - width, window.top() + gap),
-                        egui::vec2(width, vino_ui::window::BUTTON),
-                    );
-                    // A child that takes no room from the header's own rows.
-                    vino_ui::window::controls(
-                        &mut ui.new_child(egui::UiBuilder::new().max_rect(corner)),
-                    );
+                    vino_ui::window::corner(ui);
                     // The header is the handle, so a press on a label drags the window.
                     ui.style_mut().interaction.selectable_labels = false;
                 }
