@@ -649,7 +649,8 @@ impl App {
             Timer::from_duration(NOTICE_FOR),
             move |_, _, app: &mut App| {
                 app.dictation.clear_notice(id);
-                app.draw_pill();
+                // Not draw_pill: with no dictation left, the pill has to go, not be redrawn.
+                app.show_pill();
                 TimeoutAction::Drop
             },
         );
