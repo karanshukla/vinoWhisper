@@ -625,6 +625,7 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/media.rs    MPRIS pause while dictating, resume after
 gui/              vinowhisper-gui, the egui settings and sessions windows (glibc)
   src/window.rs   the settings window: state, the frame, saving
+  src/sessions_window.rs, src/sessions_window/   the sessions window, split the same way
   src/window/     one file per page (shortcuts, captions, speech, cleanup, sessions), models.rs
                   (download and delete rows), labels.rs, controls.rs, tests.rs
 settings/         the crate both binaries read gui.json and language.json through
