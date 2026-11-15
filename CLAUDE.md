@@ -299,7 +299,10 @@ and the traps found building it:
   KDE posts "Remote control session started" per *session start*: the old portal
   fallback opened one per dictation, which is why it was rejected 2026-09-21. One session
   held open was one notification for three presses 5 s apart (2026-11-14). A restore
-  token starts later sessions with no dialog (0.01 s; new token each start). A session
+  token starts later sessions with no dialog (0.01 s; new token each start). Verified
+  on the laptop 2026-11-14 in the Flatpak: typing works and is faster than the
+  clipboard route was; KDE's remote-control icon stays while the session is open and
+  went away 5 min after the last dictation. A session
   that fails on the first key is replaced once; never after a key went out, so nothing
   is typed twice.
 - **Gone with it:** uinput (and the udev rule), `zwp_virtual_keyboard_v1` (and its Sway

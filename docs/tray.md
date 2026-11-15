@@ -270,8 +270,9 @@ tells you when that starts:
 - **Your first dictation** opens a "Remote Control Requested" dialog. Allow it, and tick
   "Allow … without asking next time" (Plasma 6.8) so it does not come back.
 - **The first dictation after a pause** brings one "Remote control session started"
-  notification. The session then stays open, and dictations in the next 5 minutes type
-  without one. That is what **Keep typing access** on the settings window's Speech page
+  notification. The session then stays open, with KDE's remote-control icon in the tray,
+  and dictations in the next 5 minutes type without one. Five minutes after the last
+  one, the session closes and the icon goes. That is what **Keep typing access** on the settings window's Speech page
   sets: longer means fewer notifications, 0 keeps the session open until the tray quits.
 - A desktop without the portal (Sway, niri, COSMIC) cannot be typed into: the text goes
   on the clipboard instead, and the pill says so.
@@ -510,7 +511,8 @@ native and Flatpak alike, by the user's choice of one input method over several:
 - **One session, kept open.** KDE posts "Remote control session started" each time a
   session starts. A session per dictation, which is what the portal fallback used to do,
   was a notification per dictation; one session kept open was one notification for
-  three key presses 5 s apart (2026-11-14). So the session is opened at the first
+  three key presses 5 s apart (2026-11-14). KDE keeps its remote-control icon in the tray
+  while the session is open; it went away when the idle close ran (2026-11-14, Flatpak). So the session is opened at the first
   dictation and closed after `typing_idle_minutes` without one (Settings → Speech →
   Keep typing access; 5 by default, 0 keeps it open). The next dictation after that
   opens a new one, with its notification.
