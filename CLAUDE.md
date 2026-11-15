@@ -613,7 +613,10 @@ vinowhisper/
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install
 tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not uv
-  src/app.rs      event loop, layer-shell surface, the caption child's lifecycle
+  src/app.rs      event loop, commands, the caption child's lifecycle
+  src/app/        the rest of App: surface.rs (layer surfaces, placing, drawing), wayland.rs
+                  (the smithay handlers), dictating.rs (the dictate child and the pill),
+                  settings_window.rs (spawning vinowhisper-gui)
   src/captions.rs what the box shows, as plain data (the testable part)
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
   src/protocol.rs the --json wire formats (captions and dictation)
