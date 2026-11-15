@@ -7,7 +7,7 @@ use eframe::egui::{self, Align, Layout, RichText};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
 use vino_ui::theme;
-use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
+use vino_ui::widgets::{self, Button, ChipKind, Column, Row, Tone};
 
 use crate::forward::{self, Shortcuts};
 use crate::model::{self, Line, ModelState, Status, Tool};
@@ -55,6 +55,13 @@ impl Page {
             Page::Cleanup => "Cleanup",
             Page::Sessions => "Sessions",
             Page::About => vino_ui::about::TITLE,
+        }
+    }
+
+    fn max_width(self) -> f32 {
+        match self {
+            Page::Shortcuts | Page::About => widgets::CONTENT_MAX,
+            Page::Captions | Page::Speech | Page::Cleanup | Page::Sessions => widgets::WIDE_MAX,
         }
     }
 
@@ -442,6 +449,14 @@ impl SettingsWindow {
     }
 
     fn captions(&mut self, ui: &mut egui::Ui) -> bool {
+        let [overlay, listening] = widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.overlay(ui),
+            Column::Right => self.listening(ui),
+        });
+        overlay | listening
+    }
+
+    fn overlay(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         widgets::group_label(ui, "Overlay");
         widgets::group(ui, |ui| {
@@ -468,6 +483,11 @@ impl SettingsWindow {
                 );
             });
         });
+        changed
+    }
+
+    fn listening(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
             Row::new("Listen to")
@@ -640,9 +660,16 @@ impl SettingsWindow {
              said it when the model's answer does not check out.",
             |_| {},
         );
+        widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.cleanup_rows(ui, known.as_ref()),
+            Column::Right => self.cleanup_model(ui, &state),
+        });
+    }
+
+    fn cleanup_rows(&mut self, ui: &mut egui::Ui, known: Option<&Status>) {
         widgets::group_label(ui, "Dictation cleanup");
         widgets::group(ui, |ui| {
-            let missing = self.cleanup.enabled && known.as_ref().is_some_and(|s| !s.present);
+            let missing = self.cleanup.enabled && known.is_some_and(|s| !s.present);
             let (help, tone) = if missing {
                 (
                     "Download the model below first; until then the raw text is typed.",
@@ -693,7 +720,9 @@ impl SettingsWindow {
                     });
             });
         });
+    }
 
+    fn cleanup_model(&mut self, ui: &mut egui::Ui, state: &ModelState) {
         match &state.status {
             None => {
                 widgets::group_label(ui, "Model");
@@ -713,7 +742,7 @@ impl SettingsWindow {
                 });
             }
             Some(Ok(status)) => {
-                self.model_rows(ui, Tool::Cleanup, status, &state);
+                self.model_rows(ui, Tool::Cleanup, status, state);
             }
         }
     }
@@ -970,6 +999,13 @@ impl SettingsWindow {
     }
 
     fn sessions(&mut self, ui: &mut egui::Ui) {
+        widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.summaries(ui),
+            Column::Right => self.saved_sessions(ui),
+        });
+    }
+
+    fn summaries(&mut self, ui: &mut egui::Ui) {
         let model_ready = *self.model_ready.lock().unwrap();
         widgets::group_label(ui, "Summaries");
         widgets::group(ui, |ui| {
@@ -1002,6 +1038,9 @@ impl SettingsWindow {
                     }
                 });
         });
+    }
+
+    fn saved_sessions(&mut self, ui: &mut egui::Ui) {
         widgets::group_label(ui, "Saved sessions");
         widgets::group(ui, |ui| {
             let (help, tone) = if self.settings.save_transcripts {
@@ -1062,7 +1101,6 @@ impl SettingsWindow {
     }
 
     fn speech(&mut self, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
         if let Some(notice) = self.notice.clone() {
             ui.add_space(12.0);
             if widgets::notice(ui, Tone::Error, &notice) {
@@ -1075,6 +1113,18 @@ impl SettingsWindow {
                 self.speech_note = None;
             }
         }
+        let [recognition, _] = widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.recognition(ui),
+            Column::Right => {
+                self.dictation(ui);
+                false
+            }
+        });
+        recognition
+    }
+
+    fn recognition(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         widgets::group_label(ui, "Recognition");
         let canary_state = self.canary_model.lock().unwrap().clone();
         changed |= self.settle_canary_delete(&canary_state);
@@ -1209,6 +1259,10 @@ impl SettingsWindow {
         if let Some(Ok(status)) = &canary_state.status {
             self.model_rows(ui, Tool::Canary, status, &canary_state);
         }
+        changed
+    }
+
+    fn dictation(&mut self, ui: &mut egui::Ui) {
         widgets::group_label(ui, "Dictation");
         widgets::group(ui, |ui| {
             Row::new("Pause media")
@@ -1251,7 +1305,6 @@ impl SettingsWindow {
                 });
             self.vocabulary_rows(ui);
         });
-        changed
     }
 
     fn vocabulary_rows(&mut self, ui: &mut egui::Ui) {
@@ -1491,7 +1544,8 @@ impl SettingsWindow {
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
-        let wide = ctx.content_rect().width() >= widgets::SIDEBAR_FROM;
+        let window = ctx.content_rect().width();
+        let wide = window >= widgets::SIDEBAR_FROM;
         let mut saved_settings = false;
         let mut saved_speech = false;
         let tray = match &*self.shortcuts.lock().unwrap() {
@@ -1506,7 +1560,7 @@ impl SettingsWindow {
             egui::Panel::left("pages")
                 .resizable(false)
                 .show_separator_line(false)
-                .exact_size(widgets::SIDEBAR_WIDTH)
+                .exact_size(widgets::sidebar_width(window))
                 .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
@@ -1620,7 +1674,7 @@ impl SettingsWindow {
             }
         };
         if bar {
-            vino_ui::window::bar(ui, widgets::PAGE_INSET, title, |_| {});
+            vino_ui::window::bar(ui, widgets::page_inset(window), title, |_| {});
         }
 
         egui::CentralPanel::default()
@@ -1630,7 +1684,11 @@ impl SettingsWindow {
                     // No right margin: the scroll bar belongs on the window's edge, and the
                     // content keeps its own gap from it below.
                     .inner_margin(egui::Margin {
-                        left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
+                        left: if wide {
+                            widgets::page_inset(window) as i8
+                        } else {
+                            16
+                        },
                         right: 0,
                         top: match (wide, bar) {
                             // The same 15 from title to content as in the scroll area.
@@ -1642,7 +1700,7 @@ impl SettingsWindow {
                     }),
             )
             .show(ui, |ui| {
-                widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
                     if !bar {
                         ui.horizontal(title);
                     }
@@ -2680,6 +2738,23 @@ mod tests {
         harness.run();
         assert!(!vinowhisper_settings::sessions_entry_shown_in(&data));
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
+        for (page, left, right) in [
+            (Page::Captions, "Overlay", "Listening"),
+            (Page::Speech, "Recognition", "Dictation"),
+            (Page::Cleanup, "Dictation cleanup", "SmolLM3-3B"),
+            (Page::Sessions, "Summaries", "Saved sessions"),
+        ] {
+            let mut harness = harness(page, 1440.0);
+            harness.run();
+            let left = harness.get_by_role_and_label(Role::Heading, left).rect();
+            let right = harness.get_by_role_and_label(Role::Heading, right).rect();
+            assert_eq!(left.top(), right.top(), "{}", page.title());
+            assert!(right.left() > left.right(), "{}", page.title());
+        }
     }
 
     #[test]
