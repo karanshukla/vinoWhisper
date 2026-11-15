@@ -293,6 +293,8 @@ and the traps found building it:
   Shift+Insert could not work there. Keysyms came through exactly on Plasma 6.8.2, US
   layout (curly quotes, dashes, `€`, `ß`, accents); other layouts are untried (KDE bug
   489021).
+- **A line break or tab is typed as a space.** Only a `replacements.json` value can carry
+  one, and a typed Return runs the line in a terminal, which a bracketed paste never did.
 - **One session, closed after `typing_idle_minutes`** (gui.json, default 5, 0 keeps it).
   KDE posts "Remote control session started" per *session start*: the old portal
   fallback opened one per dictation, which is why it was rejected 2026-09-21. One session

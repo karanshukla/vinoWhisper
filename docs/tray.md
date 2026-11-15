@@ -485,8 +485,10 @@ one key per character with `NotifyKeyboardKeysym`. Since 2026-11-14 this is the 
 native and Flatpak alike, by the user's choice of one input method over several:
 
 - **Keysyms, not keycodes.** Each character goes out as its keysym (the code point for
-  Latin-1, `0x01000000` + the code point for the rest; Return and Tab for line breaks and
-  tabs), and the desktop's layout decides which key makes it. Measured 2026-11-14 on
+  Latin-1, `0x01000000` + the code point for the rest), and the desktop's layout decides which key
+  makes it. A line break or tab (only a `replacements.json` value can carry one) is typed
+  as a space: a pasted line break was harmless in a terminal with bracketed paste, a
+  typed Return runs the line. Measured 2026-11-14 on
   Plasma 6.8.2, US layout: curly quotes, em dash, ellipsis, accented letters, `€` and `ß`
   all came through as written. KDE has a report of the wrong keycode on other layouts
   ([bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021)); not tried here.

@@ -19,9 +19,6 @@ const CALL: Duration = Duration::from_secs(3);
 // Start is where the permission dialog appears the first time: the user has to read it.
 const DIALOG: Duration = Duration::from_secs(90);
 
-const XK_TAB: i32 = 0xff09;
-const XK_RETURN: i32 = 0xff0d;
-
 #[derive(Debug, Clone, PartialEq)]
 enum Failure {
     Denied,
@@ -249,8 +246,8 @@ async fn start() -> Result<Open, Failure> {
 fn keysym(c: char) -> Option<i32> {
     let code = c as u32;
     match c {
-        '\n' => Some(XK_RETURN),
-        '\t' => Some(XK_TAB),
+        // Never Return or Tab: a pasted line break was safe in a terminal, a typed one runs it.
+        '\n' | '\t' => Some(0x20),
         _ if c.is_control() => None,
         // Latin-1 keysyms are the code points; everything else is 0x01000000 + the code point.
         _ if (0x20..0x7f).contains(&code) || (0xa0..0x100).contains(&code) => Some(code as i32),
@@ -344,9 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn line_breaks_and_tabs_are_keys_and_other_controls_are_dropped() {
-        assert_eq!(keysym('\n'), Some(XK_RETURN));
-        assert_eq!(keysym('\t'), Some(XK_TAB));
+    fn line_breaks_and_tabs_are_spaces_and_other_controls_are_dropped() {
+        assert_eq!(keysym('\n'), Some(0x20));
+        assert_eq!(keysym('\t'), Some(0x20));
         assert_eq!(keysym('\r'), None);
         assert_eq!(keysym('\u{7f}'), None);
         assert_eq!(keysym('\u{85}'), None);
