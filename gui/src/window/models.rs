@@ -7,8 +7,7 @@ impl SettingsWindow {
         !matches!(&state.status, Some(Ok(status)) if !status.present)
     }
 
-    // Deleting the model in use: the server could not load it any more, so back to Whisper,
-    // and the page says so.
+    // The server cannot load a deleted model, so back to Whisper, and the page says so.
     pub(super) fn forget_canary(&mut self) -> bool {
         if self.speech.model != SpeechModel::Canary {
             return false;

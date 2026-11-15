@@ -925,6 +925,20 @@ starts and the first word is probably clipped. If it is usually chunk 3 or
 later, there is headroom. Write the result here with the date; the instrument
 was added 2026-10-07 and has not been run on hardware.
 
+### The settings window
+
+`vinowhisper-gui` runs with vsync off. With vsync, a buffer swap waits on a
+frame callback that KWin holds back from a window it considers hidden, and
+the window stops answering pings ("Not Responding", seen 2026-10-11). It only
+redraws on input, so nothing is lost. eframe 0.37 skips the blocking swap on
+Wayland itself (egui#5136); turning vsync off keeps X11 covered too.
+
+About's Updates row runs whichever updater the install has: the release
+installer leaves itself as `~/.local/bin/vinowhisper-upgrade`, which installs a
+release's wheel, tray and this window; a release's Flatpak bundle installs the
+next one with `vinowhisper-flatpak-update`; a checkout has neither, so About
+links to the release.
+
 ### Screen readers
 
 The pill is a click-through layer surface with no accessibility tree, so a

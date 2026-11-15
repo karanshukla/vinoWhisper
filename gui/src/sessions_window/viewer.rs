@@ -1,8 +1,6 @@
 use super::*;
 
 impl SessionsWindow {
-    // What the viewer puts in the header: the way back, the title and facts, Show in folder
-    // and the two tabs.
     pub(super) fn viewer_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -171,7 +169,6 @@ impl SessionsWindow {
         }
     }
 
-    // A line with stamps in it, each a link into the transcript as a small tinted pill.
     // Returns the first piece drawn, for a heading to be marked on.
     pub(super) fn stamped(
         &self,
@@ -282,8 +279,7 @@ impl SessionsWindow {
             .at_s
             .and_then(|at| sessions::paragraph_at(&paragraphs, at));
         for (index, (at, paragraph)) in paragraphs.iter().enumerate() {
-            // The header line ("vinoWhisper transcript, <date>, <source>, <device>") is what the
-            // heading above already says.
+            // The transcript's own header line is what the heading above already says.
             if index == 0 && at.is_none() {
                 continue;
             }

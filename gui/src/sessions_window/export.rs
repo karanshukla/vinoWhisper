@@ -100,7 +100,6 @@ impl SessionsWindow {
         }
     }
 
-    // Where an export went, or why it failed, until dismissed.
     pub(super) fn export_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
         if state.exporting {
             ui.add_space(12.0);

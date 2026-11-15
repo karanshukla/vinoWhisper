@@ -51,7 +51,6 @@ struct SessionsState {
     opened: Option<Result<Opened, String>>,
     import: Option<Import>,
     imported: Option<Result<PathBuf, String>>,
-    // What the last import warned of, shown with its result.
     import_warnings: Vec<String>,
     // An import added a session: the next frame lists again.
     relist: bool,
@@ -109,7 +108,6 @@ struct SessionsWindow {
     speaker: Option<PathBuf>,
     reading: Option<Reading>,
     read_error: Option<String>,
-    // The last "Open in…" picked, kept in gui.json.
     open_in: OpenIn,
     settings_path: PathBuf,
     opener: Opener,
@@ -243,9 +241,7 @@ impl SessionsWindow {
             .show(ui, |ui| {
                 if self.app_title_bar {
                     vino_ui::window::drag(ui, ui.clip_rect(), "header");
-                    // Up in the window's corner, as the settings window's bar puts them, rather
-                    // than in a row: the header's first row differs between the list and a
-                    // session, and the rows under it keep their inset.
+                    // In the window's corner, not in a row: the header's first row differs between list and session.
                     vino_ui::window::corner(ui);
                     // The header is the handle, so a press on a label drags the window.
                     ui.style_mut().interaction.selectable_labels = false;

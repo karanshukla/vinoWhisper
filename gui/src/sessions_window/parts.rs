@@ -1,13 +1,11 @@
 use super::*;
 
-// The width the window's buttons take from the right end of the header's first row, past
-// `header_frame`'s 20 inset, with 12 between them and the row's last button.
+// The window buttons' width past `header_frame`'s 20 inset, plus 12 before the row's last button.
 pub(super) fn controls_room(ui: &egui::Ui) -> f32 {
     let room = vino_ui::window::controls_width() + vino_ui::window::BAR_GAP + 12.0;
     (room - 20.0 - ui.spacing().item_spacing.x).max(0.0)
 }
 
-// A time stamp as a small tinted pill, a link into the transcript.
 pub(super) fn stamp_pill(ui: &mut egui::Ui, seconds: u64) -> egui::Response {
     let p = theme::palette(ui.ctx());
     let text = format!("[{}]", sessions::stamp(seconds));

@@ -19,8 +19,7 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
         })
 }
 
-// vinoSpeak reading a session aloud: `vinospeak --file BUNDLE --part summary|transcript`
-// (karanshukla/vinoSpeak#42). Dropping it stops it.
+// `vinospeak --file BUNDLE --part summary|transcript` (karanshukla/vinoSpeak#42); dropping it stops it.
 pub struct Reading {
     pub path: PathBuf,
     // None once it has exited and been reaped.

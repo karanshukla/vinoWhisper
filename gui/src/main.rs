@@ -1,5 +1,4 @@
-//! The vinoWhisper settings window. Reads and writes the same two files as the tray
-//! (`gui.json`, `language.json`) through `vinowhisper-settings`.
+//! The vinoWhisper settings and sessions windows.
 
 mod forward;
 mod model;

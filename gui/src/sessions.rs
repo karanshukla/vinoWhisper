@@ -156,7 +156,6 @@ pub fn parse_listing(text: &str) -> Result<Listing, String> {
     serde_json::from_str(text.trim()).map_err(|_| "unreadable session list".to_owned())
 }
 
-// A line of a summary, with the stamps in it split out so each can be a link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Piece {
     Text(String),
@@ -211,8 +210,7 @@ pub enum SummaryLine {
     Blank,
 }
 
-// The model is asked for one "# " title, an overview and "- " points, and does not always
-// keep to it: deeper headings and "*" bullets are drawn as such rather than as their marks.
+// The model strays from "# " and "- ": deeper headings and "*" bullets are drawn as such.
 pub fn summary_line(line: &str) -> SummaryLine {
     let line = line.trim_end();
     if line.trim().is_empty() {
@@ -538,8 +536,7 @@ pub fn open_dialog() -> Chosen {
     chosen(asked)
 }
 
-// What people keep recordings in. Globs, not "audio/*": a portal looks MIME types up by
-// name, and a wildcard is not one.
+// Globs, not "audio/*": a portal looks MIME types up by name, and a wildcard is not one.
 const MEDIA_EXTENSIONS: [&str; 20] = [
     "mp3", "m4a", "m4b", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "amr", "mp4",
     "m4v", "mkv", "webm", "mov", "avi", "mpg", "wmv",
@@ -559,10 +556,8 @@ fn media_filter() -> ashpd::desktop::file_chooser::FileFilter {
     )
 }
 
-// What an import reports while `vinowhisper-transcribe --json` runs.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportEvent {
-    // The file picked in the dialog, by name.
     Chosen(String),
     // The child's pid, which Cancel signals.
     Started(u32),
@@ -691,8 +686,7 @@ pub struct Opened {
     pub fallback: bool,
 }
 
-// A kept copy in $XDG_DOCUMENTS_DIR/vinoWhisper/, not a temp file: people edit it. An edited
-// one is opened as it is (`state` "edited"), never written over.
+// A kept copy, not a temp file: people edit it, and an edited one is never written over.
 pub fn export_kept(request: &ExportRequest) -> Result<Exported, String> {
     let mut args = export_args(request, None);
     args.push("--reuse".as_ref());

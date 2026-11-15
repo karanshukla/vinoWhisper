@@ -42,7 +42,6 @@ impl SessionsWindow {
         });
     }
 
-    // A split button: the last app picked, and a menu for the other.
     pub(super) fn open_in_button(
         &mut self,
         ui: &mut egui::Ui,

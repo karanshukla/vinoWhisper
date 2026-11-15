@@ -104,8 +104,7 @@ struct SettingsWindow {
     kde_header: Option<theme::KdeHeader>,
     // The window's buttons and edges are drawn here, not by the desktop (vino-ui's `window`).
     app_title_bar: bool,
-    // The last factor read from the desktop: zoom follows it only when it changes, so a
-    // Ctrl + or - since then is kept.
+    // Zoom follows the desktop's factor only when it changes, so a Ctrl + or - since then is kept.
     text_scale: Option<f32>,
     shortcuts: Arc<Mutex<Shortcuts>>,
     // Which page last asked the tray, so arriving on Shortcuts asks again.
@@ -122,20 +121,16 @@ struct SettingsWindow {
     vocabulary: Vec<String>,
     new_term: String,
     vocabulary_error: Option<String>,
-    // The sessions window's app menu entry: where it goes, whether it is there, and why
-    // the last change failed.
+    // The sessions window's app menu entry, and why the last change to it failed.
     apps_data: PathBuf,
     in_app_menu: bool,
     app_menu_error: Option<String>,
     // From the session listing, read when the Sessions page is shown.
     model_ready: Arc<Mutex<Option<bool>>>,
-    // About's Updates row.
     updater: vino_ui::update::Updater,
 }
 
-// The release installer leaves itself as ~/.local/bin/vinowhisper-upgrade, which installs a
-// release's wheel, tray and this window. A release's Flatpak bundle installs the next one
-// with vinowhisper-flatpak-update. Without either (a checkout) About links to the release.
+// vinowhisper-upgrade for a release install, vinowhisper-flatpak-update for a release Flatpak, else a link.
 fn updater() -> vino_ui::update::Updater {
     let updater = vino_ui::update::Updater::new(vino_ui::App::Whisper, env!("CARGO_PKG_VERSION"));
     if vinowhisper_settings::sandbox::flatpak_id().is_some() {
@@ -304,8 +299,7 @@ impl eframe::App for SettingsWindow {
 }
 
 impl SettingsWindow {
-    // Draws the window and says which files changed; saving them, and every other side
-    // effect but the buttons', is left to `ui`, so tests can drive this alone.
+    // Draws and says which files changed; `ui` does the saving, so tests can drive this alone.
     fn show(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
         let ctx = &ui.ctx().clone();
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
@@ -330,8 +324,7 @@ impl SettingsWindow {
                 .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    // vino-ui's, which the window bar's row is centred on: the logo on the
-                    // nav items' icon column.
+                    // On the nav items' icon column, which vino-ui centres the window bar's row on.
                     let brand = ui
                         .scope(|ui| {
                             ui.style_mut().interaction.selectable_labels = false;
@@ -426,9 +419,7 @@ impl SettingsWindow {
                 });
         }
 
-        // With the app's title bar, a wide window's page title moves up out of the scroll
-        // area into a bar of its own, with the window buttons at its end: that bar is what
-        // the window is dragged by.
+        // A wide window's page title sits in a bar of its own, which the window is dragged by.
         let bar = wide && self.app_title_bar;
         let page = self.page;
         let title = |ui: &mut egui::Ui| {
@@ -447,8 +438,7 @@ impl SettingsWindow {
             .frame(
                 egui::Frame::NONE
                     .fill(p.bg)
-                    // No right margin: the scroll bar belongs on the window's edge, and the
-                    // content keeps its own gap from it below.
+                    // No right margin: the scroll bar belongs on the window's edge.
                     .inner_margin(egui::Margin {
                         left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
                         right: 0,
@@ -495,9 +485,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
                 .with_min_inner_size([340.0, 320.0]),
             app_title_bar,
         ),
-        // With vsync, a swap waits on a frame callback KWin holds back from a window it
-        // considers hidden, and the window stops answering pings. It only redraws on input.
-        // eframe 0.37 skips the blocking swap on Wayland itself (egui#5136); this keeps X11 too.
+        // vsync off: a swap waits on a frame callback KWin holds back, and pings go unanswered (docs/tray.md).
         glow_options: eframe::egui_glow::GlowConfiguration {
             vsync: false,
             ..Default::default()
@@ -511,8 +499,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
             theme::install(&cc.egui_ctx);
             let mut window = SettingsWindow::new(page);
             window.app_title_bar = app_title_bar;
-            // Before the first frame, not at first focus: a window opened in the background
-            // would otherwise draw its first frames small.
+            // Before the first frame: a window opened in the background would draw its first frames small.
             window.follow_text_scale(&cc.egui_ctx, theme::desktop_text_scale());
             Ok(Box::new(window))
         }),

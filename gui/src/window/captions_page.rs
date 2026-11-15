@@ -81,7 +81,6 @@ impl SettingsWindow {
     }
 }
 
-// The caption box as the overlay draws it, on a stand-in screen.
 pub(super) fn caption_preview(ui: &mut egui::Ui, position: Position, size: TextSize) {
     let p = theme::palette(ui.ctx());
     let height = 132.0;
