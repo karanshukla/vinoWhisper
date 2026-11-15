@@ -1,7 +1,4 @@
-//! The pill is a click-through layer surface with no accessibility tree, so a screen reader
-//! never hears it (#98). Failures and warnings, the states that need hearing, go out as a
-//! desktop notification too, which screen readers read aloud. Only while one is running:
-//! everyone else already sees the pill. Never the dictated words, only the message.
+// Never the dictated words, only the message (docs/tray.md, "Screen readers").
 
 use std::collections::HashMap;
 

@@ -642,6 +642,10 @@ holds: nothing in it explains anything `docs/` explains, every long-form claim
 links out, and **Honest limits** is load-bearing, since every benchmark in it
 is n=1 on one laptop and it says so.
 
+Cut again 2026-11-15, 317 lines to 239: the distro table and the release installer and
+upgrade paragraphs went to `docs/install.md`, the multilingual notes to `docs/models.md`
+("Other languages"), and the differentiators became one bullet each with a link.
+
 **It ships on PyPI now, so "is this file here?" has two answers.** From
 2026-08-31, `pip install vinowhisper` works: the nightly pin was the only thing
 preventing it (see the OpenVINO gotcha below), and its removal made the whole

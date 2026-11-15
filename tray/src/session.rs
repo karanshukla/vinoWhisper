@@ -76,8 +76,7 @@ pub fn not_found_message() -> String {
 
 pub const SERVER: &str = "vinowhisper-server";
 
-/// Stops the server so the next connection starts it on the new language. Blocks until
-/// it has stopped.
+// Blocks until the server has stopped; the next connection starts it again.
 pub fn stop_server(program: Option<&Path>) {
     let program = program.unwrap_or(Path::new(SERVER));
     match Process::new(program)

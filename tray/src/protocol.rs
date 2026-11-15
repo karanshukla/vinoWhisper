@@ -61,7 +61,7 @@ pub enum Dictate {
     Error {
         message: String,
     },
-    /// Sent after `Dictated`: something to tell the user that did not stop the typing.
+    // Sent after `Dictated`: it did not stop the typing.
     Notice {
         message: String,
     },
