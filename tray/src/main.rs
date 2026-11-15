@@ -471,6 +471,40 @@ mod tests {
     }
 
     #[test]
+    fn an_option_and_its_value_are_two_arguments_never_one() {
+        assert_eq!(
+            parse(&["--source", "mic"]).unwrap().source,
+            Some(Source::Mic)
+        );
+        assert_eq!(
+            parse(&["--source=mic"]).unwrap_err(),
+            "unknown option --source=mic"
+        );
+    }
+
+    #[test]
+    fn short_flags_do_not_combine_and_a_bare_dash_is_no_command() {
+        assert!(parse(&["-h"]).unwrap().help);
+        assert!(parse(&["-V"]).unwrap().version);
+        assert_eq!(parse(&["-hV"]).unwrap_err(), "unknown option -hV");
+        assert_eq!(parse(&["--"]).unwrap_err(), "unknown option --");
+        assert_eq!(parse(&["-"]).unwrap_err(), "unknown option -");
+    }
+
+    #[test]
+    fn a_missing_value_names_what_the_option_needs() {
+        assert_eq!(
+            parse(&["--source"]).unwrap_err(),
+            "--source needs 'output' or 'mic'"
+        );
+        assert_eq!(parse(&["--caption"]).unwrap_err(), "--caption needs a path");
+        assert_eq!(
+            parse(&["show", "hide"]).unwrap_err(),
+            "one command at a time, got a second: \"hide\""
+        );
+    }
+
+    #[test]
     fn autostart_stands_alone_for_a_packaged_copy() {
         let args = parse(&["--autostart"]).unwrap();
         assert!(args.autostart && !args.install);
