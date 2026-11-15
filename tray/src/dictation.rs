@@ -225,8 +225,7 @@ impl Dictation {
         self.epoch
     }
 
-    /// Recording, waiting on the server, or holding text not yet pasted: anything that a
-    /// server restart would lose.
+    // Anything a server restart would lose.
     pub fn is_busy(&self) -> bool {
         matches!(
             self.phase,
@@ -234,8 +233,7 @@ impl Dictation {
         )
     }
 
-    /// A refusal shown on the pill in place of its text, so it never disturbs the phase.
-    /// Returns an id for `clear_notice`, so a stale timer cannot remove a newer notice.
+    // The id is for `clear_notice`, so a stale timer cannot remove a newer notice.
     pub fn notice(&mut self, message: impl Into<String>) -> u64 {
         self.notices += 1;
         self.notice = Some((self.notices, message.into()));
@@ -248,8 +246,7 @@ impl Dictation {
         }
     }
 
-    /// What a screen reader should hear about the last change, once: failures and the
-    /// text that was not typed, never the words or the routine states.
+    // Failures and text that was not typed, never the dictated words (docs/tray.md).
     pub fn take_announcement(&mut self) -> Option<String> {
         self.announcement.take()
     }

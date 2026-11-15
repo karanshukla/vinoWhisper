@@ -219,7 +219,11 @@ stalling captions for 5.7-8.1s at any speed. `config.max_new_tokens` allows
 12 tokens per second of audio plus 16. The densest real window, at 1.75x, was
 8.5 tokens per second. Replaying two of the looping windows on the NPU
 through the server's own call took them from 6.9s and 8.1s to 2.8s, and token
-streaming was unaffected.
+streaming was unaffected. The multilingual model gets 1.25x that allowance
+(`config.MULTILINGUAL_TOKEN_FACTOR`), because French, German and Spanish take
+more tokens per second than English. That factor is a margin, not a
+measurement: it has only been checked on synthetic speech, which peaked at
+3.5-4.9 tokens per second (2026-10-06).
 
 **Tried, and not adopted: whisper_streaming's buffer.**
 [whisper_streaming](https://arxiv.org/abs/2307.14743) has no fixed window.

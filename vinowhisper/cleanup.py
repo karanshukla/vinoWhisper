@@ -128,7 +128,7 @@ def load_settings(
     ready: Callable[[], bool] | None = None,
     path: Path | None = None,
 ) -> Settings | None:
-    """The file is what the settings window writes; an environment variable beats it."""
+    # test_an_environment_variable_beats_the_file pins the order.
     env = os.environ if env is None else env
     if not enabled(env, path):
         return None
@@ -274,7 +274,6 @@ _FILLER_PHRASES = (
 
 
 def _is_tiled(run: list[str], before: list[str], after: list[str]) -> bool:
-    """Fillers and stammers only: each word is a filler, or restates the words next to it."""
     index = 0
     while index < len(run):
         for phrase in _FILLER_PHRASES:
@@ -338,7 +337,6 @@ def only_deletes(original: str, edited: str) -> bool:
 
 
 def deletions_justified(original: str, edited: str) -> bool:
-    """Whether every removed stretch is a filler, a stammer, or holds a correction or edit cue."""
     source = _words(original)
     runs = _deleted_runs(source, _words(edited))
     return runs is not None and all(_justified(source, start, end) for start, end in runs)
@@ -451,13 +449,6 @@ COOLDOWN_S = 600.0
 
 
 class Breaker:
-    """Turns cleanup off after errors, so dictation stops paying for a broken model.
-
-    Setup failures turn it off until the settings change. Transient ones (timeouts, 5xx,
-    unreachable) turn it off for COOLDOWN_S after STRIKES in a row, then let one request
-    through: a failure there turns it straight back off, anything else turns it back on.
-    """
-
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._strikes = 0
@@ -473,7 +464,6 @@ class Breaker:
         return self._until is not None and self._clock() >= self._until
 
     def record(self, settings: Settings, outcome: Outcome) -> str | None:
-        """The message to show when this outcome turns cleanup off, else None."""
         reason = outcome.reason
         if reason in _ANSWER_REASONS:
             self._reset()

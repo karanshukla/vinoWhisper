@@ -925,6 +925,15 @@ starts and the first word is probably clipped. If it is usually chunk 3 or
 later, there is headroom. Write the result here with the date; the instrument
 was added 2026-10-07 and has not been run on hardware.
 
+### Screen readers
+
+The pill is a click-through layer surface with no accessibility tree, so a
+screen reader never hears it (#98). Failures and warnings, the states that need
+hearing, go out as a desktop notification too, which screen readers read aloud.
+That happens only while a screen reader is running, since everyone else already
+sees the pill, and the notification never carries the dictated words, only the
+message (`tray/src/announce.rs`).
+
 ## Where it works
 
 The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what

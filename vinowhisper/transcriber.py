@@ -66,9 +66,7 @@ class BaseTranscriber:
         return self.selection
 
     def load(self, *, record: bool = True) -> None:
-        """Build the pipeline on the selected device. record=False leaves a
-        failure out of failed-devices.json (a reload after a reset, which says
-        nothing about whether the device works)."""
+        # record=False: a reload after a device reset says nothing about whether the device works.
         selection = self.selection or self.select_device()
         kind = selection.kind
         model_dir = self._model_dir_override or self._default_model_dir(kind)
@@ -166,11 +164,7 @@ class BaseTranscriber:
             thread.join(timeout=config.REQUEST_TIMEOUT_S)
 
     def _reload_after_reset(self, error: str) -> None:
-        """Load again after the device reset under us (another program's fault
-        resets it for everyone). A reset is not the device failing, so nothing is
-        recorded. If it doesn't come back and the device was picked
-        automatically, fall back to the next one for the rest of this run;
-        the next start picks again. A device asked for by name is not swapped."""
+        # A device asked for by name is never swapped; an automatic pick falls back for this run only.
         try:
             self.load(record=False)
             return

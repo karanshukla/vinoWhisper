@@ -1,7 +1,34 @@
 # Installing
 
 The short version is in the [README](../README.md). This is what the
-installer actually does, and the dependency pin behind it.
+installers actually do, and the dependency pin behind them.
+
+## The release installer
+
+```bash
+curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/install.sh | bash
+```
+
+That checks the latest release's wheel against its `SHA256SUMS`, installs it with
+[uv](https://docs.astral.sh/uv/) (fetching uv itself, hash-pinned, if you don't have it), and
+hands over to `vinowhisper-setup`, which is where every machine-specific
+decision happens: your capture tool, your NPU driver, the model export your
+device needs. It prints every command before running it and asks first.
+
+The desktop overlay (floating captions and dictation) is one more command:
+`vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
+checks it against a digest pinned in the Python package
+([the desktop overlay](#the-desktop-overlay-optional)).
+
+## Upgrading
+
+Use **Check for updates** on the settings window's About page, or run
+`vinowhisper-upgrade`. It installs the new release's wheel, refreshes the
+overlay and window if you have them, and restarts the server; the exported
+model stays. To build from a checkout instead, `scripts/install.sh` still
+clones and syncs the locked environment, as below.
+
+## From a checkout
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/install.sh | bash
@@ -72,6 +99,33 @@ breaks `optimum`'s `NORMALIZED_CONFIG_CLASS = SomeConfig.with_args(...)`
 class-attribute idiom outright. Version-independent root cause, confirmed
 2026-08-03 across every optimum/transformers pairing tried. `requires-python`
 enforces it, so pip will refuse rather than install something broken.
+
+## Supported distros
+
+`vinowhisper-setup` and `vinowhisper-doctor` read `/etc/os-release` and print
+install commands in your distro's own package names. Eight families are
+covered:
+
+| Family | Includes | NPU driver | Confidence |
+|---|---|---|---|
+| Fedora | RHEL, CentOS, Alma, Rocky, Nobara; Fedora Atomic (Silverblue, Kinoite, Bazzite, Aurora, Bluefin) | `intel-npu-driver` in the repos | **Built and run here** (Atomic: untested) |
+| Debian | Ubuntu, Pop!\_OS, Mint, elementary, Raspbian | Intel's upstream `.deb`s | From the package index |
+| Arch | CachyOS, EndeavourOS, Manjaro, Garuda | AUR (`intel-npu-driver`) | From the package index |
+| openSUSE | Tumbleweed, Leap, SLES, Aeon, MicroOS | `libze_intel_npu1` + `level-zero` (Tumbleweed, Leap 16), else upstream | From the package index |
+| Gentoo | | Some overlays, else upstream | From the package index |
+| Void | | Upstream release | From the package index |
+| Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
+| NixOS | | `hardware.cpu.intel.npu.enable` (25.11+) | Config snippets, not `nix-env` lines |
+
+Anything else gets generic advice, and says so. Derivatives not listed are
+matched through `ID_LIKE`. On every distro the NPU compiler library
+(`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
+because nobody packages it; the doctor detects that and prints the steps.
+On image-based systems the commands use `rpm-ostree` or
+`transactional-update` instead (any other read-only `/usr`, such as SteamOS,
+gets the package names and no command), and everything else installs into your
+home directory; the next section has the details.
+[audio.md](audio.md#distro-support) has the capture side.
 
 ## Image-based distros (Fedora Atomic, openSUSE Aeon)
 

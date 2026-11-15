@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, config
+from .integrity import sha256_file
 
 RELEASES_URL = "https://github.com/karanshukla/vinoWhisper/releases/download"
 _PACKAGE = Path(__file__).resolve().parent
@@ -67,20 +68,12 @@ class Pin:
         return f"{RELEASES_URL}/v{self.version}/{self.name}"
 
 
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def pin_record(
     binary: Path, version: str, arch: str, component: Component = TRAY
 ) -> dict[str, Any]:
     return {
         "version": version,
-        "assets": {arch: {"name": asset_name(arch, component), "sha256": sha256_of(binary)}},
+        "assets": {arch: {"name": asset_name(arch, component), "sha256": sha256_file(binary)}},
     }
 
 

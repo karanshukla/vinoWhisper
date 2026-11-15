@@ -43,6 +43,14 @@ reported the same way a fallback is: the server's log, `/health`, the `Ready` ev
 the status bar's `⚠` line, and the doctor. A missing or unreadable file means
 nothing has failed; the NPU is only ever skipped because a load on it said so.
 
+A device reset is not a failure. Another program's fault resets the NPU for
+everyone, so when a decode dies with a device-lost error the server loads the
+model again on the same device and records nothing in `failed-devices.json`.
+If the device does not come back and it was picked automatically, the server
+falls back to the next one for the rest of that run, and the next start picks
+again. A device asked for by name is never swapped.
+`tests/test_device_reset.py` pins each of those.
+
 Two things clear the mark. `vinowhisper-doctor` clears every mark it finds,
 whether or not it found the fix, since the doctor is what gets run after a
 repair; if the fault is still there, the next start re-marks it after one

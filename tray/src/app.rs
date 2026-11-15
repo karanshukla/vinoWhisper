@@ -546,8 +546,7 @@ impl App {
         }
     }
 
-    /// The settings window (or a hand edit) changed the files: apply what differs, and nothing
-    /// that did not, so a save of one field does not restart captions.
+    // Applies only what differs, so a save of one field does not restart captions.
     fn reload(&mut self) -> ipc::Reply {
         let was = self.source();
         let old = std::mem::replace(&mut self.settings, Settings::load());

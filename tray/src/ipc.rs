@@ -18,12 +18,9 @@ pub enum Request {
     DictatePress,
     DictateRelease,
     Quit,
-    /// Re-read gui.json and language.json: the settings window saved something.
     Reload,
-    /// What the desktop bound, as JSON, for the settings window.
     Shortcuts,
     ConfigureShortcut,
-    /// The server finished summaries; their list is in $XDG_RUNTIME_DIR.
     SummariesReady,
     Ping,
 }

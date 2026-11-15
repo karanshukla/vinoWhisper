@@ -151,7 +151,6 @@ class _Segmenter:
 
     @property
     def stationary(self) -> bool:
-        """Nothing in the recording rises meaningfully above its own quietest stretch."""
         floor = self._floor
         if (
             floor == float("inf")
@@ -696,10 +695,7 @@ def _warm_cleanup() -> None:
 
 
 class _FileCleaner:
-    """Settings are read at each key press, off the path the text takes at release.
-
-    The breaker outlives each read, so changed settings are what turn a tripped one back on.
-    """
+    # The breaker outlives each settings read: changed settings are what untrip it.
 
     def __init__(
         self,
@@ -786,11 +782,7 @@ _KEPT_PIECES = 10
 
 
 def _keep_audio(raw: np.ndarray, decoded: np.ndarray, full: np.ndarray) -> None:
-    """Opt in with VINOWHISPER_DICTATE_AUDIO_DIR: the last piece as heard and as decoded.
-
-    It is a recording of the user's voice, so it is private to them (0700 / 0600) and only
-    the newest few are kept.
-    """
+    # A recording of the user's voice: 0700 / 0600, and only the newest few are kept.
     target = os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")
     if not target:
         return

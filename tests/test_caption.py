@@ -441,3 +441,33 @@ def test_characterization_an_inherited_ignored_sigint_is_undone(monkeypatch):
         assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
     finally:
         signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+def test_the_loop_waits_for_the_minimum_window_before_its_first_cycle():
+    just_short = config.MIN_WINDOW_S - 0.25
+    assert caption.pacing_delay_s(just_short, 0.0) == pytest.approx(0.25)
+    assert caption.pacing_delay_s(config.MIN_WINDOW_S, 0.0) == 0.0
+
+
+def test_a_cycle_closer_than_the_minimum_hop_waits_out_the_rest():
+    last_cycle_at_s = 10.0
+    assert caption.pacing_delay_s(last_cycle_at_s + config.MIN_HOP_S - 0.1, last_cycle_at_s) == (
+        pytest.approx(0.1)
+    )
+    assert caption.pacing_delay_s(last_cycle_at_s + config.MIN_HOP_S, last_cycle_at_s) == 0.0
+
+
+def test_one_window_alone_never_changes_the_agreed_language():
+    language = caption.AgreedLanguage()
+    assert language.push("fr") == ""
+    assert language.push("de") == ""
+    assert language.push("de") == "de"
+
+
+def test_a_window_with_no_language_keeps_the_agreed_one_and_breaks_the_run():
+    language = caption.AgreedLanguage()
+    language.push("de")
+    language.push("de")
+    assert language.push("") == "de"
+    assert language.push("") == "de"
+    assert language.push("fr") == "de"
