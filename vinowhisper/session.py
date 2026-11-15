@@ -260,9 +260,7 @@ def _kick(paths: list[Path] | None = None) -> str | None:
     return None
 
 
-def main(argv: list[str] | None = None) -> int:
-    from . import llm, summary
-
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vinowhisper-session",
         description="Saved caption sessions (.vwsession bundles) and their summaries.",
@@ -313,63 +311,69 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "backfill", help="bundle transcripts saved before summaries, and summarise them"
     )
-    args = parser.parse_args(argv)
+    return parser
 
-    if args.command == "list":
-        state = summary.load_state()
-        sessions = [_describe(path, state) for path in bundle.listing()]
-        loose = [p for p in summary.loose_transcripts() if p.stat().st_mtime < state["since"]]
-        pin = llm.pinned()
-        report = {
-            **summary.progress(),
-            "directory": str(config.TRANSCRIPT_DIR),
-            "auto": summary.auto_enabled(),
-            "model_ready": pin is not None and llm.is_present(pin),
-            "backfill": len(loose),
-            "sessions": sessions,
-        }
-        if args.json:
-            print(json.dumps(report))
-            return 0
-        busy = summary.progress()["current"]
-        for entry in sessions:
-            mark = "summary" if entry.get("summary") else "no summary"
-            if entry["path"] == busy:
-                mark = "summarising now"
-            print(f"{entry['name']}  {entry.get('title') or ''}  ({mark})")
-        if loose:
-            print(f"{len(loose)} older transcripts can be bundled: vinowhisper-session backfill")
+
+def _list(args: argparse.Namespace) -> int:
+    from . import llm, summary
+
+    state = summary.load_state()
+    sessions = [_describe(path, state) for path in bundle.listing()]
+    loose = [p for p in summary.loose_transcripts() if p.stat().st_mtime < state["since"]]
+    pin = llm.pinned()
+    report = {
+        **summary.progress(),
+        "directory": str(config.TRANSCRIPT_DIR),
+        "auto": summary.auto_enabled(),
+        "model_ready": pin is not None and llm.is_present(pin),
+        "backfill": len(loose),
+        "sessions": sessions,
+    }
+    if args.json:
+        print(json.dumps(report))
         return 0
+    busy = summary.progress()["current"]
+    for entry in sessions:
+        mark = "summary" if entry.get("summary") else "no summary"
+        if entry["path"] == busy:
+            mark = "summarising now"
+        print(f"{entry['name']}  {entry.get('title') or ''}  ({mark})")
+    if loose:
+        print(f"{len(loose)} older transcripts can be bundled: vinowhisper-session backfill")
+    return 0
 
-    if args.command == "show":
-        try:
-            read = bundle.read(args.bundle)
-        except bundle.BundleError as exc:
-            print(f"[vinowhisper] {exc}", file=sys.stderr)
-            return 1
-        if args.part == "summary" and read.summary is None:
-            print(f"[vinowhisper] {args.bundle.name} has no summary yet", file=sys.stderr)
-            return 1
-        text = {
-            "transcript": read.transcript,
-            "summary": read.summary or "",
-            "attestation": json.dumps(read.attestation, indent=2, ensure_ascii=False) + "\n",
-        }[args.part]
-        sys.stdout.write(text)
-        return 0
 
-    if args.command == "export":
-        return _export(args)
+def _show(args: argparse.Namespace) -> int:
+    try:
+        read = bundle.read(args.bundle)
+    except bundle.BundleError as exc:
+        print(f"[vinowhisper] {exc}", file=sys.stderr)
+        return 1
+    if args.part == "summary" and read.summary is None:
+        print(f"[vinowhisper] {args.bundle.name} has no summary yet", file=sys.stderr)
+        return 1
+    text = {
+        "transcript": read.transcript,
+        "summary": read.summary or "",
+        "attestation": json.dumps(read.attestation, indent=2, ensure_ascii=False) + "\n",
+    }[args.part]
+    sys.stdout.write(text)
+    return 0
 
-    if args.command == "backfill":
-        made = summary.backfill()
-        print(f"[vinowhisper] bundled {len(made)} transcripts", file=sys.stderr)
-        if made and summary.auto_enabled():
-            problem = _kick()
-            if problem:
-                print(f"[vinowhisper] {problem}", file=sys.stderr)
-        return 0
 
+def _backfill(args: argparse.Namespace) -> int:
+    from . import summary
+
+    made = summary.backfill()
+    print(f"[vinowhisper] bundled {len(made)} transcripts", file=sys.stderr)
+    if made and summary.auto_enabled():
+        problem = _kick()
+        if problem:
+            print(f"[vinowhisper] {problem}", file=sys.stderr)
+    return 0
+
+
+def _each_bundle(args: argparse.Namespace) -> int:
     status = 0
     for path in args.bundles:
         try:
@@ -383,6 +387,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[vinowhisper] {problem}", file=sys.stderr)
             return 1
     return status
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    whole_store_commands = {
+        "list": _list,
+        "show": _show,
+        "export": _export,
+        "backfill": _backfill,
+    }
+    return whole_store_commands.get(args.command, _each_bundle)(args)
 
 
 def _export(args: argparse.Namespace) -> int:
