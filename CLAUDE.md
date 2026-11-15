@@ -623,6 +623,11 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
   src/portal.rs   the RemoteDesktop portal: one kept session, a keysym per character, its clipboard
   src/media.rs    MPRIS pause while dictating, resume after
+gui/              vinowhisper-gui, the egui settings and sessions windows (glibc)
+  src/window.rs   the settings window: state, the frame, saving
+  src/window/     one file per page (shortcuts, captions, speech, cleanup, sessions), models.rs
+                  (download and delete rows), labels.rs, controls.rs, tests.rs
+settings/         the crate both binaries read gui.json and language.json through
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports),
