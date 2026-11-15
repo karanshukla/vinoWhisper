@@ -1,6 +1,8 @@
 # Hardware, and what happens when you don't have it
 
-The NPU is the point. Everything below it exists so a broken driver degrades
+The NPU is the point. 16 TOPS is a coprocessor, not a GPU, and
+whisper-small.en is one of the genuinely useful models that fits in it.
+Everything below it exists so a broken driver degrades
 the tool instead of bricking it. The latency design assumes NPU-class cycle
 times, and the two-cycle commit policy doubles any regression.
 
