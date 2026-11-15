@@ -123,9 +123,7 @@ def ensure(path: Path | None = None, wait_s: float = START_WAIT_S) -> None:
             while time.monotonic() < deadline:
                 if running(path):
                     if argv[0] == sandbox.SPAWN:
-                        # flatpak-spawn stays for as long as what it started, and this
-                        # command's sandbox and its pipes with it. The server does not
-                        # need it: killed, not asked, since it passes a signal on.
+                        # flatpak-spawn would hold this sandbox open; SIGKILL, since it forwards the rest.
                         process.kill()
                     return
                 status = process.poll()

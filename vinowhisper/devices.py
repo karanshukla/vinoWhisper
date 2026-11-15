@@ -350,11 +350,8 @@ LIBRARY_DIRS = (
     "/usr/local/lib",
 )
 
-# Where `ovfetch npu install` (0.6.0) puts the NPU compiler a distro's driver
-# package lacks, or a whole driver. Its libraries are not on the linker path;
-# ovfetch.preload() loads them before OpenVINO opens the NPU, so for the
-# checks below they come before the system directories, as they do at run
-# time. A prefix counts only once it holds the preload list.
+# `ovfetch npu install`'s prefix: searched before the system directories, as at run time,
+# and only once it holds the preload list (docs/hardware.md).
 OVFETCH_NPU_PREFIX = Path.home() / ".local/lib/ovfetch-npu"
 OVFETCH_PRELOAD_LIST = "ovfetch-preload.txt"
 

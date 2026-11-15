@@ -50,7 +50,10 @@ everyone, so when a decode dies with a device-lost error the server loads the
 model again on the same device and records nothing in `failed-devices.json`.
 If the device does not come back and it was picked automatically, the server
 falls back to the next one for the rest of that run, and the next start picks
-again. A device asked for by name is never swapped.
+again. A device asked for by name is never swapped. The reload runs outside
+the `except` block that caught the error: that block's traceback holds the
+failed call's frame, and with it the dead pipeline, which would otherwise stay
+in memory and on the device through the reload.
 `tests/test_device_reset.py` pins each of those.
 
 Two things clear the mark. `vinowhisper-doctor` clears every mark it finds,

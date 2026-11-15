@@ -12,9 +12,8 @@ from .integrity import sha256_file
 
 PINS_PATH = Path(__file__).resolve().parent / "cleanup_model.json"
 REVISION_MARKER = ".vinowhisper-revision"
-# Size, mtime and inode of each file when it last hashed clean: a load re-hashes only
-# when one of them moved. Anything running as the user can rewrite this too; it catches
-# corruption and careless edits, not a determined same-user attacker.
+# Size, mtime and inode of each file when it last hashed clean (docs/tray.md).
+# It catches corruption and careless edits, not a same-user attacker, who can rewrite it.
 VERIFIED_STAMP = ".vinowhisper-verified"
 
 # The NPU compiles for a fixed window. 3072 holds the cleanup prompt and five minutes of

@@ -24,10 +24,7 @@ MEDIA_DECODER = "media-decoder"
 
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
-# `ovfetch npu install` (ovfetch 0.6.0) is the fix on every distro: it takes
-# the compiler from Intel's release into ~/.local/lib/ovfetch-npu, checked
-# against ovfetch's ledger, and vinowhisper loads it from there (no root, no
-# dpkg, nothing for the package manager to revert).
+# The fix on every distro, with no root and no package manager (docs/hardware.md).
 NPU_COMPILER_COMMANDS = ("vinowhisper-setup --ovfetch", "ovfetch npu install")
 
 NPU_COMPILER_STEPS = (
@@ -181,9 +178,7 @@ _FAMILIES: dict[str, Family] = {
             AUDIO_PULSE: ("pulseaudio-utils",),
             # Tumbleweed has no "intel-compute-runtime"; level-zero carries the loader.
             GPU_RUNTIME: ("intel-opencl", "libze_intel_gpu1", "level-zero"),
-            # Tumbleweed 1.38.0, Leap 16.0 1.35.0 (checked 2026-11-05). The user-mode
-            # driver only: the spec builds with ENABLE_NPU_COMPILER_BUILD=OFF. It
-            # doesn't require the loader either, unlike Fedora's rpm and Intel's debs.
+            # The user-mode driver only, with no compiler and no loader dependency (docs/install.md).
             NPU_DRIVER: ("libze_intel_npu1", "level-zero"),
         },
         notes={

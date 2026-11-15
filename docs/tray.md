@@ -846,6 +846,13 @@ variable beats the file:
 - **Not streamed.** The text is pasted once, after the whole answer has been checked.
 - The pill says "Cleaning up with the model" while the model runs, from the
   `Cleaning` event.
+- **The cue words cover English, French, German and Spanish together**, because the
+  language is not known where they are checked (auto). A false hit costs one request,
+  and so does a word from another language that happens to match. A miss is only a
+  correction spoken with none of the words, which `always` mode still catches.
+- **Only service failures count against it.** A reason that is about the answer means
+  the model ran. Http errors, an unreachable server, timeouts and exceptions are the
+  server or the model failing.
 - **It turns itself off on errors** (#87), because each failed request holds the
   typing back by up to the whole budget. A missing model (or an http 400) turns it off
   until the settings change, and downloading the model counts as a change: whether the
