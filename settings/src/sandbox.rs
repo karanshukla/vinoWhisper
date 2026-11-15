@@ -1,5 +1,4 @@
-//! Running inside the Flatpak. The paths that differ from a native install are picked from
-//! this at run time, so one build serves both.
+//! What differs inside the Flatpak, picked at run time so one build serves both.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -50,8 +49,7 @@ fn ini_value(text: &str, section: &str, key: &str) -> Option<String> {
     file.get(section, key).filter(|value| !value.is_empty())
 }
 
-/// The branch of a release's bundle. A build from a checkout is `master`, and only a
-/// release updates itself from the next release's bundle.
+/// The branch of a release's bundle; a build from a checkout is `master`.
 pub const RELEASE_BRANCH: &str = "stable";
 
 /// Whether this is a release's Flatpak bundle.
@@ -59,9 +57,7 @@ pub fn is_release() -> bool {
     flatpak_id().is_some() && info_value("Instance", "branch").as_deref() == Some(RELEASE_BRANCH)
 }
 
-/// Where the tray's socket and the server's files are. Flatpak runs the tray, the server
-/// and each command in a sandbox apiece, whose runtime directory is its own except
-/// `app/<id>`, which they all share.
+/// The runtime directory every sandbox of the app shares: `app/<id>` in the Flatpak.
 pub fn runtime_dir() -> Option<PathBuf> {
     runtime_dir_for(std::env::var_os("XDG_RUNTIME_DIR"), flatpak_id())
 }
@@ -74,16 +70,14 @@ fn runtime_dir_for(raw: Option<OsString>, app: Option<&str>) -> Option<PathBuf> 
     })
 }
 
-/// The real home's autostart entry, which the Background portal writes on the host: the
-/// sandbox's XDG_CONFIG_HOME is the app's own, under ~/.var/app.
+/// The real home's autostart entry, which the Background portal writes on the host.
 pub fn host_autostart_entry(app_id: &str) -> PathBuf {
     crate::home()
         .join(".config/autostart")
         .join(format!("{app_id}.desktop"))
 }
 
-/// The real home's `.local/share`, where the host's app menu reads the entries a user
-/// adds: the sandbox's XDG_DATA_HOME is under ~/.var/app.
+/// The real home's `.local/share`; the sandbox's XDG_DATA_HOME is under ~/.var/app.
 pub fn host_data_home() -> PathBuf {
     crate::home().join(".local/share")
 }
@@ -93,8 +87,7 @@ pub fn host_exec(command: &str, app: &str) -> String {
     format!("flatpak run --command={command} {app}")
 }
 
-/// `command` in a sandbox of its own, of the newest installed build: after an update,
-/// what this one starts plainly is still the old build.
+/// `command` in a sandbox of its own, of the newest installed build, not this one's.
 pub fn latest_instance(command: &str) -> std::process::Command {
     let mut spawn = std::process::Command::new("flatpak-spawn");
     spawn.args(["--latest-version", command]);

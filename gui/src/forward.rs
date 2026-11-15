@@ -1,6 +1,4 @@
-//! Launchers and login entries written before the split name `vinowhisper-gui` with the
-//! tray's arguments. They fire before the tray has migrated them, so anything given
-//! arguments is handed to `vinowhisper-tray` unchanged.
+//! Old launchers name `vinowhisper-gui` with the tray's arguments, so those go to `vinowhisper-tray` unchanged.
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -90,9 +88,7 @@ pub fn open_settings(page: &str) {
     spawn_self(&["--page", page]);
 }
 
-/// Tell a running tray to re-read the settings files. It prints and exits 0 when none is
-/// running, which is fine: it reads them when it starts. Waited on off the UI thread, so a
-/// save never stalls the window; `refused` hears the tray's reason when it says no.
+/// Tells a running tray to re-read the settings, off the UI thread; `refused` hears its reason for a no.
 pub fn reload_tray(refused: impl FnOnce(String) + Send + 'static) {
     let spawned = Command::new(tray_command())
         .arg("reload")
