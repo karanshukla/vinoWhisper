@@ -15,9 +15,16 @@ impl SettingsWindow {
              said it when the model's answer does not check out.",
             |_| {},
         );
+        widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.cleanup_rows(ui, known.as_ref()),
+            Column::Right => self.cleanup_model(ui, &state),
+        });
+    }
+
+    fn cleanup_rows(&mut self, ui: &mut egui::Ui, known: Option<&Status>) {
         widgets::group_label(ui, "Dictation cleanup");
         widgets::group(ui, |ui| {
-            let missing = self.cleanup.enabled && known.as_ref().is_some_and(|s| !s.present);
+            let missing = self.cleanup.enabled && known.is_some_and(|s| !s.present);
             let (help, tone) = if missing {
                 (
                     "Download the model below first; until then the raw text is typed.",
@@ -68,7 +75,9 @@ impl SettingsWindow {
                     });
             });
         });
+    }
 
+    fn cleanup_model(&mut self, ui: &mut egui::Ui, state: &ModelState) {
         match &state.status {
             None => {
                 widgets::group_label(ui, "Model");
@@ -88,7 +97,7 @@ impl SettingsWindow {
                 });
             }
             Some(Ok(status)) => {
-                self.model_rows(ui, Tool::Cleanup, status, &state);
+                self.model_rows(ui, Tool::Cleanup, status, state);
             }
         }
     }

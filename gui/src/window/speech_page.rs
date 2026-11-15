@@ -2,7 +2,6 @@ use super::*;
 
 impl SettingsWindow {
     pub(super) fn speech(&mut self, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
         if let Some(notice) = self.notice.clone() {
             ui.add_space(12.0);
             if widgets::notice(ui, Tone::Error, &notice) {
@@ -15,6 +14,18 @@ impl SettingsWindow {
                 self.speech_note = None;
             }
         }
+        let [recognition, _] = widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.recognition(ui),
+            Column::Right => {
+                self.dictation(ui);
+                false
+            }
+        });
+        recognition
+    }
+
+    fn recognition(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         widgets::group_label(ui, "Recognition");
         let canary_state = self.canary_model.lock().unwrap().clone();
         changed |= self.settle_canary_delete(&canary_state);
@@ -149,6 +160,10 @@ impl SettingsWindow {
         if let Some(Ok(status)) = &canary_state.status {
             self.model_rows(ui, Tool::Canary, status, &canary_state);
         }
+        changed
+    }
+
+    fn dictation(&mut self, ui: &mut egui::Ui) {
         widgets::group_label(ui, "Dictation");
         widgets::group(ui, |ui| {
             Row::new("Pause media")
@@ -191,7 +206,6 @@ impl SettingsWindow {
                 });
             self.vocabulary_rows(ui);
         });
-        changed
     }
 
     pub(super) fn vocabulary_rows(&mut self, ui: &mut egui::Ui) {

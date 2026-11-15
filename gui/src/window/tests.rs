@@ -968,6 +968,23 @@ fn the_app_menu_switch_adds_and_removes_the_sessions_entry() {
 }
 
 #[test]
+fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
+    for (page, left, right) in [
+        (Page::Captions, "Overlay", "Listening"),
+        (Page::Speech, "Recognition", "Dictation"),
+        (Page::Cleanup, "Dictation cleanup", "SmolLM3-3B"),
+        (Page::Sessions, "Summaries", "Saved sessions"),
+    ] {
+        let mut harness = harness(page, 1440.0);
+        harness.run();
+        let left = harness.get_by_role_and_label(Role::Heading, left).rect();
+        let right = harness.get_by_role_and_label(Role::Heading, right).rect();
+        assert_eq!(left.top(), right.top(), "{}", page.title());
+        assert!(right.left() > left.right(), "{}", page.title());
+    }
+}
+
+#[test]
 fn large_text_keeps_every_control_inside_the_window() {
     // 1.5 is the step where 820 wide first folds the sidebar; 3.0 is the clamp.
     for zoom in [1.5, *theme::TEXT_SCALE.end()] {

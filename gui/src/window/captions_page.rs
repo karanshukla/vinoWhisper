@@ -2,6 +2,14 @@ use super::*;
 
 impl SettingsWindow {
     pub(super) fn captions(&mut self, ui: &mut egui::Ui) -> bool {
+        let [overlay, listening] = widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.overlay(ui),
+            Column::Right => self.listening(ui),
+        });
+        overlay | listening
+    }
+
+    fn overlay(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         widgets::group_label(ui, "Overlay");
         widgets::group(ui, |ui| {
@@ -28,6 +36,11 @@ impl SettingsWindow {
                 );
             });
         });
+        changed
+    }
+
+    fn listening(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
             Row::new("Listen to")

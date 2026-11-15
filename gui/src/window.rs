@@ -7,7 +7,7 @@ use eframe::egui::{self, Align, Layout, RichText};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
 use vino_ui::theme;
-use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
+use vino_ui::widgets::{self, Button, ChipKind, Column, Row, Tone};
 
 use crate::forward::{self, Shortcuts};
 use crate::model::{self, Line, ModelState, Status, Tool};
@@ -67,6 +67,13 @@ impl Page {
             Page::Cleanup => "Cleanup",
             Page::Sessions => "Sessions",
             Page::About => vino_ui::about::TITLE,
+        }
+    }
+
+    fn max_width(self) -> f32 {
+        match self {
+            Page::Shortcuts | Page::About => widgets::CONTENT_MAX,
+            Page::Captions | Page::Speech | Page::Cleanup | Page::Sessions => widgets::WIDE_MAX,
         }
     }
 
@@ -305,7 +312,8 @@ impl SettingsWindow {
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
-        let wide = ctx.content_rect().width() >= widgets::SIDEBAR_FROM;
+        let window = ctx.content_rect().width();
+        let wide = window >= widgets::SIDEBAR_FROM;
         let mut saved_settings = false;
         let mut saved_speech = false;
         let tray = match &*self.shortcuts.lock().unwrap() {
@@ -320,7 +328,7 @@ impl SettingsWindow {
             egui::Panel::left("pages")
                 .resizable(false)
                 .show_separator_line(false)
-                .exact_size(widgets::SIDEBAR_WIDTH)
+                .exact_size(widgets::sidebar_width(window))
                 .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
@@ -431,7 +439,7 @@ impl SettingsWindow {
             }
         };
         if bar {
-            vino_ui::window::bar(ui, widgets::PAGE_INSET, title, |_| {});
+            vino_ui::window::bar(ui, widgets::page_inset(window), title, |_| {});
         }
 
         egui::CentralPanel::default()
@@ -440,7 +448,11 @@ impl SettingsWindow {
                     .fill(p.bg)
                     // No right margin: the scroll bar belongs on the window's edge.
                     .inner_margin(egui::Margin {
-                        left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
+                        left: if wide {
+                            widgets::page_inset(window) as i8
+                        } else {
+                            16
+                        },
                         right: 0,
                         top: match (wide, bar) {
                             // The same 15 from title to content as in the scroll area.
@@ -452,7 +464,7 @@ impl SettingsWindow {
                     }),
             )
             .show(ui, |ui| {
-                widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
                     if !bar {
                         ui.horizontal(title);
                     }

@@ -12,6 +12,13 @@ impl SettingsWindow {
     }
 
     pub(super) fn sessions(&mut self, ui: &mut egui::Ui) {
+        widgets::columns(ui, |ui, column| match column {
+            Column::Left => self.summaries(ui),
+            Column::Right => self.saved_sessions(ui),
+        });
+    }
+
+    fn summaries(&mut self, ui: &mut egui::Ui) {
         let model_ready = *self.model_ready.lock().unwrap();
         widgets::group_label(ui, "Summaries");
         widgets::group(ui, |ui| {
@@ -44,6 +51,9 @@ impl SettingsWindow {
                     }
                 });
         });
+    }
+
+    fn saved_sessions(&mut self, ui: &mut egui::Ui) {
         widgets::group_label(ui, "Saved sessions");
         widgets::group(ui, |ui| {
             let (help, tone) = if self.settings.save_transcripts {
