@@ -285,7 +285,7 @@ and the traps found building it:
   keeps it running idle because Python imports cost 270ms; `pw-record`
   delivers 90-290ms after spawn; 250ms of tail is kept past the release. The
   key press also calls `/health`, so a cold model load overlaps the speech.
-- **Typing is the RemoteDesktop portal only, since 2026-11-14** (`tray/src/typing.rs`),
+- **Typing is the RemoteDesktop portal only, since 2026-11-14** (`tray/src/portal.rs`),
   one `NotifyKeyboardKeysym` per character, native and Flatpak alike: the user chose
   one input method over several. Why it changed: KWin 6.8 hides `ext_data_control`
   and `org_kde_kwin_fake_input` from any Flatpak client, on the restricted socket and
@@ -306,14 +306,23 @@ and the traps found building it:
   that fails on the first key is replaced once; never after a key went out, so nothing
   is typed twice.
 - **Gone with it:** uinput (and the udev rule), `zwp_virtual_keyboard_v1` (and its Sway
-  1.9 modifier fix), Shift+Insert, the `wl_display.sync` before the keys. Sway, niri and
-  COSMIC have no RemoteDesktop portal, so dictation there only fills the clipboard, a
-  cost the user accepted. GNOME still has no layer-shell for the pill. Without a
+  1.9 modifier fix), Shift+Insert, the `wl_display.sync` before the keys, and
+  data-control altogether (`clipboard.rs`). Sway, niri and COSMIC have no
+  RemoteDesktop portal, so dictation there neither types nor copies, a cost the user
+  accepted for the Flatpak. GNOME still has no layer-shell for the pill. Without a
   shortcuts portal, `vinowhisper-tray dictate-press` / `dictate-release` still give
   hold-to-talk (Sway needs `--no-repeat`; examples in `docs/tray.md`).
-- **The clipboard is now only for Recent dictations and untyped text**, still with
-  `x-kde-passwordManagerHint: secret` and cleared after it is read. Not in the Flatpak
-  on KDE (no data-control there), where the pill says "Not typed" without claiming it.
+- **The clipboard is the portal's Clipboard interface on the same session**
+  (2026-11-14, user's choice of one mechanism): `RequestClipboard` before `Start`, then
+  `SetSelection` and a `SelectionWrite` per `SelectionTransfer`. For Recent dictations
+  and text whose typing failed partway. ashpd's transfer stream borrows its proxy, so
+  `portal.rs` subscribes on the zbus proxy directly. Still the Klipper secret hint. **No
+  clear after a read any more**: KDE reads an offer the moment it is set (hint twice, then
+  the text, before any paste; traced 2026-11-14), so read-then-clear emptied it before the
+  user pasted. A copy lasts until the next one or the session closes; no primary
+  selection. Notices ("Copied") now draw with no dictation in progress; `pill()` used to
+  return nothing in `Phase::Idle`, so a copy's pill never showed once the last one faded.
+  Verified on the laptop in the Flatpak 2026-11-14: Copied pill, repeated Ctrl+V pastes.
 - **Hands-free stops itself after silence** (2026-10-07, issue #56): 0.5s of
   speech then 2.5s under `SILENCE_RMS_THRESHOLD`, counted in Python from the
   tap's chunks. The mode is only known at the key's release, after `start`,
@@ -609,8 +618,7 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
   src/protocol.rs the --json wire formats (captions and dictation)
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
-  src/clipboard.rs ext- (or wlr-) data-control: Recent dictations, untyped text, cleared after a read
-  src/typing.rs   the RemoteDesktop portal: one kept session, a keysym per character
+  src/portal.rs   the RemoteDesktop portal: one kept session, a keysym per character, its clipboard
   src/media.rs    MPRIS pause while dictating, resume after
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture

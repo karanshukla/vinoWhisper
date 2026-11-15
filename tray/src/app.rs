@@ -35,7 +35,6 @@ use smithay_client_toolkit::{delegate_registry, registry_handlers};
 
 use crate::announce;
 use crate::captions::{Captions, Phase};
-use crate::clipboard::Clipboard;
 use crate::dictation::{Action, Dictation, Recent, Spacing};
 use crate::dictator::Dictator;
 use crate::idle::{self, IdleTimer};
@@ -43,13 +42,13 @@ use crate::install;
 use crate::ipc::{self, Request};
 use crate::media::Media;
 use crate::paint::{self, Painter};
+use crate::portal::Portal;
 use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
 use crate::settings::{Position, Settings, Source, Speech};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
-use crate::typing::Typist;
 
 const SIDE_MARGIN: i32 = 16;
 const EDGE_MARGIN: i32 = 48;
@@ -100,6 +99,7 @@ pub enum Command {
         message: String,
     },
     Typed(Result<(), String>),
+    Copied(Result<(), String>),
     Caption {
         generation: u64,
         event: Event,
@@ -194,9 +194,7 @@ pub struct App {
     dictator_generation: u64,
     dictate_program: Option<PathBuf>,
     server_program: Option<PathBuf>,
-    clipboard: Option<Clipboard>,
-    typist: Typist,
-    typing: Option<String>,
+    portal: Portal,
     media: Media,
     lingering: Option<u64>,
     idle: bool,
@@ -302,21 +300,9 @@ pub fn run(options: Options) -> Result<(), String> {
         Ok(None) => {}
         Err(err) => eprintln!("[vinowhisper-tray] no launcher, so no global shortcut: {err}"),
     }
-    let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=1, ()).ok();
-    let clipboard = match &seat {
-        Some(seat) => Clipboard::bind(&globals, seat, &qh),
-        None => Err("this compositor offers no seat".to_owned()),
-    };
-    let clipboard = match clipboard {
-        Ok(clipboard) => Some(clipboard),
-        Err(err) => {
-            eprintln!("[vinowhisper-tray] no clipboard for copying a dictation: {err}");
-            None
-        }
-    };
     let settings = Settings::load();
     let shortcut = Shortcut::spawn(settings.shortcut.clone(), tx.clone());
-    let typist = Typist::spawn(tx.clone(), settings.typing_idle_minutes);
+    let portal = Portal::spawn(tx.clone(), settings.typing_idle_minutes);
     let mut app = App {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
@@ -358,9 +344,7 @@ pub fn run(options: Options) -> Result<(), String> {
         spacing: Spacing::default(),
         dictator: None,
         dictator_generation: 0,
-        clipboard,
-        typist,
-        typing: None,
+        portal,
         media: Media::new(),
         lingering: None,
         idle: false,
@@ -453,8 +437,11 @@ impl App {
                     self.dictate(None);
                 }
             }
+            Command::Copied(result) => match result {
+                Ok(()) => self.flash(COPIED),
+                Err(why) => self.flash(&format!("Not copied: {why}")),
+            },
             Command::Typed(result) => {
-                let result = self.copy_untyped(result);
                 self.spacing.pasted(result.is_ok(), Instant::now());
                 self.dictation.pasted(result);
                 self.dictate(None);
@@ -577,7 +564,7 @@ impl App {
         }
         self.captions
             .set_hide_after(self.settings.hide_after_silence_s);
-        self.typist
+        self.portal
             .set_idle_minutes(self.settings.typing_idle_minutes);
         if changes.tray_idle && std::mem::take(&mut self.idle) {
             // Disarmed here, armed again with the new time at the end of handle().
@@ -676,12 +663,9 @@ impl App {
         let Some(text) = self.recent.get(id) else {
             return;
         };
-        let Some(clipboard) = &mut self.clipboard else {
-            self.flash("This desktop gives no clipboard access");
-            return;
-        };
-        clipboard.restore(text, &self.qh);
-        self.flash(COPIED);
+        if !self.portal.copy(text.to_owned()) {
+            self.flash("Not copied: the portal thread is gone");
+        }
     }
 
     fn speech_applied(&mut self) {
@@ -934,10 +918,9 @@ impl App {
                 } else {
                     text
                 };
-                self.typing = Some(text.clone());
-                if !self.typist.type_text(text) {
-                    let result = self.copy_untyped(Err("the typing thread is gone".into()));
-                    self.dictation.pasted(result);
+                if !self.portal.type_text(text) {
+                    self.dictation
+                        .pasted(Err("the portal thread is gone".into()));
                 }
             }
             None => {}
@@ -948,49 +931,6 @@ impl App {
     fn resume_media(&mut self) {
         if !self.dictation.is_busy() {
             self.media.resume();
-        }
-    }
-
-    pub fn clipboard_mut(&mut self) -> Option<&mut Clipboard> {
-        self.clipboard.as_mut()
-    }
-
-    pub fn clear_clipboard_after_paste(&mut self) {
-        let Some(clipboard) = &mut self.clipboard else {
-            return;
-        };
-        clipboard.arm(Instant::now());
-        if !clipboard.armed() {
-            return;
-        }
-        let _ = self.handle.insert_source(
-            Timer::from_duration(Duration::from_millis(100)),
-            |_, _, app: &mut App| {
-                let done = app
-                    .clipboard
-                    .as_mut()
-                    .is_none_or(|clipboard| clipboard.clear_if_due(Instant::now()));
-                if done {
-                    TimeoutAction::Drop
-                } else {
-                    TimeoutAction::ToDuration(Duration::from_millis(100))
-                }
-            },
-        );
-    }
-
-    // Text that could not be typed is not lost: it goes on the clipboard where there is one.
-    fn copy_untyped(&mut self, result: Result<(), String>) -> Result<(), String> {
-        let text = self.typing.take();
-        let Err(why) = result else {
-            return Ok(());
-        };
-        match (text, &mut self.clipboard) {
-            (Some(text), Some(clipboard)) => {
-                clipboard.restore(&text, &self.qh);
-                Err(format!("{why}; it is on the clipboard"))
-            }
-            _ => Err(why),
         }
     }
 
@@ -1138,7 +1078,7 @@ fn watch_idle(handle: &LoopHandle<'static, App>) -> Option<IdleTimer> {
     Some(timer)
 }
 
-fn trace(message: std::fmt::Arguments) {
+pub fn trace(message: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_TRAY_TRACE").is_some_and(|v| v == "1")) {
         eprintln!("[vinowhisper-tray] {message}");

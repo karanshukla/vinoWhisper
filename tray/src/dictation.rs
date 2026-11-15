@@ -446,7 +446,15 @@ impl Dictation {
 
     pub fn pill(&self) -> Option<Pill> {
         let (tone, text, level) = match &self.phase {
-            Phase::Idle => return None,
+            // A notice (Copied, say) still shows with no dictation in progress.
+            Phase::Idle => {
+                return self.notice.as_ref().map(|(_, message)| Pill {
+                    tone: Tone::Warn,
+                    text: message.clone(),
+                    level: None,
+                    status: true,
+                });
+            }
             Phase::Listening { live: false, .. } => {
                 (Tone::Dim, "Starting the microphone".to_owned(), None)
             }
@@ -587,6 +595,16 @@ mod tests {
         assert!(d.is_busy(), "typed, not yet pasted");
         d.pasted(Ok(()));
         assert!(!d.is_busy());
+    }
+
+    #[test]
+    fn a_notice_shows_with_no_dictation_in_progress() {
+        let mut d = Dictation::new();
+        assert!(d.pill().is_none());
+        let id = d.notice("Copied");
+        assert_eq!(d.pill().map(|pill| pill.text).as_deref(), Some("Copied"));
+        d.clear_notice(id);
+        assert!(d.pill().is_none());
     }
 
     #[test]

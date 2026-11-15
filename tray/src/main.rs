@@ -1,7 +1,6 @@
 mod announce;
 mod app;
 mod captions;
-mod clipboard;
 mod dictation;
 mod dictator;
 mod icon;
@@ -10,6 +9,7 @@ mod install;
 mod ipc;
 mod media;
 mod paint;
+mod portal;
 mod protocol;
 mod raster;
 mod restart;
@@ -17,7 +17,6 @@ mod session;
 mod shortcut;
 mod summaries;
 mod tray;
-mod typing;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

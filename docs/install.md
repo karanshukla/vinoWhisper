@@ -294,7 +294,7 @@ things to check first on a desktop. Flatpak 1.15.6 and later give a sandboxed ap
 restricted Wayland connection (`wp_security_context_v1`), which the container's 1.14.6
 does not, and a compositor may withhold `wlr-layer-shell` (the overlay; Sway does) or
 the data-control clipboard from it. KWin 6.8 withholds data-control and fake-input but not
-layer-shell (measured 2026-11-14), which is why dictation types through the
+layer-shell (measured 2026-11-14), which is why dictation types, and copies, through the
 remote-desktop portal; that typing was measured on Plasma 6.8.2 the same day. And `restart` starts the tray through
 Flatpak's portal, which needs the session's D-Bus environment to hold
 `WAYLAND_DISPLAY`: Plasma and GNOME put it there, and a Sway config needs the usual

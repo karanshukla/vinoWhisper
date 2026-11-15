@@ -285,8 +285,7 @@ machine:
   instead ([examples](https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal)).
 - **Dictation types into whatever has focus.** Wayland does not say what that
   is, so it cannot check. It types through the remote-desktop portal, which KDE
-  and GNOME have and Sway, niri and COSMIC do not; there the text only goes on
-  the clipboard.
+  and GNOME have and Sway, niri and COSMIC do not, so dictation does not type there.
   [docs/tray.md](https://docs.vinowhisper.com/tray/#dictation)
   has the details.
 - **Only Fedora's package names have been used for real.** The other seven

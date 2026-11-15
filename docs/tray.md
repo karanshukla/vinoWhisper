@@ -274,8 +274,9 @@ tells you when that starts:
   and dictations in the next 5 minutes type without one. Five minutes after the last
   one, the session closes and the icon goes. That is what **Keep typing access** on the settings window's Speech page
   sets: longer means fewer notifications, 0 keeps the session open until the tray quits.
-- A desktop without the portal (Sway, niri, COSMIC) cannot be typed into: the text goes
-  on the clipboard instead, and the pill says so.
+- A desktop without the portal (Sway, niri, COSMIC) cannot be typed into, and has no
+  clipboard for it either: the pill says "Not typed", and the text waits in Recent
+  dictations.
 
 Why it works this way, and what it replaced: [How the text gets there](#how-dictation-works).
 
@@ -343,7 +344,7 @@ Two dictations in a row into the same field come out as `First sentence.Second
 sentence.`, because each paste is only its own text. With the setting on, the tray
 types a space first when all of these hold:
 
-- the previous dictation was typed (not left on the clipboard after a failed paste),
+- the previous dictation was typed (not left on the clipboard after typing failed),
 - the key for this one went down less than 30 seconds after that paste,
 - the previous text ended in something other than whitespace, and this one starts
   with a letter or a digit.
@@ -355,8 +356,8 @@ before text that opens with punctuation.
 **It is a guess.** Wayland does not say what has focus and the tray cannot read the
 field (see "Where the text goes is not checked" below), so it cannot tell that you
 clicked into another field between the two. If you did, that field gets a leading
-space. That is why it is off by default. The space is part of what goes on the
-clipboard, so a paste that fails leaves it there too. Recent dictations and the pill
+space. That is why it is off by default. The space is part of what is typed, and of
+what goes on the clipboard when typing fails. Recent dictations and the pill
 show the text without it. The cleanup model never sees the previous dictation.
 
 The rule is `Spacing` in `tray/src/dictation.rs` and has unit tests. Not run in a
@@ -530,30 +531,38 @@ native and Flatpak alike, by the user's choice of one input method over several:
   `zwp_virtual_keyboard_v1`, or the portal. Three routes that behaved differently, a
   `wl_display.sync` before the keys so uinput did not paste the previous clipboard, and
   clearing the clipboard after the paste read it. All of that is gone.
-- **What is lost:** dictation types nothing on desktops without a remote-desktop portal
-  (Sway, niri, COSMIC: see the table below). There the text goes on the clipboard and the
-  pill says so.
+- **The clipboard comes from the same session** (since 2026-11-14), through the portal's
+  Clipboard interface (`RequestClipboard` before `Start`, then `SetSelection`, and a
+  `SelectionTransfer` for each paste), for Recent dictations and for text whose typing
+  failed partway. KWin hides data-control from Flatpak apps too, so this is the only
+  clipboard the Flatpak gets; native uses it as well, so there is one mechanism. A copy
+  lasts while the session is open: Keep typing access closes it, and a copy with the
+  session closed starts one, with its notification.
+- **What is lost:** desktops without a remote-desktop portal (Sway, niri, COSMIC: see the
+  table below) get no typing and no clipboard. The text waits in Recent dictations, with
+  no way out of it there.
 
 **Where the text goes is not checked.** Wayland does not say what has focus,
-so it types into whatever does. If typing failed, the text is put on the
-clipboard where the desktop allows one (not in the Flatpak on KDE) and the pill says so;
-after typing into the wrong window, recover it from the tray's **Recent dictations**
-submenu.
+so it types into whatever does. If typing failed partway, the text is put on the
+clipboard and the pill says so; after typing into the wrong window, recover it from the
+tray's **Recent dictations** submenu.
 
 **Recent dictations** holds the last five texts that were dictated and
 non-empty, newest first, as labels cut to 40 characters. Clicking one puts
-the full text back on the clipboard and the primary selection with the
-hint `x-kde-passwordManagerHint: secret`, so Klipper does not record it, and shows
-"Copied" on the pill. The selections are cleared once something has read the text:
-300ms after the last read, never sooner than 500ms after the first and never later
-than 2s after it; until the first read the text stays put. A click
+the full text on the clipboard through the portal session, with the hint
+`x-kde-passwordManagerHint: secret` so Klipper does not record it, and shows "Copied" on
+the pill. The portal has no primary selection, so middle-click does not paste it. The
+text stays until you copy something else or the session closes (Keep typing access).
+It used to be cleared after its first read, but through the portal the desktop reads
+it the moment it is offered (the secret hint twice, then the text; traced 2026-11-14),
+so that cleared it before you could paste. A click
 while a dictation is in progress is refused, so it cannot replace the text
 about to be typed. **Clear** empties the list. The list lives only in the
 overlay's memory: never written to disk or to logs, and absent from
 `VINOWHISPER_TRAY_TRACE` output (the debug formatting of the dictation state
 now prints a character count, not the text; it printed the text before).
 Quitting the overlay loses the list, on purpose. Not run against a live Plasma
-tray yet: only the history and the menu labels have unit tests; the copy-back and its clearing do not.
+Verified 2026-11-14 on Plasma 6.8.2 in the Flatpak: "Copied" on the pill, and the text pasted with Ctrl+V more than once.
 
 The microphone is recorded by `vinowhisper-dictate --json`, which the
 overlay keeps running idle (reading its stdin, not the microphone) so that
@@ -930,13 +939,9 @@ hint, and it is a Wayland protocol that not every compositor offers:
 | GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | | will not start; use the terminal |
 | X11 sessions | no | | | | will not start; use the terminal |
 
-The clipboard (Recent dictations, and text that could not be typed) uses `ext-data-control-v1` where the compositor has it
-(KWin 6.3, wlroots 0.19 / Sway 1.11, Hyprland 0.49, niri 25.02, COSMIC), and
-falls back to `zwlr_data_control_manager_v1`, the protocol it was
-standardised from, which is all that Sway 1.9 and 1.10 (Ubuntu 24.04, Debian
-13) and older Hyprland and KWin offer. The requests are the same;
-version 1 of the wlr protocol has no primary selection, so middle-click then
-pastes nothing (the log says so). KWin hides both from Flatpak apps.
+Until 2026-11-14 the clipboard was `ext-data-control-v1` (or the older
+`zwlr_data_control_manager_v1`), which every compositor in the table offers. KWin hides
+both from Flatpak apps, so it moved into the portal session with typing.
 
 On a compositor without layer-shell it exits with a message that says so,
 rather than falling back to a normal window that cannot stay on top.
