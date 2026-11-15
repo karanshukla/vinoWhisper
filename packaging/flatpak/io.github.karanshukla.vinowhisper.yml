@@ -16,8 +16,7 @@ sdk-extensions:
 command: vinowhisper-tray
 finish-args:
   # /dev/accel/accel0 (NPU) is only exposed by `all`; it covers the GPU's
-  # /dev/dri for OpenVINO and the windows, and /dev/uinput, which types a
-  # dictation's Shift+Insert.
+  # /dev/dri for OpenVINO and the windows.
   - --device=all
   # Recordings given to vinowhisper-transcribe and the paths --record and
   # --transcript name, the sessions entry the Sessions page adds to the app

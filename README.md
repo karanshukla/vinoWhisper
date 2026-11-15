@@ -283,9 +283,9 @@ machine:
   terminal UI is the way in. Hyprland, niri and COSMIC should work and are
   untested. Compositors without a shortcuts portal bind the tray's commands
   instead ([examples](https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal)).
-- **Dictation pastes into whatever has focus.** Wayland does not say what that
-  is, so it cannot check. Outside KDE the paste goes through the compositor's
-  virtual keyboard, tried so far on Sway 1.9 only.
+- **Dictation types into whatever has focus.** Wayland does not say what that
+  is, so it cannot check. It types through the remote-desktop portal, which KDE
+  and GNOME have and Sway, niri and COSMIC do not, so dictation does not type there.
   [docs/tray.md](https://docs.vinowhisper.com/tray/#dictation)
   has the details.
 - **Only Fedora's package names have been used for real.** The other seven

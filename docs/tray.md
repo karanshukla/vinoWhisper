@@ -263,6 +263,23 @@ The overlay also types what you say into whatever window has focus.
   a held key never auto-stops. Added 2026-10-07, from
   [issue #56](https://github.com/karanshukla/vinoWhisper/issues/56).
 
+**What the desktop shows when it types.** Wayland lets no app type into another without
+asking, so dictation types through the desktop's remote-control portal, and the desktop
+tells you when that starts:
+
+- **Your first dictation** opens a "Remote Control Requested" dialog. Allow it, and tick
+  "Allow … without asking next time" (Plasma 6.8) so it does not come back.
+- **The first dictation after a pause** brings one "Remote control session started"
+  notification. The session then stays open, with KDE's remote-control icon in the tray,
+  and dictations in the next 5 minutes type without one. Five minutes after the last
+  one, the session closes and the icon goes. That is what **Keep typing access** on the settings window's Speech page
+  sets: longer means fewer notifications, 0 keeps the session open until the tray quits.
+- A desktop without the portal (Sway, niri, COSMIC) cannot be typed into, and has no
+  clipboard for it either: the pill says "Not typed", and the text waits in Recent
+  dictations.
+
+Why it works this way, and what it replaced: [How the text gets there](#how-dictation-works).
+
 **The 2.5s timeout is a guess.** It was picked from how other dictation tools
 feel, not measured, and nobody has dictated with it on the laptop yet. "Quiet"
 is `config.SILENCE_RMS_THRESHOLD`, the same level captions use, so a noisy room
@@ -327,7 +344,7 @@ Two dictations in a row into the same field come out as `First sentence.Second
 sentence.`, because each paste is only its own text. With the setting on, the tray
 types a space first when all of these hold:
 
-- the previous dictation was typed (not left on the clipboard after a failed paste),
+- the previous dictation was typed (not left on the clipboard after typing failed),
 - the key for this one went down less than 30 seconds after that paste,
 - the previous text ended in something other than whitespace, and this one starts
   with a letter or a digit.
@@ -339,8 +356,8 @@ before text that opens with punctuation.
 **It is a guess.** Wayland does not say what has focus and the tray cannot read the
 field (see "Where the text goes is not checked" below), so it cannot tell that you
 clicked into another field between the two. If you did, that field gets a leading
-space. That is why it is off by default. The space is part of what goes on the
-clipboard, so a paste that fails leaves it there too. Recent dictations and the pill
+space. That is why it is off by default. The space is part of what is typed, and of
+what goes on the clipboard when typing fails. Recent dictations and the pill
 show the text without it. The cleanup model never sees the previous dictation.
 
 The rule is `Spacing` in `tray/src/dictation.rs` and has unit tests. Not run in a
@@ -479,92 +496,73 @@ measured yet; that needs the NPU.
   what captions read; dictation keeps its own audio per piece from the
   recorder's tap, so a 5-minute utterance costs about 19MB.
 
-**How the text gets there.** Wayland lets no app type into another, so it
-copies the text and presses Shift+Insert:
+**How the text gets there.** Wayland lets no app type into another, so the
+text is typed through the remote-desktop portal (`org.freedesktop.portal.RemoteDesktop`),
+one key per character with `NotifyKeyboardKeysym`. Since 2026-11-14 this is the only route,
+native and Flatpak alike, by the user's choice of one input method over several:
 
-1. The text goes on the clipboard *and* the primary selection, through
-   `ext-data-control-v1`. Both, because Shift+Insert pastes the primary
-   selection in terminals (Ghostty binds it to `paste_from_selection`).
-2. Shift+Insert rather than Ctrl+V: it pastes in terminals and GUI apps
-   alike, and uses evdev codes that do not move with the keyboard layout.
-3. The keys come from a virtual keyboard on `/dev/uinput` when the user can
-   open it; else from the compositor's own virtual keyboard
-   (`zwp_virtual_keyboard_v1`, which wlroots compositors, niri, COSMIC and
-   KWin offer to any client); else from the remote-desktop portal.
-4. The keys go out only once the compositor confirms it has the new
-   selection (a `wl_display.sync` round trip). Without that, uinput is fast
-   enough to paste the *previous* clipboard, which it did on 2026-09-21.
-5. Once the paste has read the text, both selections are cleared: 300ms after
-   the last read, never sooner than 500ms after the keys, and at 2s whether
-   or not anything read it. The text is also offered with
-   `x-kde-passwordManagerHint: secret`, so Klipper never records it, and
-   Klipper then puts back whatever you had copied before (measured
-   2026-09-21). Without a clipboard manager the clipboard is left empty.
-
-**Why uinput first.** Measured 2026-09-21 on Plasma 6.7: the portal works,
-and after the first permission dialog a saved restore token starts every
-later session silently (0.00s, three of three; KDE issues a new token each
-time, so it is saved after every start, in
-`~/.local/state/vinowhisper/remote-desktop.token`). But KDE posts "Remote
-control session started" for every session and shows a Remote Control tray
-icon while one is open, which is a notification per dictation. `/dev/uinput`
-has no dialog and no notification. Whether you can open it depends on udev:
-on this laptop Steam's `60-steam-input.rules` grants it. The log says which
-path is in use.
-
-To grant it without Steam, the same rule Steam uses, which hands the device
-to whoever is logged in at the seat through logind's `uaccess` tag rather
-than a group. Group names differ between distros, and on Fedora Atomic
-`usermod` cannot see groups that live in `/usr/lib/group`; `uaccess` needs
-neither, and `/etc/udev/rules.d` is writable on image-based systems too:
-
-```bash
-echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' \
-  | sudo tee /etc/udev/rules.d/60-vinowhisper-uinput.rules
-sudo udevadm control --reload && sudo udevadm trigger --name-match=uinput
-```
-
-It lets any program you run create a virtual keyboard, which is also what
-Steam's rule does. Only KDE needs it: elsewhere the compositor's virtual
-keyboard (next) types without it.
-
-**The compositor's virtual keyboard, added 2026-09-22, is for everything
-that is not KDE with Steam.** `zwp_virtual_keyboard_v1` needs no udev rule
-and no portal: on the first paste that needs it, the overlay hands the
-compositor a two-key keymap (Shift and Insert, at their evdev codes plus 8,
-with a `modifier_map` so Shift really sets Shift) and sends the four key
-events on the same Wayland connection that set the clipboard, so they cannot
-overtake it. It also sends Shift as an explicit `modifiers` request around
-Insert: Sway 1.9 takes no modifier state from a virtual keyboard's key events,
-so until 2026-10-24 the window got a bare Insert (`^[[2~` in a terminal) and
-nothing was pasted. It is made on the first paste rather than at startup, because
-a new keyboard on the seat has side effects: Sway hands its keymap to the
-focused window. Tried against a live compositor for the first time on
-2026-10-24 (Sway 1.9, above), which is how the modifier problem was found. It sits between uinput and the portal because the uinput
-path is the one measured on hardware, and on Sway, niri and COSMIC there is
-no remote-desktop portal to fall back to. A compositor that restricts the
-protocol (Hyprland's `ecosystem:enforce_permissions`, off by default) may
-answer a protocol error, which ends the Wayland connection; none of the
-desktops in the table below do so out of the box.
+- **Keysyms, not keycodes.** Each character goes out as its keysym (the code point for
+  Latin-1, `0x01000000` + the code point for the rest), and the desktop's layout decides which key
+  makes it. A line break or tab (only a `replacements.json` value can carry one) is typed
+  as a space: a pasted line break was harmless in a terminal with bracketed paste, a
+  typed Return runs the line. Measured 2026-11-14 on
+  Plasma 6.8.2, US layout: curly quotes, em dash, ellipsis, accented letters, `€` and `ß`
+  all came through as written. KDE has a report of the wrong keycode on other layouts
+  ([bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021)); not tried here.
+- **One session, kept open.** KDE posts "Remote control session started" each time a
+  session starts. A session per dictation, which is what the portal fallback used to do,
+  was a notification per dictation; one session kept open was one notification for
+  three key presses 5 s apart (2026-11-14). KDE keeps its remote-control icon in the tray
+  while the session is open; it went away when the idle close ran (2026-11-14, Flatpak). So the session is opened at the first
+  dictation and closed after `typing_idle_minutes` without one (Settings → Speech →
+  Keep typing access; 5 by default, 0 keeps it open). The next dictation after that
+  opens a new one, with its notification.
+- **Permission once.** The first session shows Plasma's "Remote Control Requested"
+  dialog; on Plasma 6.8 it has "Allow … without asking next time". After that a saved
+  restore token starts each session silently (0.01 s). KDE issues a new token each time,
+  so it is saved after every start, in `~/.local/state/vinowhisper/remote-desktop.token`.
+- **A session the desktop closed meanwhile** fails on the first key; one new session is
+  tried then, and only before anything was typed, so nothing is typed twice.
+- **Why not the clipboard and Shift+Insert** (2026-09-21 to 2026-11-14). It needed
+  `ext-data-control-v1`, and KWin 6.8 hides that from Flatpak apps, whichever Wayland
+  socket they connect on, along with `org_kde_kwin_fake_input`
+  (measured 2026-11-14 by listing the globals inside and outside the sandbox). It also needed a
+  key source of its own: `/dev/uinput` (a udev rule), the compositor's
+  `zwp_virtual_keyboard_v1`, or the portal. Three routes that behaved differently, a
+  `wl_display.sync` before the keys so uinput did not paste the previous clipboard, and
+  clearing the clipboard after the paste read it. All of that is gone.
+- **The clipboard comes from the same session** (since 2026-11-14), through the portal's
+  Clipboard interface (`RequestClipboard` before `Start`, then `SetSelection`, and a
+  `SelectionTransfer` for each paste), for Recent dictations and for text whose typing
+  failed partway. KWin hides data-control from Flatpak apps too, so this is the only
+  clipboard the Flatpak gets; native uses it as well, so there is one mechanism. A copy
+  lasts while the session is open: Keep typing access closes it, and a copy with the
+  session closed starts one, with its notification.
+- **What is lost:** desktops without a remote-desktop portal (Sway, niri, COSMIC: see the
+  table below) get no typing and no clipboard. The text waits in Recent dictations, with
+  no way out of it there.
 
 **Where the text goes is not checked.** Wayland does not say what has focus,
-so it pastes into whatever does. If typing failed outright, the text is left
-on the clipboard and the pill says so; after a paste that went to the wrong
-window, recover it from the tray's **Recent dictations** submenu.
+so it types into whatever does. If typing failed partway, the text is put on the
+clipboard and the pill says so; after typing into the wrong window, recover it from the
+tray's **Recent dictations** submenu.
 
 **Recent dictations** holds the last five texts that were dictated and
 non-empty, newest first, as labels cut to 40 characters. Clicking one puts
-the full text back on the clipboard and the primary selection with the same
-secret hint, and shows "Copied" on the pill; it does not paste. Nothing
-is about to read it, so the clearing in step 5 above starts at the first
-read, whenever that is, not when you click; until then the text stays put. A click
+the full text on the clipboard through the portal session, with the hint
+`x-kde-passwordManagerHint: secret` so Klipper does not record it, and shows "Copied" on
+the pill. The portal has no primary selection, so middle-click does not paste it. The
+text stays until you copy something else or the session closes (Keep typing access).
+It used to be cleared after its first read, but through the portal the desktop reads
+it the moment it is offered (the secret hint twice, then the text; traced 2026-11-14),
+so that cleared it before you could paste. A click
 while a dictation is in progress is refused, so it cannot replace the text
-about to be pasted. **Clear** empties the list. The list lives only in the
+about to be typed. **Clear** empties the list. The list lives only in the
 overlay's memory: never written to disk or to logs, and absent from
 `VINOWHISPER_TRAY_TRACE` output (the debug formatting of the dictation state
 now prints a character count, not the text; it printed the text before).
 Quitting the overlay loses the list, on purpose. Not run against a live Plasma
-tray yet: only the history and the menu labels have unit tests; the copy-back and its clearing do not.
+Verified 2026-11-14 on Plasma 6.8.2 in the Flatpak: "Copied" on the pill, and the text pasted with Ctrl+V more than once.
 
 The microphone is recorded by `vinowhisper-dictate --json`, which the
 overlay keeps running idle (reading its stdin, not the microphone) so that
@@ -935,22 +933,15 @@ hint, and it is a Wayland protocol that not every compositor offers:
 
 | Desktop | Overlay | Tray | Shortcut | Dictation types via | Status |
 |---|---|---|---|---|---|
-| KDE Plasma 6.7 (Wayland) | yes | yes | portal | uinput, then virtual keyboard, then portal | **Tested on hardware, 2026-09-12; dictation 2026-09-21** |
-| Hyprland | layer-shell: yes | needs an SNI tray | bind in `hyprland.conf` ([above](#without-a-shortcuts-portal)) | virtual keyboard | untested |
-| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind the commands ([above](#without-a-shortcuts-portal)) | virtual keyboard | Sway 1.9: see below; niri, COSMIC untested |
-| GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | no data-control, so no paste | will not start; use the terminal |
+| KDE Plasma 6.7 (Wayland) | yes | yes | portal | remote-desktop portal | **Tested on hardware, 2026-09-12; dictation 2026-09-21; portal typing on 6.8.2, 2026-11-14** |
+| Hyprland | layer-shell: yes | needs an SNI tray | bind in `hyprland.conf` ([above](#without-a-shortcuts-portal)) | the portal, if its xdg-desktop-portal offers RemoteDesktop; else clipboard only | untested |
+| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind the commands ([above](#without-a-shortcuts-portal)) | nothing: no remote-desktop portal, so the text goes on the clipboard | Sway 1.9 typed through a virtual keyboard until 2026-11-14; niri, COSMIC untested |
+| GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | | will not start; use the terminal |
 | X11 sessions | no | | | | will not start; use the terminal |
 
-The clipboard half uses `ext-data-control-v1` where the compositor has it
-(KWin 6.3, wlroots 0.19 / Sway 1.11, Hyprland 0.49, niri 25.02, COSMIC), and
-falls back to `zwlr_data_control_manager_v1`, the protocol it was
-standardised from, which is all that Sway 1.9 and 1.10 (Ubuntu 24.04, Debian
-13) and older Hyprland and KWin offer. The requests are the same;
-version 1 of the wlr protocol has no primary selection, so Shift+Insert then
-pastes nothing in terminals that read the primary (the log says so). Until
-2026-10-24 the overlay spoke only the `ext-` protocol, so dictation could
-only report "no clipboard access" there. GNOME has neither, which is what
-rules it out for dictation independently of layer-shell.
+Until 2026-11-14 the clipboard was `ext-data-control-v1` (or the older
+`zwlr_data_control_manager_v1`), which every compositor in the table offers. KWin hides
+both from Flatpak apps, so it moved into the portal session with typing.
 
 On a compositor without layer-shell it exits with a message that says so,
 rather than falling back to a normal window that cannot stay on top.
@@ -974,8 +965,8 @@ vinowhisper-tray ──spawns──> vinowhisper-caption --json ──HTTP──
       │              ▲ start / stop / cancel on stdin
       ├── tray (StatusNotifierItem over D-Bus)
       ├── shortcuts (xdg-desktop-portal GlobalShortcuts: Activated and Deactivated)
-      ├── paste: ext- (or wlr-) data-control, then Shift+Insert via /dev/uinput,
-      │          zwp_virtual_keyboard_v1, or RemoteDesktop
+      ├── typing: RemoteDesktop portal, one keysym per character, one session
+      │           kept open until typing_idle_minutes pass without a dictation
       └── $XDG_RUNTIME_DIR/vinowhisper-tray.sock (show/hide/toggle/dictate/quit)
 ```
 
@@ -1064,9 +1055,9 @@ prefixed `[caption]`.
 | Box shows raw error text | The caption process exited without an `Error` record, so the box shows its last stderr lines. Run `vinowhisper-caption` in a terminal for the rest |
 | Text in an unexpected font | fontconfig names a sans-serif that is not installed. It falls back to the first installed of Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans and Liberation Sans |
 | Dictation: "vinowhisper-dictate was not found" | Older install. `pip install -U vinowhisper`, then `vinowhisper-setup` links it |
-| Dictation: a notification every time | No `/dev/uinput` access, so it types through the portal. The `uaccess` udev rule [above](#dictation) stops it |
+| Dictation: a "Remote control" notification | KDE announces each portal session. One is kept open between dictations; Settings → Speech → Keep typing access sets how long (0 keeps it open) |
 | "no global shortcut" in the log | No GlobalShortcuts portal (Sway, niri, COSMIC) or one that leaves the key to you (Hyprland). Bind the commands [in the compositor](#without-a-shortcuts-portal) |
-| Dictation: "On the clipboard, not typed" | The paste was refused or failed; the text is on the clipboard. After refusing the portal dialog, restart the overlay to be asked again |
+| Dictation: "Not typed" | Typing was refused or failed. The text is on the clipboard when the message says so, and in Recent dictations either way. After refusing the portal dialog, restart the overlay to be asked again |
 | Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every key and state change |
 | Old behaviour after an upgrade | The tray that was running is still the old binary, and its dictation child the old Python. `vinowhisper-tray restart` quits it and starts the installed one in the tray (captions off); the installers and `vinowhisper-setup` run it themselves since 1.6.2, and it refuses outside a Wayland session (over ssh) rather than leave no tray (2026-11-13) |
 | Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |

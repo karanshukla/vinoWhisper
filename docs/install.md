@@ -154,6 +154,9 @@ menu, and Settings → Speech downloads Canary 1B v2, which needs no export
 ([models.md](models.md)).
 
 Open **vinoWhisper** from the app menu for the tray, the overlay and dictation.
+The first dictation asks permission to type through the desktop's remote control, and
+the desktop then notifies you when a typing session starts: at the first dictation, and
+again after 5 minutes without one by default ([why](tray.md#dictation)).
 **Start at login** in the tray's menu asks the desktop's Background portal, which
 writes the login entry itself.
 
@@ -198,7 +201,7 @@ What it is allowed, and why:
 
 | Permission | For |
 |---|---|
-| `--device=all` | the NPU (`/dev/accel`), which nothing narrower exposes, the GPU, and `/dev/uinput`, which types a dictation's Shift+Insert |
+| `--device=all` | the NPU (`/dev/accel`), which nothing narrower exposes, and the GPU |
 | `--filesystem=home` | recordings given to `vinowhisper-transcribe`, the paths `--record` and `--transcript` name, the sessions window's app menu entry, and reading the login entry the portal wrote |
 | `--share=network` | downloading the models, and checking for a release |
 | `--socket=wayland` | the overlay, and the settings and sessions windows |
@@ -286,11 +289,13 @@ Flatpak 1.14.6, no NPU, no GPU and no audio server:
   error (no audio server), and the settings window opened.
 
 Untested anywhere: the NPU and GPU from inside the sandbox, capture, the tray icon,
-the shortcut and Background portals, dictation's clipboard and paste, and Plasma. Two
+the shortcut and Background portals, and Plasma. Two
 things to check first on a desktop. Flatpak 1.15.6 and later give a sandboxed app a
 restricted Wayland connection (`wp_security_context_v1`), which the container's 1.14.6
 does not, and a compositor may withhold `wlr-layer-shell` (the overlay; Sway does) or
-the data-control clipboard (dictation) from it. And `restart` starts the tray through
+the data-control clipboard from it. KWin 6.8 withholds data-control and fake-input but not
+layer-shell (measured 2026-11-14), which is why dictation types, and copies, through the
+remote-desktop portal; that typing was measured on Plasma 6.8.2 the same day. And `restart` starts the tray through
 Flatpak's portal, which needs the session's D-Bus environment to hold
 `WAYLAND_DISPLAY`: Plasma and GNOME put it there, and a Sway config needs the usual
 `exec dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP`.
