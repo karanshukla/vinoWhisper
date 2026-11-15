@@ -11,7 +11,7 @@ import stat
 
 import pytest
 
-from vinowhisper import config, failures, integrity, summary, transcribe
+from vinowhisper import config, failures, integrity, summary
 
 
 @pytest.fixture
@@ -130,6 +130,6 @@ def test_a_file_hashes_to_the_known_sha256_whatever_its_size(tmp_path):
     assert integrity.sha256_file(empty) == (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
-    assert transcribe.file_sha256(small) == (digest, 3)
-    assert transcribe.file_sha256(large)[1] == (1 << 20) + 7
-    assert transcribe.file_sha256(large)[0] == integrity.sha256_file(large)
+    assert integrity.sha256_and_size(small) == (digest, 3)
+    assert integrity.sha256_and_size(large)[1] == (1 << 20) + 7
+    assert integrity.sha256_and_size(large)[0] == integrity.sha256_file(large)

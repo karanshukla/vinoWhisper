@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import platform
@@ -9,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, config
-from .integrity import sha256_file
+from .integrity import Sha256Stream, sha256_file
 
 RELEASES_URL = "https://github.com/karanshukla/vinoWhisper/releases/download"
 _PACKAGE = Path(__file__).resolve().parent
@@ -167,21 +166,20 @@ def download_verified(
         get = requests.get
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_name(dest.name + ".part")
-    digest = hashlib.sha256()
+    hashed = Sha256Stream()
     try:
         with get(
             url, stream=True, timeout=(config.CONNECT_TIMEOUT_S, DOWNLOAD_TIMEOUT_S)
         ) as response:
             response.raise_for_status()
             with partial.open("wb") as out:
-                for chunk in response.iter_content(chunk_size=1 << 16):
-                    digest.update(chunk)
+                for chunk in hashed.through(response.iter_content(chunk_size=1 << 16)):
                     out.write(chunk)
     except OSError as exc:  # requests' exceptions are OSErrors too
         partial.unlink(missing_ok=True)
         raise OverlayError(f"could not download {url}: {exc}") from exc
 
-    actual = digest.hexdigest()
+    actual = hashed.hexdigest()
     if actual != sha256:
         partial.unlink(missing_ok=True)
         raise OverlayError(

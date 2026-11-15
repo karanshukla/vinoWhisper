@@ -1,6 +1,5 @@
 import argparse
 import collections
-import hashlib
 import json
 import shutil
 import signal
@@ -20,6 +19,7 @@ import requests
 from . import __version__, audio, bundle, config, distro, session, summary, vad
 from .client import TranscriptionClient
 from .dictate import clean
+from .integrity import sha256_and_size
 from .paragraphs import PARAGRAPH_SILENCE_S, ParagraphBreaker
 
 FRAME_SAMPLES = config.SAMPLE_RATE_HZ // 10
@@ -301,15 +301,6 @@ class Transcript:
         return "".join(self._parts) + "\n"
 
 
-def file_sha256(path: Path) -> tuple[str, int]:
-    digest, size = hashlib.sha256(), 0
-    with path.open("rb") as handle:
-        while block := handle.read(1 << 20):
-            digest.update(block)
-            size += len(block)
-    return digest.hexdigest(), size
-
-
 def model_id_for(health: dict) -> str:
     return config.served_model_id(
         str(health.get("model") or ""),
@@ -450,7 +441,7 @@ def transcribe_file(
 
     started = now().astimezone()
     # Before the decode: the file may be moved or deleted while a long one runs.
-    digest, size = file_sha256(path)
+    digest, size = sha256_and_size(path)
     duration_s = probe_duration_s(path, which)
     name = " ".join(path.name.split())
     transcript = Transcript(started, name, device)

@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,12 +33,31 @@ _TAG_VALUE = re.compile(r"<(\w+) value=\"([^\"]*)\" */>")
 _TAIL_BYTES = 16 << 10
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
+class Sha256Stream:
+    def __init__(self) -> None:
+        self._digest = hashlib.sha256()
+        self.size = 0
+
+    def through(self, chunks: Iterable[bytes]) -> Iterator[bytes]:
+        for chunk in chunks:
+            self._digest.update(chunk)
+            self.size += len(chunk)
+            yield chunk
+
+    def hexdigest(self) -> str:
+        return self._digest.hexdigest()
+
+
+def sha256_and_size(path: Path) -> tuple[str, int]:
+    hashed = Sha256Stream()
     with path.open("rb") as handle:
-        while chunk := handle.read(_CHUNK):
-            digest.update(chunk)
-    return digest.hexdigest()
+        for _ in hashed.through(iter(lambda: handle.read(_CHUNK), b"")):
+            pass
+    return hashed.hexdigest(), hashed.size
+
+
+def sha256_file(path: Path) -> str:
+    return sha256_and_size(path)[0]
 
 
 def digest_export(directory: Path) -> dict[str, str]:
