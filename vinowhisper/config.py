@@ -36,14 +36,12 @@ MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"
 
 
-# The multilingual sibling. Opt-in (`--language`), because the English-only model is
-# the one benchmarked and pinned; this one is the same size and architecture.
+# Opt-in with `--language`: the English-only model is the one benchmarked and pinned.
 MULTILINGUAL_MODEL_ID = "openai/whisper-small"
 MULTILINGUAL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov"
 MULTILINGUAL_STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov-stateful"
 
-# scripts/export_whisper.py: our own encoder + one-token decoder, for a decoder prompt on the
-# NPU (#176). fp16: it matched WhisperPipeline word for word on 19 min, INT8 did not.
+# scripts/export_whisper.py's step export (#176). fp16: INT8 drifts (docs/models.md).
 STEP_MODEL_DIR = MODEL_ROOT / "whisper-small.en-step-ov-fp16"
 MULTILINGUAL_STEP_MODEL_DIR = MODEL_ROOT / "whisper-small-step-ov-fp16"
 
@@ -53,16 +51,12 @@ def step_model_dir(multilingual: bool = False) -> Path:
 
 
 AUTO_LANGUAGE = "auto"
-# Checked on the CPU device 2026-10-06 with the multilingual small: transcription,
-# forced language and translation to English. Whisper knows ~99, but these are the
-# ones anyone has run here.
+# Whisper knows ~99; these are the ones anyone has run here (docs/models.md).
 LANGUAGES = ("en", "fr", "de", "es")
 TASKS = ("transcribe", "translate")
 DEFAULT_LANGUAGE = "en"
 DEFAULT_TASK = "transcribe"
 
-# The speech model, picked in the settings window (#143). Whisper stays the default: on a
-# stitched session it beat Canary on English (4.8% WER against 5.8%, 2026-11-06).
 WHISPER_MODEL = "whisper-small"
 CANARY_MODEL = "canary-1b-v2"
 MODELS = (WHISPER_MODEL, CANARY_MODEL)
@@ -71,11 +65,7 @@ CANARY_MODEL_ID = "nvidia/canary-1b-v2"
 # INT8 weights for the NPU; the CPU plugin cannot compile those (2026-11-06), so fp16 there.
 CANARY_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov"
 CANARY_FP16_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov-fp16"
-# Canary's own list. Only en, fr, de and es have been run here (2026-11-06). Auto means
-# translate whatever is spoken: Canary has no language detection, but into English it
-# translates the same with the wrong source named (fr audio named de, de named fr, and en
-# named fr all came out right), so the prompt names CANARY_AUTO_SOURCE. Named English
-# instead, French audio leaked French words.
+# Auto means translate: the prompt names CANARY_AUTO_SOURCE (docs/models.md).
 CANARY_LANGUAGES = (
     "en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
     "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
@@ -170,7 +160,7 @@ def save_language(
 def resolve_language(
     language: str | None, task: str | None, model: str | None = None
 ) -> tuple[str, str, str]:
-    """A flag beats the file; a flag on one half replaces the file's whole choice."""
+    # test_flags_beat_the_file: a flag on one half replaces the file's whole choice.
     saved_language, saved_task, saved_model = load_language()
     model = model or saved_model
     if language is None and task is None:
@@ -280,15 +270,11 @@ PREVIEW_EVERY_S = 1.5
 PREVIEW_MIN_S = 1.0
 PREVIEW_QUIET_S = 0.3
 
-# Quiet kept around the speech in each piece. Whisper writes sentences for room noise, so
-# the long quiet either side of the words, which hands-free adds up to 2.5s of, is cut.
+# Quiet kept around the speech in a piece. The rest is cut: Whisper writes sentences for noise.
 TRIM_PAD_S = 0.3
 
-# A recording whose loudest stretch is no more than STATIONARY_RATIO times its quietest, and
-# under STATIONARY_MAX_RMS, is room noise: Whisper writes sentences for it (measured
-# 2026-10-11: ambient 0.011-0.028 rms, three decodes, three different sentences, on both
-# models). Otherwise a piece needs SPEECH_MIN_CHUNKS of 100ms at SPEECH_FRACTION of the
-# recording's loudest level; quiet after a cut is not a second utterance.
+# Room noise: loudest stretch within STATIONARY_RATIO of the quietest and under STATIONARY_MAX_RMS.
+# Else a piece needs SPEECH_MIN_CHUNKS of 100ms at SPEECH_FRACTION of the loudest (docs/tray.md).
 STATIONARY_RATIO = 2.8
 STATIONARY_MAX_RMS = 0.04
 SPEECH_FRACTION = 0.6
@@ -317,8 +303,7 @@ MIN_HOP_S = 0.5
 
 MAX_TOKENS_PER_S = 12.0
 MAX_TOKENS_MARGIN = 16
-# French, German and Spanish take more tokens per second than English. Measured only on
-# synthetic speech (3.5-4.9 tok/s, 2026-10-06), so this is a margin, not a measurement.
+# A margin, not a measurement: docs/latency.md, "Repetition loops are capped".
 MULTILINGUAL_TOKEN_FACTOR = 1.25
 
 
