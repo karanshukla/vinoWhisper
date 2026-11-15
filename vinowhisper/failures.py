@@ -1,12 +1,11 @@
 import json
-import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import config
+from . import atomic, config
 
 CLEAR_HINT = "vinowhisper-doctor clears the mark"
 
@@ -83,9 +82,5 @@ def summary(error: str) -> str:
 
 def _write(failures: Mapping[str, Failure], path: Path | None) -> None:
     target = path or config.FAILED_DEVICES_FILE
-    target.parent.mkdir(parents=True, exist_ok=True)
     payload = {device: asdict(failure) for device, failure in failures.items()}
-    # Renamed into place: a truncated file would read as "nothing failed".
-    tmp = target.with_name(f".{target.name}.tmp")
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, target)
+    atomic.write_json(target, payload)

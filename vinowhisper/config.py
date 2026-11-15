@@ -140,21 +140,13 @@ def load_language(path: Path | None = None) -> tuple[str, str, str]:
 def save_language(
     language: str, task: str, path: Path | None = None, *, model: str = DEFAULT_MODEL
 ) -> None:
-    import json
+    from . import atomic
 
     check_language(language, task, model)
     # resolve(): through a symlink, so a dotfiles-managed link stays a link.
     target = (path or LANGUAGE_FILE).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # Renamed over the old file: the server reads a torn one as English, silently.
-    partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
-    try:
-        body = {"language": language, "task": task, "model": model}
-        partial.write_text(json.dumps(body, indent=2) + "\n")
-        os.replace(partial, target)
-    except OSError:
-        partial.unlink(missing_ok=True)
-        raise
+    body = {"language": language, "task": task, "model": model}
+    atomic.write_json(target, body, temp_suffix=f".{os.getpid()}.partial")
 
 
 def resolve_language(
