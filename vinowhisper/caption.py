@@ -140,6 +140,63 @@ def _taps(
     return both
 
 
+def _ready_event(health: dict, warnings: list[str]) -> events.Ready:
+    return events.Ready(
+        device=str(health.get("device", "?")),
+        device_full=str(health.get("device_full_name", "")),
+        degraded=bool(health.get("degraded", False)),
+        warnings=warnings,
+        server_version=str(health.get("version", "")),
+        language=str(health.get("language", "")),
+        task=str(health.get("task", "")),
+        model=str(health.get("model", "")),
+    )
+
+
+def pacing_delay_s(captured_s: float, last_cycle_at_s: float) -> float:
+    if captured_s < config.MIN_WINDOW_S:
+        return config.MIN_WINDOW_S - captured_s
+    return max(0.0, config.MIN_HOP_S - (captured_s - last_cycle_at_s))
+
+
+class AgreedLanguage:
+    def __init__(self) -> None:
+        self.current = ""
+        self._last_heard = ""
+
+    def push(self, heard: str) -> str:
+        if heard and heard == self._last_heard:
+            self.current = heard
+        self._last_heard = heard
+        return self.current
+
+
+class _SilenceClock:
+    def __init__(self) -> None:
+        self._since: float | None = None
+
+    def reset(self) -> None:
+        self._since = None
+
+    def event(self, level: float, no_speech: bool) -> events.Silence:
+        now = time.monotonic()
+        self._since = now if self._since is None else self._since
+        elapsed_s = now - self._since
+        ask_the_sink = elapsed_s >= _SILENCE_NOTICE_AFTER_S and not no_speech
+        return events.Silence(
+            elapsed_s=elapsed_s,
+            rms=level,
+            sink_muted=sink_muted() if ask_the_sink else None,
+            no_speech=no_speech,
+        )
+
+
+def _speech_in(window: np.ndarray, level: float, speech: SpeechGate | None) -> np.ndarray | None:
+    if level < config.SILENCE_RMS_THRESHOLD:
+        return None
+    return window if speech is None else speech.apply(window)
+
+
 def caption_events(
     source: str,
     target: str | None,
@@ -151,23 +208,14 @@ def caption_events(
     health = client.wait_ready()
     warnings = [str(warning) for warning in health.get("warnings", [])]
     speech = gate(warnings) if gate is not None else None
-    yield events.Ready(
-        device=str(health.get("device", "?")),
-        device_full=str(health.get("device_full_name", "")),
-        degraded=bool(health.get("degraded", False)),
-        warnings=warnings,
-        server_version=str(health.get("version", "")),
-        language=str(health.get("language", "")),
-        task=str(health.get("task", "")),
-        model=str(health.get("model", "")),
-    )
+    yield _ready_event(health, warnings)
 
     stitcher = Stitcher()
     index = 0
     last_cycle_at_s = 0.0
     last_commit_at_s = 0.0
-    silent_since: float | None = None
-    heard = last_heard = ""
+    silence = _SilenceClock()
+    language = AgreedLanguage()
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
@@ -178,14 +226,11 @@ def caption_events(
                 recorder.check_alive()
 
                 captured_s = recorder.captured_s
-                if captured_s < config.MIN_WINDOW_S:
-                    time.sleep(config.MIN_WINDOW_S - captured_s)
+                delay_s = pacing_delay_s(captured_s, last_cycle_at_s)
+                if delay_s > 0:
+                    time.sleep(delay_s)
                     continue
-
                 hop_s = captured_s - last_cycle_at_s
-                if hop_s < config.MIN_HOP_S:
-                    time.sleep(config.MIN_HOP_S - hop_s)
-                    continue
 
                 stalled_for_s = recorder.captured_s - last_commit_at_s
                 window = recorder.window(
@@ -194,36 +239,20 @@ def caption_events(
                 last_cycle_at_s = recorder.captured_s
 
                 level = audio.rms(window)
-                gated: np.ndarray | None = window
-                if speech is not None and level >= config.SILENCE_RMS_THRESHOLD:
-                    gated = speech.apply(window)
-                if gated is None or level < config.SILENCE_RMS_THRESHOLD:
-                    now = time.monotonic()
-                    silent_since = now if silent_since is None else silent_since
+                heard_window = _speech_in(window, level, speech)
+                if heard_window is None:
                     last_commit_at_s = last_cycle_at_s
-                    elapsed_s = now - silent_since
-                    no_speech = gated is None
-                    muted = (
-                        sink_muted()
-                        if elapsed_s >= _SILENCE_NOTICE_AFTER_S and not no_speech
-                        else None
-                    )
-                    yield events.Silence(
-                        elapsed_s=elapsed_s, rms=level, sink_muted=muted, no_speech=no_speech
-                    )
+                    yield silence.event(level, no_speech=level >= config.SILENCE_RMS_THRESHOLD)
                     continue
-                silent_since = None
-                window = gated
+                silence.reset()
 
-                window, gain = audio.normalize(window, config.TARGET_RMS, config.MAX_GAIN)
+                window, gain = audio.normalize(heard_window, config.TARGET_RMS, config.MAX_GAIN)
 
                 started_at = time.monotonic()
                 transcript, first_piece_s = client.transcribe(window)
                 total_s = time.monotonic() - started_at
                 transcript = strip_controls(transcript)
-                if client.heard_language and client.heard_language == last_heard:
-                    heard = client.heard_language
-                last_heard = client.heard_language
+                heard = language.push(client.heard_language)
 
                 confirmed = stitcher.push(transcript)
                 if confirmed:
