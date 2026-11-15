@@ -27,16 +27,14 @@ pip install vinowhisper && vinowhisper-setup && vinowhisper-caption
 
 To be upfront about the bias: I did not build this because local speech-to-text
 is hard to find. I built it because my laptop has an Intel NPU rated at 16 TOPS
-that was doing **absolutely nothing**, and captioning a video turns out to be
-the rare workload that suits it: continuous, latency-sensitive, and small
-enough to fit. 16 TOPS is a coprocessor, not a GPU, and whisper-small.en is one
-of the genuinely useful models that fits in it.
+that was doing **absolutely nothing**, and captioning a video is the rare
+workload that suits it: continuous, latency-sensitive, and small enough to fit.
 
-So the pitch is not "another Whisper wrapper." It is: the transcription runs on
-a chip that is otherwise idle, so it costs you no CPU, no GPU, no fan, and no
-network. `openvino-genai`'s `WhisperPipeline` with `device="NPU"` does the
-work, the same idea as [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace),
-different feature.
+So the pitch is not "another Whisper wrapper." The transcription runs on a chip
+that is otherwise idle, so it costs you no CPU, no GPU, no fan, and no network.
+`openvino-genai`'s `WhisperPipeline` with `device="NPU"` does the work, the same
+idea as [vinoAuthFace](https://github.com/karanshukla/vinoAuthFace), different
+feature.
 
 Measured on this laptop (Wildcat Lake, stepping A0), whisper-small.en on the
 NPU, 2026-09-12:
@@ -53,44 +51,30 @@ fallbacks are usable, just laggier.
 
 ## What makes it different from a shell script around Whisper
 
-**Words are never rewritten once printed.** The stitcher runs LocalAgreement-2:
-a word is committed only when two overlapping windows independently agree on
-it. That is why the transcript can live in your terminal's own scrollback,
-where it survives quitting and where your terminal's selection and search still
-work on it. The `hearing…` line is the words heard once and still waiting on a
-second opinion, so the two-cycle commit delay is _visible_ rather than felt as
-a freeze.
-
-**It scales to zero.** The NPU model load costs 10-30s, so
-something has to hold it. Nothing runs until you caption or dictate: the first
-client to find nobody on a private Unix socket starts the server, and the server
-exits itself after 5 minutes idle. Serverless, on your laptop, with no
-framework.
-
-**The model download is verified.** The Hugging Face source is pinned to a
-commit and every file is sha256-checked before the export reads it, and the
-export is then hashed against pins in `vinowhisper/model_digests.json` before
-anything loads it.
-Details in [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md).
-
-**A missing NPU degrades instead of bricking.** Selection walks NPU, then GPU,
-then CPU, and a fallback is never silent: it shows up in the server's log, in
-`/health`, in `vinowhisper-doctor`, and on the status bar as a red border.
-
-**It tells you how to fix it.** Nearly every error path here prints the command
-that resolves it, in your distro's package names (see
-[Supported distros](#supported-distros)).
-
-**The overlay is optional, and native.** `vinowhisper-tray` is a 6.3MB Rust
-binary that floats a caption box above every window, fullscreen video
-included, with a tray icon, a global shortcut and a start-at-login toggle. It
-links nothing but libc, adds nothing to the Python install, and draws the same
-event stream as the terminal UI. It also does **dictation**: hold Meta+H (the
-dictation key on laptops that have one), talk, and let go to type what you
-said into the focused window, one NPU decode per utterance. Optionally, a small
-model on the NPU tidies it first, and only by deleting: "um", stammers, "three, no
-wait, four", "scratch that". It never adds or rewords a word, and nothing leaves the
-machine. [docs/tray.md](https://docs.vinowhisper.com/tray/)
+- **Words are never rewritten once printed.** A word is committed only when two
+  overlapping windows agree on it (LocalAgreement-2), so the transcript lives in
+  your terminal's own scrollback. The dimmed `hearing…` line is what is still
+  waiting on a second opinion. [Latency](https://docs.vinowhisper.com/latency/)
+- **It scales to zero.** The NPU model load costs 10-30s, so a server holds it.
+  The first client starts that server on a private Unix socket and it exits
+  itself after 5 minutes idle. [Architecture](https://docs.vinowhisper.com/architecture/)
+- **The model download is verified.** The Hugging Face source is pinned to a
+  commit and sha256-checked per file, and the export is hashed against
+  `vinowhisper/model_digests.json` before anything loads it.
+  [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md)
+- **A missing NPU degrades instead of bricking.** Selection walks NPU, GPU, CPU,
+  and a fallback is never silent: server log, `/health`, `vinowhisper-doctor`,
+  and a red border on the status bar. [Hardware](https://docs.vinowhisper.com/hardware/)
+- **It tells you how to fix it.** Nearly every error prints the command that
+  resolves it, in your distro's package names.
+- **The overlay is optional, and native.** `vinowhisper-tray` is a 6.3MB Rust
+  binary that floats a caption box above every window, fullscreen video
+  included. It links nothing but libc and adds nothing to the Python install.
+- **Dictation, in the same overlay.** Hold Meta+H, talk, let go, and it types
+  what you said into the focused window. Optionally a small model on the NPU
+  tidies it first, and only by deleting ("um", stammers, "scratch that"). It
+  never adds or rewords a word.
+  [Overlay and dictation](https://docs.vinowhisper.com/tray/)
 
 ## Install
 
@@ -98,46 +82,21 @@ machine. [docs/tray.md](https://docs.vinowhisper.com/tray/)
 curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/install.sh | bash
 ```
 
-That checks the latest release's wheel against its `SHA256SUMS`, installs it with
-[uv](https://docs.astral.sh/uv/) (fetching uv itself, hash-pinned, if you don't have it), and
-hands over to `vinowhisper-setup`, which is where every
-machine-specific decision happens: your capture tool, your NPU driver, the
-model export your device needs. It prints every command before running it and asks first.
+That verifies the release's wheel, installs it with [uv](https://docs.astral.sh/uv/)
+and hands over to `vinowhisper-setup`, which prints every command before running
+it and asks first.
 
-The desktop overlay (floating captions and dictation) is one more command:
-`vinowhisper-setup --gui`. It downloads the binary from the GitHub release and
-checks it against a digest pinned in the Python package.
-
-Or as a **Flatpak**: each release has `vinowhisper-x86_64.flatpak`, which carries the
-overlay, the windows, OpenVINO and Intel's NPU and GPU drivers, so the host needs only
-the kernel's NPU driver. `flatpak install --user vinowhisper-x86_64.flatpak`, then
-`flatpak run --command=vinowhisper-setup io.github.karanshukla.vinowhisper` for the
-model. It has not been run on a desktop yet:
-[docs/install.md](https://docs.vinowhisper.com/install/#flatpak) says what has and has
-not been checked.
-
-To upgrade, use **Check for updates** on the settings window's About page, or run
-`vinowhisper-upgrade`. It installs the new release's wheel, refreshes the overlay and window
-if you have them, and restarts the server; the exported model stays. To build from a
-checkout instead, `scripts/install.sh` still clones and syncs the locked environment.
-
-To remove it, run `vinowhisper-upgrade --uninstall` (or pipe the installer above into
-`bash -s -- --uninstall`). That stops the server and deletes the commands, the menu
-entries and every model with its caches. Your saved sessions and settings stay.
-To free space without uninstalling, Settings → Speech and Settings → Cleanup delete
-each model. [docs/install.md](https://docs.vinowhisper.com/install/#uninstalling)
-
-Or from PyPI, if you would rather wire up the machine yourself:
-
-```bash
-pip install vinowhisper   # needs Python 3.11-3.13
-vinowhisper-setup         # still worth running: NPU driver, model export
-```
+| I want | Run |
+|---|---|
+| The overlay and dictation | `vinowhisper-setup --gui` |
+| pip instead of the installer | `pip install vinowhisper && vinowhisper-setup` (Python 3.11-3.13) |
+| A Flatpak | `flatpak install --user vinowhisper-x86_64.flatpak` from the release. Not run on a desktop yet: [what has been checked](https://docs.vinowhisper.com/install/#flatpak) |
+| To upgrade | **Check for updates** in Settings → About, or `vinowhisper-upgrade` |
+| To remove it | `vinowhisper-upgrade --uninstall`. Models go, sessions and settings stay |
 
 pip gets you the commands. It cannot get you an NPU driver or a model export,
 which is what `vinowhisper-setup` is for either way.
-[docs/install.md](https://docs.vinowhisper.com/install/)
-covers installing from a checkout and the OpenVINO version floor.
+[Installing](https://docs.vinowhisper.com/install/) has what each of these does.
 
 ## What you need
 
@@ -158,31 +117,11 @@ covers every way it fails to appear.
 ## Supported distros
 
 `vinowhisper-setup` and `vinowhisper-doctor` read `/etc/os-release` and print
-install commands in your distro's own package names. Eight families are
-covered:
-
-| Family | Includes | NPU driver | Confidence |
-|---|---|---|---|
-| Fedora | RHEL, CentOS, Alma, Rocky, Nobara; Fedora Atomic (Silverblue, Kinoite, Bazzite, Aurora, Bluefin) | `intel-npu-driver` in the repos | **Built and run here** (Atomic: untested) |
-| Debian | Ubuntu, Pop!\_OS, Mint, elementary, Raspbian | Intel's upstream `.deb`s | From the package index |
-| Arch | CachyOS, EndeavourOS, Manjaro, Garuda | AUR (`intel-npu-driver`) | From the package index |
-| openSUSE | Tumbleweed, Leap, SLES, Aeon, MicroOS | `libze_intel_npu1` + `level-zero` (Tumbleweed, Leap 16), else upstream | From the package index |
-| Gentoo | | Some overlays, else upstream | From the package index |
-| Void | | Upstream release | From the package index |
-| Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
-| NixOS | | `hardware.cpu.intel.npu.enable` (25.11+) | Config snippets, not `nix-env` lines |
-
-Anything else gets generic advice, and says so. Derivatives not listed are
-matched through `ID_LIKE`. On every distro the NPU compiler library
-(`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
-because nobody packages it; the doctor detects that and prints the steps.
-On image-based systems (Fedora Atomic, openSUSE Aeon) the commands use
-`rpm-ostree` or `transactional-update` instead (any other read-only `/usr`,
-such as SteamOS, gets the package names and no command), and everything else
-installs into your home directory:
-[docs/install.md](https://docs.vinowhisper.com/install/#image-based-distros-fedora-atomic-opensuse-aeon).
-[docs/audio.md](https://docs.vinowhisper.com/audio/#distro-support)
-has the capture side.
+install commands in your distro's own package names. Eight families are covered:
+Fedora, Debian, Arch, openSUSE, Gentoo, Void, Alpine and NixOS, plus their
+derivatives and the image-based ones (Fedora Atomic, openSUSE Aeon). **Only
+Fedora's have been used for real.**
+[The table, with the NPU driver per family](https://docs.vinowhisper.com/install/#supported-distros)
 
 ## Commands
 
@@ -228,6 +167,8 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 | [Installing](https://docs.vinowhisper.com/install/) | What the installer does, the OpenVINO version floor and why, digest pinning, pinning the window on top |
 | [Terminal captions](https://docs.vinowhisper.com/terminal/) | Scrollback, paragraphs, the level meter, and plain output |
 | [Overlay and dictation](https://docs.vinowhisper.com/tray/) | The floating box, tray icon and shortcuts, dictation and how its text is typed, which desktops it works on, and why it is Rust |
+| [Saved sessions](https://docs.vinowhisper.com/sessions/) | The `.vwsession` file, summaries, and transcribing a recording |
+| [Speech models](https://docs.vinowhisper.com/models/) | Whisper and Canary 1B v2, other languages and translation |
 | [Hardware](https://docs.vinowhisper.com/hardware/) | Device selection, the two model exports, and every way the NPU fails to appear |
 | [Audio capture](https://docs.vinowhisper.com/audio/) | PipeWire vs PulseAudio, distro coverage, and what actually silences a capture (it is not the mute button) |
 | [Latency](https://docs.vinowhisper.com/latency/) | Why captions trail the audio, the one knob that changes it, and why the wording drifts |
@@ -238,29 +179,10 @@ vinowhisper-replay ~/sess --sweep 8,12,20 # measure what --window actually costs
 ## Other languages
 
 French, German and Spanish work offline with Whisper's multilingual
-`whisper-small`, the same size and architecture as the default model. It is
-opt-in: `vinowhisper-setup --language fr` exports it beside the English one
-(about 1GB more disk) and saves the choice to `~/.config/vinowhisper/language.json`,
-which the server reads at start (`vinowhisper-server --language fr` overrides it).
-The overlay's tray menu switches it too: **Language** and **Translate to English**.
-A switch stops the captions, restarts the server on the new model (the same 10-30s
-load as a cold start) and starts them again. `en`, the default, keeps
-`whisper-small.en`.
-
-- **Translation is Whisper's own, and only goes into English.**
-  `--task translate` captions French, German or Spanish speech in English from
-  the same model, at no extra cost. Translating into any other language needs a
-  separate translation model, which this does not do.
-- **Name the language when you know it.** `--language auto` detects it on every
-  window and can flip mid-caption. A forced language on the wrong audio does
-  not fail: Whisper answers in that language anyway.
-- **Not verified on the NPU.** The checks (2026-10-06) ran on the CPU device
-  with an int8 multilingual small and synthetic speech: transcription, forced
-  language, auto-detect and translate all worked. The NPU export of the
-  multilingual model has not been built or benchmarked, so latency is
-  unmeasured, and its digests are not pinned yet (the doctor reports it
-  unpinned). Accuracy on real speech and accents is untested, and small is
-  noticeably weaker than English-only small.en.
+`whisper-small`, and `--task translate` captions them in English. It is opt-in
+(`vinowhisper-setup --language fr`) and **not benchmarked on the NPU**.
+[Speech models](https://docs.vinowhisper.com/models/#other-languages) has the
+details, and Canary 1B v2 as a second model.
 
 ## Honest limits
 

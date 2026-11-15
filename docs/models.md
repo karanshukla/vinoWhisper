@@ -52,6 +52,33 @@ terminal, in JSON lines like the other two. Silero VAD (1.3 MB, file imports
 only) is not part of it: both speech models use it and it downloads itself again
 when needed. Uninstalling removes it.
 
+## Other languages
+
+French, German and Spanish work offline with Whisper's multilingual
+`whisper-small`, the same size and architecture as the default model. It is
+opt-in: `vinowhisper-setup --language fr` exports it beside the English one
+(about 1GB more disk) and saves the choice to `~/.config/vinowhisper/language.json`,
+which the server reads at start (`vinowhisper-server --language fr` overrides it).
+The overlay's tray menu switches it too: **Language** and **Translate to English**.
+A switch stops the captions, restarts the server on the new model (the same 10-30s
+load as a cold start) and starts them again. `en`, the default, keeps
+`whisper-small.en`.
+
+- **Translation is Whisper's own, and only goes into English.**
+  `--task translate` captions French, German or Spanish speech in English from
+  the same model, at no extra cost. Translating into any other language needs a
+  separate translation model, which this does not do.
+- **Name the language when you know it.** `--language auto` detects it on every
+  window and can flip mid-caption. A forced language on the wrong audio does
+  not fail: Whisper answers in that language anyway.
+- **Not verified on the NPU.** The checks (2026-10-06) ran on the CPU device
+  with an int8 multilingual small and synthetic speech: transcription, forced
+  language, auto-detect and translate all worked. The NPU export of the
+  multilingual model has not been built or benchmarked, so latency is
+  unmeasured, and its digests are not pinned yet (the doctor reports it
+  unpinned). Accuracy on real speech and accents is untested, and small is
+  noticeably weaker than English-only small.en.
+
 ## Detect automatically
 
 With Whisper, the overlay and the terminal status bar show what it heard: `auto: fr`, or `auto: fr → en` when translating ([#189](https://github.com/karanshukla/vinoWhisper/issues/189), 2026-11-13). Each 12 s window is detected on its own, so the label changes only when two windows in a row agree, and stays `auto` until they first do. The server sends the language only to a client that asks (`X-Vinowhisper-Language: 1`), after the text and a NUL, since OpenVINO GenAI reports it once `generate()` returns. On the NPU, `StaticWhisperPipeline` fills `WhisperDecodedResults.language` with the bare code, with a streamer and under translate (2026.4.1, espeak-ng fr, de, es and en, all four right through the server). A forced language comes back as itself, so only auto sends one. Dictation does not ask.
