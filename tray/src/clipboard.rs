@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
-use smithay_client_toolkit::reexports::client::protocol::wl_callback::{self, WlCallback};
-use smithay_client_toolkit::reexports::client::protocol::wl_display::WlDisplay;
 use smithay_client_toolkit::reexports::client::protocol::wl_seat::WlSeat;
 use smithay_client_toolkit::reexports::client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop, event_created_child,
@@ -129,19 +127,14 @@ impl Source {
 pub struct Clipboard {
     manager: Manager,
     device: Device,
-    display: WlDisplay,
     ours: Vec<Source>,
     last_read: Option<Instant>,
     armed_at: Option<Instant>,
     waiting: bool,
 }
 
-// A paste before this arrives gets the old selection.
-pub struct Taken;
-
 impl Clipboard {
     pub fn bind(
-        conn: &Connection,
         globals: &GlobalList,
         seat: &WlSeat,
         qh: &QueueHandle<App>,
@@ -159,7 +152,7 @@ impl Clipboard {
                 if !device.has_primary() {
                     eprintln!(
                         "[vinowhisper-tray] wlr-data-control v1: no primary selection, so \
-                         Shift+Insert pastes nothing in terminals that read it"
+                         middle-click pastes nothing"
                     );
                 }
                 (Manager::Wlr(manager), device)
@@ -168,17 +161,11 @@ impl Clipboard {
         Ok(Clipboard {
             manager,
             device,
-            display: conn.display(),
             ours: Vec::new(),
             last_read: None,
             armed_at: None,
             waiting: false,
         })
-    }
-
-    pub fn set(&mut self, text: &str, qh: &QueueHandle<App>) {
-        self.offer(text, qh);
-        self.display.sync(qh, Taken);
     }
 
     pub fn restore(&mut self, text: &str, qh: &QueueHandle<App>) {
@@ -288,21 +275,6 @@ fn cancelled(app: &mut App, source: Source) {
         clipboard.replaced(&source);
     }
     source.destroy();
-}
-
-impl Dispatch<WlCallback, Taken> for App {
-    fn event(
-        app: &mut App,
-        _: &WlCallback,
-        event: wl_callback::Event,
-        _: &Taken,
-        _: &Connection,
-        _: &QueueHandle<App>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            app.selection_taken();
-        }
-    }
 }
 
 // The two protocols' events have the same names and fields, so one body serves both.

@@ -143,7 +143,7 @@ impl Spacing {
         }
     }
 
-    // A paste that failed left the text on the clipboard, so nothing was typed to follow.
+    // Text that was not typed leaves nothing to follow.
     pub fn pasted(&mut self, typed: bool, now: Instant) {
         let end = self.typing.take();
         self.last = if typed {
@@ -214,7 +214,7 @@ impl Dictation {
             Phase::Typed {
                 pasted: Some(Err(why)),
                 ..
-            } => format!("on the clipboard, not typed: {why}"),
+            } => format!("not typed: {why}"),
             Phase::Nothing => "heard nothing".to_owned(),
             Phase::Failed(message) => format!("failed: {message}"),
         };
@@ -249,7 +249,7 @@ impl Dictation {
     }
 
     /// What a screen reader should hear about the last change, once: failures and the
-    /// clipboard fallback, never the words or the routine states.
+    /// text that was not typed, never the words or the routine states.
     pub fn take_announcement(&mut self) -> Option<String> {
         self.announcement.take()
     }
@@ -261,7 +261,7 @@ impl Dictation {
                 Phase::Typed {
                     pasted: Some(Err(why)),
                     ..
-                } => self.announcement = Some(clipboard_fallback(why)),
+                } => self.announcement = Some(not_typed(why)),
                 _ => {}
             }
             self.phase = phase;
@@ -459,7 +459,7 @@ impl Dictation {
             Phase::Typed {
                 pasted: Some(Err(why)),
                 ..
-            } => (Tone::Warn, clipboard_fallback(why), None),
+            } => (Tone::Warn, not_typed(why), None),
             Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
             Phase::Failed(message) => (Tone::Bad, message.clone(), None),
         };
@@ -498,8 +498,8 @@ impl Dictation {
     }
 }
 
-fn clipboard_fallback(why: &str) -> String {
-    format!("On the clipboard, not typed: {why}")
+fn not_typed(why: &str) -> String {
+    format!("Not typed: {why}")
 }
 
 fn preview(text: &str) -> String {
@@ -654,7 +654,7 @@ mod tests {
         d.pasted(Err("no keyboard".into()));
         assert_eq!(
             d.take_announcement().as_deref(),
-            Some("On the clipboard, not typed: no keyboard")
+            Some("Not typed: no keyboard")
         );
         assert_eq!(d.take_announcement(), None, "once");
         d.event(Dictate::Notice {
@@ -816,14 +816,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_paste_says_the_text_is_on_the_clipboard() {
+    fn a_failed_typing_says_so_and_why() {
         let mut d = Dictation::new();
         d.key(true, Instant::now());
         d.event(Dictate::Dictated { text: "Hi".into() });
         d.pasted(Err("the desktop refused".into()));
         let pill = d.pill().unwrap();
         assert_eq!(pill.tone, Tone::Warn);
-        assert!(pill.text.contains("clipboard"), "{}", pill.text);
+        assert_eq!(pill.text, "Not typed: the desktop refused");
     }
 
     #[test]

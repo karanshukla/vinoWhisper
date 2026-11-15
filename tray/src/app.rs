@@ -43,14 +43,13 @@ use crate::install;
 use crate::ipc::{self, Request};
 use crate::media::Media;
 use crate::paint::{self, Painter};
-use crate::paste::Paster;
 use crate::protocol::{Dictate, Event};
 use crate::raster::Canvas;
 use crate::session::{self, Session};
 use crate::settings::{Position, Settings, Source, Speech};
 use crate::shortcut::{self, Shortcut};
 use crate::tray::{self, Tray};
-use crate::virtual_keyboard::VirtualKeyboard;
+use crate::typing::Typist;
 
 const SIDE_MARGIN: i32 = 16;
 const EDGE_MARGIN: i32 = 48;
@@ -100,7 +99,7 @@ pub enum Command {
         generation: u64,
         message: String,
     },
-    Pasted(Result<(), String>),
+    Typed(Result<(), String>),
     Caption {
         generation: u64,
         event: Event,
@@ -196,7 +195,8 @@ pub struct App {
     dictate_program: Option<PathBuf>,
     server_program: Option<PathBuf>,
     clipboard: Option<Clipboard>,
-    paster: Paster,
+    typist: Typist,
+    typing: Option<String>,
     media: Media,
     lingering: Option<u64>,
     idle: bool,
@@ -304,22 +304,19 @@ pub fn run(options: Options) -> Result<(), String> {
     }
     let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=1, ()).ok();
     let clipboard = match &seat {
-        Some(seat) => Clipboard::bind(&conn, &globals, seat, &qh),
+        Some(seat) => Clipboard::bind(&globals, seat, &qh),
         None => Err("this compositor offers no seat".to_owned()),
     };
     let clipboard = match clipboard {
         Ok(clipboard) => Some(clipboard),
         Err(err) => {
-            eprintln!("[vinowhisper-tray] dictation cannot set the clipboard: {err}");
+            eprintln!("[vinowhisper-tray] no clipboard for copying a dictation: {err}");
             None
         }
     };
-    let virtual_keyboard = seat
-        .as_ref()
-        .and_then(|seat| VirtualKeyboard::bind(&conn, &globals, seat, &qh));
     let settings = Settings::load();
     let shortcut = Shortcut::spawn(settings.shortcut.clone(), tx.clone());
-    let paster = Paster::spawn(tx.clone(), virtual_keyboard);
+    let typist = Typist::spawn(tx.clone(), settings.typing_idle_minutes);
     let mut app = App {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
@@ -362,7 +359,8 @@ pub fn run(options: Options) -> Result<(), String> {
         dictator: None,
         dictator_generation: 0,
         clipboard,
-        paster,
+        typist,
+        typing: None,
         media: Media::new(),
         lingering: None,
         idle: false,
@@ -455,10 +453,8 @@ impl App {
                     self.dictate(None);
                 }
             }
-            Command::Pasted(result) => {
-                if result.is_ok() {
-                    self.clear_clipboard_after_paste();
-                }
+            Command::Typed(result) => {
+                let result = self.copy_untyped(result);
                 self.spacing.pasted(result.is_ok(), Instant::now());
                 self.dictation.pasted(result);
                 self.dictate(None);
@@ -581,6 +577,8 @@ impl App {
         }
         self.captions
             .set_hide_after(self.settings.hide_after_silence_s);
+        self.typist
+            .set_idle_minutes(self.settings.typing_idle_minutes);
         if changes.tray_idle && std::mem::take(&mut self.idle) {
             // Disarmed here, armed again with the new time at the end of handle().
             if let Some(timer) = &self.idle_timer {
@@ -929,19 +927,19 @@ impl App {
             Some(Action::Start) => self.tell_dictator("start"),
             Some(Action::HandsFree) => self.tell_dictator("hands-free"),
             Some(Action::Stop) => self.tell_dictator("stop"),
-            Some(Action::Paste(text)) => match &mut self.clipboard {
-                Some(clipboard) => {
-                    let lead = self.spacing.lead(&text);
-                    if self.settings.smart_spacing && !lead.is_empty() {
-                        clipboard.set(&format!("{lead}{text}"), &self.qh);
-                    } else {
-                        clipboard.set(&text, &self.qh);
-                    }
+            Some(Action::Paste(text)) => {
+                let lead = self.spacing.lead(&text);
+                let text = if self.settings.smart_spacing && !lead.is_empty() {
+                    format!("{lead}{text}")
+                } else {
+                    text
+                };
+                self.typing = Some(text.clone());
+                if !self.typist.type_text(text) {
+                    let result = self.copy_untyped(Err("the typing thread is gone".into()));
+                    self.dictation.pasted(result);
                 }
-                None => self
-                    .dictation
-                    .pasted(Err("this desktop gives no clipboard access".into())),
-            },
+            }
             None => {}
         }
         self.show_pill();
@@ -981,11 +979,18 @@ impl App {
         );
     }
 
-    pub fn selection_taken(&mut self) {
-        if !self.paster.paste() {
-            self.dictation
-                .pasted(Err("the paste thread is gone".into()));
-            self.show_pill();
+    // Text that could not be typed is not lost: it goes on the clipboard where there is one.
+    fn copy_untyped(&mut self, result: Result<(), String>) -> Result<(), String> {
+        let text = self.typing.take();
+        let Err(why) = result else {
+            return Ok(());
+        };
+        match (text, &mut self.clipboard) {
+            (Some(text), Some(clipboard)) => {
+                clipboard.restore(&text, &self.qh);
+                Err(format!("{why}; it is on the clipboard"))
+            }
+            _ => Err(why),
         }
     }
 

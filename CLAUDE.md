@@ -285,36 +285,30 @@ and the traps found building it:
   keeps it running idle because Python imports cost 270ms; `pw-record`
   delivers 90-290ms after spawn; 250ms of tail is kept past the release. The
   key press also calls `/health`, so a cold model load overlaps the speech.
-- **Typing is clipboard + Shift+Insert, both selections.** Ghostty binds
-  Shift+Insert to `paste_from_selection` (primary), so the text goes on both,
-  via `ext-data-control-v1`, or the wlr- protocol on older compositors (no wl-copy).
-- **The portal works and was not good enough.** RemoteDesktop with a saved
-  restore token starts silently (0.00s, 3/3, new token each start), but KDE
-  posts "Remote control session started" and a tray icon per session, which
-  is a notification per dictation. So `/dev/uinput` first (a two-key virtual
-  keyboard, made once at startup; writable here via Steam's udev rules),
-  portal as fallback. User's choice.
-- **Non-KDE desktops type through `zwp_virtual_keyboard_v1`** (added
-  2026-09-22, `tray/src/virtual_keyboard.rs`): uinput first, then this, then
-  the portal. Sway, niri and COSMIC have no RemoteDesktop portal, so without
-  it a stock Fedora spin (no udev rule for uinput) could only fill the
-  clipboard. The two-key keymap compiled under libxkbcommon and sets Shift
-  on keycode 50. First run on a live compositor 2026-10-24 (headless Sway
-  1.9 in the linuxlab VM, keys over VNC, stub dictate): Sway ignored the
-  Shift key event, so the window got a bare Insert; Shift now also goes out
-  as a `modifiers` request. The same run needed the wlr-data-control
-  fallback, since Sway before 1.11 has no ext-data-control. Without a
-  shortcuts portal, `vinowhisper-tray dictate-press` / `dictate-release` on
-  a key's press and release give hold-to-talk (Sway needs `--no-repeat` on
-  the press binding; config examples in `docs/tray.md`). GNOME stays out: no layer-shell for the pill
-  and no data-control for the clipboard, so it needs a different design
-  (portal `NotifyKeyboardKeysym` per character, no overlay), not a route.
-- **Keys wait on a `wl_display.sync`.** uinput pasted the *previous*
-  clipboard until the keys were held back for the compositor to confirm the
-  new selection. The portal's D-Bus latency had hidden this.
-- **The clipboard is cleared after the paste reads it**, at the user's
-  request, and the text carries `x-kde-passwordManagerHint: secret` so
-  Klipper never records it; Klipper then restores the previous item.
+- **Typing is the RemoteDesktop portal only, since 2026-11-14** (`tray/src/typing.rs`),
+  one `NotifyKeyboardKeysym` per character, native and Flatpak alike: the user chose
+  one input method over several. Why it changed: KWin 6.8 hides `ext_data_control`
+  and `org_kde_kwin_fake_input` from any Flatpak client, on the restricted socket and
+  on the host's own (globals listed inside and outside the sandbox), so the old clipboard +
+  Shift+Insert could not work there. Keysyms came through exactly on Plasma 6.8.2, US
+  layout (curly quotes, dashes, `€`, `ß`, accents); other layouts are untried (KDE bug
+  489021).
+- **One session, closed after `typing_idle_minutes`** (gui.json, default 5, 0 keeps it).
+  KDE posts "Remote control session started" per *session start*: the old portal
+  fallback opened one per dictation, which is why it was rejected 2026-09-21. One session
+  held open was one notification for three presses 5 s apart (2026-11-14). A restore
+  token starts later sessions with no dialog (0.01 s; new token each start). A session
+  that fails on the first key is replaced once; never after a key went out, so nothing
+  is typed twice.
+- **Gone with it:** uinput (and the udev rule), `zwp_virtual_keyboard_v1` (and its Sway
+  1.9 modifier fix), Shift+Insert, the `wl_display.sync` before the keys. Sway, niri and
+  COSMIC have no RemoteDesktop portal, so dictation there only fills the clipboard, a
+  cost the user accepted. GNOME still has no layer-shell for the pill. Without a
+  shortcuts portal, `vinowhisper-tray dictate-press` / `dictate-release` still give
+  hold-to-talk (Sway needs `--no-repeat`; examples in `docs/tray.md`).
+- **The clipboard is now only for Recent dictations and untyped text**, still with
+  `x-kde-passwordManagerHint: secret` and cleared after it is read. Not in the Flatpak
+  on KDE (no data-control there), where the pill says "Not typed" without claiming it.
 - **Hands-free stops itself after silence** (2026-10-07, issue #56): 0.5s of
   speech then 2.5s under `SILENCE_RMS_THRESHOLD`, counted in Python from the
   tap's chunks. The mode is only known at the key's release, after `start`,
@@ -610,8 +604,8 @@ tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not u
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
   src/protocol.rs the --json wire formats (captions and dictation)
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
-  src/clipboard.rs ext- (or wlr-) data-control: set, sync, clear after the paste reads
-  src/paste.rs    Shift+Insert: uinput.rs first, RemoteDesktop portal fallback
+  src/clipboard.rs ext- (or wlr-) data-control: Recent dictations, untyped text, cleared after a read
+  src/typing.rs   the RemoteDesktop portal: one kept session, a keysym per character
   src/media.rs    MPRIS pause while dictating, resume after
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture

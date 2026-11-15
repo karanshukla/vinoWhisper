@@ -10,7 +10,6 @@ mod install;
 mod ipc;
 mod media;
 mod paint;
-mod paste;
 mod protocol;
 mod raster;
 mod restart;
@@ -18,8 +17,7 @@ mod session;
 mod shortcut;
 mod summaries;
 mod tray;
-mod uinput;
-mod virtual_keyboard;
+mod typing;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -81,10 +79,9 @@ Options:
 Two global shortcuts are requested from the desktop portal: captions,
 preferring Meta+Alt+C, and dictation, preferring Meta+H (the dictation key
 on laptops that have one). Hold the dictation key to talk and release to
-type, or tap it to start and tap again to finish. The text goes on the
-clipboard and is pasted with Shift+Insert: from /dev/uinput when that is
-writable, else through the compositor's virtual keyboard, else through the
-remote-desktop portal, which asks permission once. Change either shortcut
+type, or tap it to start and tap again to finish. The text is typed through
+the remote-desktop portal, which asks permission once; a session stays open
+between dictations and closes after typing_idle_minutes. Change either shortcut
 from vinowhisper-gui (Shortcuts) or in your desktop's shortcut settings,
 where they are listed under vinoWhisper. Settings are kept in
 $XDG_CONFIG_HOME/vinowhisper/gui.json and language.json.";

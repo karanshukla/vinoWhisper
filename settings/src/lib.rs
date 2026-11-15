@@ -581,6 +581,8 @@ pub const DEFAULT_TRAY_IDLE_MINUTES: u64 = 30;
 
 pub const DEFAULT_HIDE_AFTER_SILENCE_S: u64 = 15;
 
+pub const DEFAULT_TYPING_IDLE_MINUTES: u64 = 5;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -598,6 +600,9 @@ pub struct Settings {
     /// A space before a dictation typed straight after another one (#120). A guess: the
     /// tray cannot see which field has focus.
     pub smart_spacing: bool,
+    /// Minutes the remote-desktop session stays open after a dictation; 0 keeps it open.
+    /// KDE announces each new session, so closing it after every dictation is noisy.
+    pub typing_idle_minutes: u64,
 }
 
 impl Default for Settings {
@@ -613,6 +618,7 @@ impl Default for Settings {
             open_in: OpenIn::default(),
             pause_media: false,
             smart_spacing: false,
+            typing_idle_minutes: DEFAULT_TYPING_IDLE_MINUTES,
         }
     }
 }
@@ -745,6 +751,7 @@ mod tests {
             open_in: OpenIn::TextEditor,
             pause_media: true,
             smart_spacing: true,
+            typing_idle_minutes: 0,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

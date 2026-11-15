@@ -1234,6 +1234,21 @@ impl SettingsWindow {
                     )
                     .changed();
                 });
+            Row::new("Keep typing access")
+                .help(
+                    "Dictation types through the desktop's remote control, which announces \
+                     each time it starts. It stays on this long after a dictation. 0 keeps \
+                     it on.",
+                )
+                .show(ui, |ui, named| {
+                    self.settings_dirty |= number(
+                        ui,
+                        named,
+                        &mut self.settings.typing_idle_minutes,
+                        0..=1440,
+                        "min",
+                    );
+                });
             self.vocabulary_rows(ui);
         });
         changed
@@ -1941,6 +1956,8 @@ mod tests {
 
     fn vocabulary_harness(name: &str) -> Harness<'static, Under> {
         let mut harness = harness(Page::Speech, WIDE);
+        // The vocabulary is the last row on the page: tall enough that it is not scrolled away.
+        harness.set_size(egui::vec2(WIDE, 1000.0));
         let path = harness.state().window.apps_data.join(name);
         let _ = std::fs::remove_file(&path);
         harness.state_mut().window.vocabulary_path = path;

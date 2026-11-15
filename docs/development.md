@@ -272,7 +272,7 @@ libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
 | cosmic-text | Shaping, wrapping and glyph rasterising. Finds fonts by parsing fontconfig's files, not by linking libfontconfig |
 | ksni | The tray icon (StatusNotifierItem over D-Bus) |
 | vino-ui | Without egui (`default-features = false`): the menu icons every vinoPilot tray shares |
-| ashpd | Global shortcuts, and Shift+Insert for dictation (xdg-desktop-portal) |
+| ashpd | Global shortcuts, and typing a dictation (xdg-desktop-portal) |
 | rustix | Signals, the child's parent-death signal, the memfd that carries a keymap to the compositor, and the tray's idle timerfd |
 
 `rust-version = "1.95"` is what vino-ui needs (it's set per crate, so the
