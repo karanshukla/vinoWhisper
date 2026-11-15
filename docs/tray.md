@@ -263,6 +263,21 @@ The overlay also types what you say into whatever window has focus.
   a held key never auto-stops. Added 2026-10-07, from
   [issue #56](https://github.com/karanshukla/vinoWhisper/issues/56).
 
+**What the desktop shows when it types.** Wayland lets no app type into another without
+asking, so dictation types through the desktop's remote-control portal, and the desktop
+tells you when that starts:
+
+- **Your first dictation** opens a "Remote Control Requested" dialog. Allow it, and tick
+  "Allow … without asking next time" (Plasma 6.8) so it does not come back.
+- **The first dictation after a pause** brings one "Remote control session started"
+  notification. The session then stays open, and dictations in the next 5 minutes type
+  without one. That is what **Keep typing access** on the settings window's Speech page
+  sets: longer means fewer notifications, 0 keeps the session open until the tray quits.
+- A desktop without the portal (Sway, niri, COSMIC) cannot be typed into: the text goes
+  on the clipboard instead, and the pill says so.
+
+Why it works this way, and what it replaced: [How the text gets there](#how-dictation-works).
+
 **The 2.5s timeout is a guess.** It was picked from how other dictation tools
 feel, not measured, and nobody has dictated with it on the laptop yet. "Quiet"
 is `config.SILENCE_RMS_THRESHOLD`, the same level captions use, so a noisy room

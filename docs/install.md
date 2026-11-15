@@ -154,6 +154,9 @@ menu, and Settings → Speech downloads Canary 1B v2, which needs no export
 ([models.md](models.md)).
 
 Open **vinoWhisper** from the app menu for the tray, the overlay and dictation.
+The first dictation asks permission to type through the desktop's remote control, and
+the desktop then notifies you when a typing session starts: at the first dictation, and
+again after 5 minutes without one by default ([why](tray.md#dictation)).
 **Start at login** in the tray's menu asks the desktop's Background portal, which
 writes the login entry itself.
 
