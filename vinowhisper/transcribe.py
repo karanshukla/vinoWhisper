@@ -394,6 +394,29 @@ def _warn(line: str) -> None:
     print(f"[vinowhisper] WARNING: {line}", file=sys.stderr, flush=True)
 
 
+UNKNOWN_DEVICE = "?"
+
+
+def _announce_ready(
+    emit: Callable[[dict], None], health: dict, device: str, warnings: list[str], notes: list[str]
+) -> None:
+    emit(
+        {
+            "event": "Ready",
+            "device": device,
+            "degraded": bool(health.get("degraded", False)),
+            "warnings": warnings + notes,
+        }
+    )
+    # A record of its own for the sessions window, which shows these and not Ready's.
+    for note in notes:
+        emit({"event": "Warning", "message": note})
+
+
+def _most_heard(words_per_language: collections.Counter[str]) -> str | None:
+    return words_per_language.most_common(1)[0][0] if words_per_language else None
+
+
 def transcribe_file(
     path: Path,
     client: _Client,
@@ -413,23 +436,13 @@ def transcribe_file(
         raise TranscribeError(f"{path} is not a file")
     health = client.wait_ready()
     check_server(health, model, language, task)
-    device = str(health.get("device", "?"))
+    device = str(health.get("device", UNKNOWN_DEVICE))
     warnings = [str(warning) for warning in health.get("warnings", [])]
     # After the checks: its first run downloads, which a mistyped path must not start.
     notes: list[str] = []
     if speech is None and detector is not None:
         speech = detector(notes.append)
-    emit(
-        {
-            "event": "Ready",
-            "device": device,
-            "degraded": bool(health.get("degraded", False)),
-            "warnings": warnings + notes,
-        }
-    )
-    # A record of its own for the sessions window, which shows these and not Ready's.
-    for note in notes:
-        emit({"event": "Warning", "message": note})
+    _announce_ready(emit, health, device, warnings, notes)
 
     def detector_stopped(line: str) -> None:
         warn(line)
@@ -481,18 +494,16 @@ def transcribe_file(
     if transcript.words == 0:
         raise TranscribeError(f"no speech found in {path.name}; nothing was saved")
 
-    language_ran = str(health.get("language") or "") or None
-    task_ran = str(health.get("task") or "") or None
     attestation = bundle.new_attestation(
         started,
         int(total / config.SAMPLE_RATE_HZ),
         name,
-        language_ran,
-        task_ran,
-        None if device == "?" else device,
+        str(health.get("language") or "") or None,
+        str(health.get("task") or "") or None,
+        None if device == UNKNOWN_DEVICE else device,
         model_id_for(health),
         file={"name": path.name, "sha256": digest, "bytes": size},
-        heard_language=heard.most_common(1)[0][0] if heard else None,
+        heard_language=_most_heard(heard),
     )
     target = _free_bundle_path(directory or config.TRANSCRIPT_DIR, started)
     bundle.write(bundle.Bundle(target, transcript.text(), attestation))
