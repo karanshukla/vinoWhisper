@@ -1168,3 +1168,105 @@ def test_a_second_sentence_after_a_pause_is_decoded():
     pieces, final = _fed(segmenter, np.concatenate([first, gap, second]))
     assert len(pieces) == 1
     assert final.size >= second.size
+
+
+@pytest.mark.parametrize(
+    "command, action",
+    [
+        ("start", "start"),
+        ("stop", "stop"),
+        ("cancel", "cancel"),
+        ("hands-free", "hands-free"),
+        ("", "ignore"),
+        ("typo", "unknown"),
+    ],
+)
+def test_each_stdin_command_has_one_action(command, action):
+    assert dictate.command_action(command, generation=3) == action
+
+
+@pytest.mark.parametrize("signal", ["full", "quiet"])
+def test_a_stop_the_recording_sent_itself_only_counts_for_its_own_recording(signal):
+    assert dictate.command_action(f"{signal} 3", generation=3) == "stop"
+    assert dictate.command_action(f"{signal} 2", generation=3) == "ignore"
+
+
+def test_audio_is_too_little_to_decode_under_the_minimum_length_and_not_at_it():
+    loud = config.SILENCE_RMS_THRESHOLD * 2
+    assert dictate.too_little_to_decode(dictate.MIN_AUDIO_S - 0.01, loud)
+    assert not dictate.too_little_to_decode(dictate.MIN_AUDIO_S, loud)
+
+
+def test_audio_is_too_little_to_decode_under_the_silence_threshold_and_not_at_it():
+    assert dictate.too_little_to_decode(2.0, config.SILENCE_RMS_THRESHOLD * 0.99)
+    assert not dictate.too_little_to_decode(2.0, config.SILENCE_RMS_THRESHOLD)
+
+
+def test_a_preview_is_due_at_the_interval_and_not_one_sample_before():
+    interval = int(config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ)
+    assert dictate.preview_due(interval, quiet_s=0.0)
+    assert not dictate.preview_due(interval - 1, quiet_s=0.0)
+
+
+def test_no_preview_starts_in_a_pause():
+    interval = int(config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ)
+    assert dictate.preview_due(interval, quiet_s=config.PREVIEW_QUIET_S - 0.01)
+    assert not dictate.preview_due(interval, quiet_s=config.PREVIEW_QUIET_S)
+
+
+def test_a_tail_is_worth_previewing_at_the_minimum_length_and_not_under_it():
+    enough = pcm.sine(220.0, config.PREVIEW_MIN_S, amplitude=0.1)
+    threshold = config.SILENCE_RMS_THRESHOLD
+    assert dictate.worth_previewing(enough, threshold)
+    assert not dictate.worth_previewing(enough[:-1], threshold)
+    assert not dictate.worth_previewing(pcm.silence(config.PREVIEW_MIN_S), threshold)
+
+
+def test_the_opening_is_scored_only_once_the_noise_floor_is_known():
+    count = dictate.SilenceCount()
+    count.hold(1600, 0.1)
+    count.hold(1600, 0.001)
+    assert (count.speech, count.quiet) == (0, 0)
+    count.score(threshold=0.01)
+    assert (count.speech, count.quiet) == (1600, 1600)
+    count.score(threshold=0.01)
+    assert (count.speech, count.quiet) == (1600, 1600)
+
+
+def test_speech_resets_the_quiet_count():
+    count = dictate.SilenceCount()
+    count.hold(1600, 0.001)
+    count.hold(1600, 0.1)
+    count.score(threshold=0.01)
+    assert (count.speech, count.quiet) == (1600, 0)
+
+
+def test_hands_free_needs_the_minimum_speech_and_then_the_full_silence():
+    heard = int(config.HANDS_FREE_MIN_SPEECH_S * config.SAMPLE_RATE_HZ)
+    silence = int(config.HANDS_FREE_SILENCE_S * config.SAMPLE_RATE_HZ)
+
+    def count(speech: int, quiet: int) -> bool:
+        counted = dictate.SilenceCount()
+        counted.hold(speech, 0.1)
+        counted.hold(quiet, 0.0)
+        counted.score(threshold=0.01)
+        return counted.speech_then_silence
+
+    assert count(heard, silence)
+    assert not count(heard - 1, silence)
+    assert not count(heard, silence - 1)
+
+
+def test_a_replacement_phrase_split_across_two_pieces_still_matches(monkeypatch):
+    monkeypatch.setattr(dictate.replacements, "load", lambda: {"new line": "NEWLINE"})
+    signal = np.concatenate([_speech_with_pauses(1), pcm.sine(220.0, 2.0, amplitude=0.1)])
+    client = FakeClient(script=["first new", "line second"])
+    records, _, client = _run(["start", "stop"], signal=signal, client=client)
+    assert len(client.decoded) == 2
+    assert records[-1]["text"] == "first NEWLINE second"
+
+
+def test_a_decode_that_raises_is_a_transcription_error_and_a_dead_server_names_the_doctor():
+    assert dictate._decode_error(ValueError("boom"))["message"] == "Transcription failed: boom"
+    unreachable = dictate._decode_error(requests.ConnectionError("refused"))
+    assert "vinowhisper-doctor" in unreachable["message"]
