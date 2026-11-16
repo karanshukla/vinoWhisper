@@ -32,6 +32,7 @@ dependencies = [
     "requests",
     "numpy",
     "rich",
+    "rapidfuzz",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +88,7 @@ dev = [
     "types-requests",
     "numpy",
     "rich",
+    "rapidfuzz",
     # caption.py imports it, so tests/test_caption.py cannot be collected without it
     "requests",
     # server.py imports both, and tests/test_server.py imports server.py

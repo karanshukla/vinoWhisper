@@ -438,3 +438,55 @@ def test_a_prompted_decode_that_loops_over_noise_falls_back_to_the_plain_one(
     config.VOCABULARY_FILE.write_text("Xochitl\n")
     assert _decode(_transcriber(monkeypatch, "NPU")) == "ok"
     assert len(pipeline) == 1 and "hotwords" not in pipeline[0]
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "edits"),
+    [
+        ("", "", 0),
+        ("southey", "southey", 0),
+        ("", "ab", 2),
+        ("sothey", "southey", 1),
+        ("poiser", "poyser", 1),
+        ("zoe", "zoë", 1),
+        ("strasse", "straße", 2),
+        ("😀lüften", "lüften😀", 2),
+    ],
+)
+def test_the_distance_is_the_edit_count_in_code_points_when_within_the_limit(a, b, edits):
+    assert vocabulary._distance(a, b, 2) == edits
+    assert vocabulary._distance(b, a, 2) == edits
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "limit"),
+    [("", "abc", 2), ("kitten", "sitting", 2), ("southey", "sothey", 0), ("abcd", "wxyz", 2)],
+)
+def test_a_distance_past_the_limit_is_only_ever_reported_as_past_it(a, b, limit):
+    assert vocabulary._distance(a, b, limit) > limit
+
+
+def test_the_limit_is_inclusive():
+    assert vocabulary._distance("neverbent", "neverbend", 1) == 1
+    assert vocabulary._distance("neverbent", "neverbend", 0) > 0
+
+
+def test_correction_compares_accented_letters_as_one_letter_each():
+    assert vocabulary.correct("ask Muller and Zoe", ["Müller", "Zoë"]) == "ask Müller and Zoe"
+    assert vocabulary.correct("in Ängstrom units", ["Ängström"]) == "in Ängström units"
+    assert vocabulary.correct("in Angstrom units", ["Ångström"]) == "in Angstrom units"
+    assert vocabulary.correct("", ["Ångström"]) == ""
+
+
+def test_rapidfuzz_is_imported_at_the_first_correction_not_with_the_module():
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(vocabulary.__file__).read_text(encoding="utf-8"))
+    top_level = [
+        alias.name if isinstance(node, ast.Import) else node.module
+        for node in tree.body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    ]
+    assert not any(name and name.startswith("rapidfuzz") for name in top_level)

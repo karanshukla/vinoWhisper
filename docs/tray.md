@@ -634,6 +634,14 @@ It has no dictionary, so a real word that close to a term is rewritten too: with
 None turned up in the 12,961 words measured below, but a term that sits one letter
 from a word you use is better left to `replacements.json`.
 
+The letter count is rapidfuzz's Levenshtein distance since 2026-11-16, in place of a
+hand-written one. Checked first on a cloud Xeon: 300,010 string pairs (ASCII,
+accented, emoji, combining marks, empty) gave the same count up to the limit, and
+`correct` returned the same text for 3,000 generated sentences. The one difference is
+past the limit, where the old function returned the true count and rapidfuzz returns
+limit + 1; nothing reads that number. It is imported at the first correction, so
+`import vinowhisper.vocabulary` and every `--help` work without it.
+
 **The decoder prompt** is Whisper's `hotwords`, and OpenVINO GenAI's NPU pipeline
 refuses it: `pipeline_static.cpp` asserts that both `hotwords` and `initial_prompt`
 are unset (read at 2026.4.1.0 and on master, 2026-11-10). That is a limit of
