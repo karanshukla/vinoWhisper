@@ -1,5 +1,4 @@
 import argparse
-import hashlib
 import json
 import sys
 from collections.abc import Callable
@@ -9,7 +8,7 @@ from pathlib import Path
 import requests
 
 from . import config
-from .integrity import sha256_file
+from .integrity import Sha256Stream, sha256_file
 
 SOURCES_PATH = Path(__file__).resolve().parent / "model_sources.json"
 SOURCE_ROOT = config.MODEL_ROOT / "source"
@@ -101,20 +100,19 @@ def fetch(
         size = source.sizes.get(name, 0)
         say(f"downloading {name}" + (f" ({size / 1e6:.0f}MB)" if size >= 10**7 else ""))
         part = target.with_name(name + _PART)
-        digest = hashlib.sha256()
+        hashed = Sha256Stream()
         with http.get(source.url(name), stream=True, timeout=_TIMEOUT) as response:
             response.raise_for_status()
             with part.open("wb") as handle:
-                for chunk in response.iter_content(_CHUNK):
-                    digest.update(chunk)
+                for chunk in hashed.through(response.iter_content(_CHUNK)):
                     handle.write(chunk)
                     done += len(chunk)
                     progress(done)
-        if digest.hexdigest() != expected:
+        if hashed.hexdigest() != expected:
             part.unlink()
             raise SourceError(
                 f"{source.model_id}@{source.revision[:12]}: {name} does not match its pinned "
-                f"sha256 (got {digest.hexdigest()}, pinned {expected}). Nothing was exported. "
+                f"sha256 (got {hashed.hexdigest()}, pinned {expected}). Nothing was exported. "
                 "Retry once; if it still differs, open an issue rather than working around it."
             )
         part.replace(target)

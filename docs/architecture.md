@@ -1,7 +1,8 @@
 # Design decision: scale-to-zero, not an always-on daemon
 
 Deliberately **started on demand**, not a resident service. Same
-lazy-load/idle-unload shape as serverless cold starts, with no service manager:
+lazy-load/idle-unload shape as serverless cold starts, with no service manager.
+Serverless, on your laptop, with no framework:
 
 - Nothing runs until something needs the server. No model loaded, no Python
   process.

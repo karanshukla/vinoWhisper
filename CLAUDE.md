@@ -613,13 +613,22 @@ vinowhisper/
   doctor.py       vinowhisper-doctor, environment checks + --json
   wizard.py       vinowhisper-setup, the guided install
 tray/             vinowhisper-tray, the Rust overlay/tray/shortcut; cargo, not uv
-  src/app.rs      event loop, layer-shell surface, the caption child's lifecycle
+  src/app.rs      event loop, commands, the caption child's lifecycle
+  src/app/        the rest of App: surface.rs (layer surfaces, placing, drawing), wayland.rs
+                  (the smithay handlers), dictating.rs (the dictate child and the pill),
+                  settings_window.rs (spawning vinowhisper-gui)
   src/captions.rs what the box shows, as plain data (the testable part)
   src/paint.rs    cosmic-text layout + raster.rs shapes, into an shm buffer
   src/protocol.rs the --json wire formats (captions and dictation)
   src/dictation.rs hold/tap state machine and what the pill shows (the testable part)
   src/portal.rs   the RemoteDesktop portal: one kept session, a keysym per character, its clipboard
   src/media.rs    MPRIS pause while dictating, resume after
+gui/              vinowhisper-gui, the egui settings and sessions windows (glibc)
+  src/window.rs   the settings window: state, the frame, saving
+  src/sessions_window.rs, src/sessions_window/   the sessions window, split the same way
+  src/window/     one file per page (shortcuts, captions, speech, cleanup, sessions), models.rs
+                  (download and delete rows), labels.rs, controls.rs, tests.rs
+settings/         the crate both binaries read gui.json and language.json through
 tests/            pytest; no NPU, no audio server, no OpenVINO (see Conventions)
 docs/             install, hardware, audio, latency, debugging, architecture
 scripts/          install.sh (bootstrap), convert_model.sh (both exports),

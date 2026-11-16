@@ -1,17 +1,15 @@
 import contextlib
 import fcntl
 import json
-import os
 import re
 import socket
-import tempfile
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from . import bundle, config, llm
+from . import atomic, bundle, config, llm
 from . import playing as now_playing
 from .llm import Preempted
 
@@ -335,16 +333,7 @@ def save_state(state: dict, path: Path | None = None) -> None:
 
 
 def _write_json(path: Path, value: object) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, indent=2)
-            handle.write("\n")
-        os.replace(temp, path)
-    except BaseException:
-        Path(temp).unlink(missing_ok=True)
-        raise
+    atomic.write_json(path, value, private=True)
 
 
 def _locked(path: Path) -> bool:

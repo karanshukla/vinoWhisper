@@ -156,7 +156,7 @@ impl SpeechModel {
         }
     }
 
-    /// The exports `vinowhisper-server` loads it from (config.model_dir), either variant.
+    // config.model_dir's names, either variant.
     fn export_dirs(self) -> &'static [&'static str] {
         match self {
             SpeechModel::Whisper => &["whisper-small.en-ov", "whisper-small.en-ov-stateful"],
@@ -179,8 +179,7 @@ pub enum Task {
     Translate,
 }
 
-/// What the server listens for. Not in gui.json: `vinowhisper-server` and
-/// `vinowhisper-setup` read and write the same file (config.LANGUAGE_FILE).
+/// language.json, which the server and `vinowhisper-setup` also read and write (config.LANGUAGE_FILE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Speech {
@@ -246,8 +245,7 @@ impl Speech {
         }
     }
 
-    /// English audio has nothing to translate (the server rejects that pair), and a
-    /// language the model does not know is English.
+    /// The pair the server would accept: English never translates, an unknown language is English.
     pub fn normalised(mut self) -> Speech {
         if !self.model.languages().contains(&self.language) || self.auto_cannot_transcribe() {
             self.language = Language::En;
@@ -258,7 +256,7 @@ impl Speech {
         self
     }
 
-    /// Canary's auto means translate whatever is spoken; it has no detection to transcribe with.
+    // Canary has no language detection to transcribe with.
     fn auto_cannot_transcribe(self) -> bool {
         self.model == SpeechModel::Canary
             && self.language == Language::Auto
@@ -279,8 +277,7 @@ impl Speech {
 
 pub const DEFAULT_CLEANUP_BUDGET_S: f64 = 4.0;
 
-/// When a dictation is sent for cleanup. Smart skips the model when the transcript
-/// shows nothing to fix, which is most of them and saves about two seconds each.
+/// When a dictation is sent for cleanup; Smart skips transcripts with nothing to fix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CleanupMode {
@@ -293,8 +290,7 @@ impl CleanupMode {
     pub const ALL: [CleanupMode; 2] = [CleanupMode::Smart, CleanupMode::Always];
 }
 
-/// LLM cleanup of dictation (issue #81), run by a local model. Not in gui.json: the
-/// Python side reads this file at each key press (config.CLEANUP_FILE).
+/// cleanup.json, which the Python side reads at each key press (config.CLEANUP_FILE).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Cleanup {
@@ -344,8 +340,7 @@ impl Cleanup {
     }
 }
 
-/// Background summaries of saved sessions (#123). Not in gui.json: the server and
-/// `vinowhisper-caption` read this file (config.SUMMARIES_FILE).
+/// summaries.json, which the server and `vinowhisper-caption` read (config.SUMMARIES_FILE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Summaries {
@@ -382,8 +377,7 @@ impl Summaries {
     }
 }
 
-/// Terms the dictation decoder is told to expect (#161), one per line. The server reads
-/// the same file (vocabulary.py), so the rules for a line match it.
+/// vocabulary.txt, one term per line, under the same line rules as vocabulary.py.
 pub mod vocabulary {
     use std::io;
     use std::path::{Path, PathBuf};
@@ -420,8 +414,7 @@ pub mod vocabulary {
         terms
     }
 
-    /// Appends the term, keeping comments and order. `Ok(false)` when it is not a usable
-    /// term, is already listed, or the list is full.
+    /// `Ok(false)` when the term is unusable, already listed, or the list is full.
     pub fn add_to(path: &Path, new: &str) -> io::Result<bool> {
         let Some(new) = term(new) else {
             return Ok(false);
@@ -455,8 +448,7 @@ pub fn transcripts_dir() -> PathBuf {
     data_home().join("vinowhisper/transcripts")
 }
 
-/// Whether the multilingual export exists (either variant), so the tray can say what to run
-/// instead of offering a language the server could not load.
+/// Whether the multilingual export exists, in either variant.
 pub fn multilingual_installed() -> bool {
     ["whisper-small-ov", "whisper-small-ov-stateful"]
         .into_iter()
@@ -499,8 +491,7 @@ pub fn sessions_entry_shown_in(data: &Path) -> bool {
     sessions_entry_in(data).is_file()
 }
 
-/// Where the sessions entry goes: the host's menu reads the real home's, not the
-/// Flatpak's own data.
+/// The real home's data directory: the host's menu does not read the Flatpak's own.
 pub fn apps_data_home() -> PathBuf {
     match sandbox::flatpak_id() {
         Some(_) => sandbox::host_data_home(),
@@ -597,11 +588,9 @@ pub struct Settings {
     pub open_in: OpenIn,
     /// Pause MPRIS players that are playing while dictating, and resume them after (#163).
     pub pause_media: bool,
-    /// A space before a dictation typed straight after another one (#120). A guess: the
-    /// tray cannot see which field has focus.
+    /// A space before a dictation typed straight after another one (#120).
     pub smart_spacing: bool,
     /// Minutes the remote-desktop session stays open after a dictation; 0 keeps it open.
-    /// KDE announces each new session, so closing it after every dictation is noisy.
     pub typing_idle_minutes: u64,
 }
 
@@ -706,9 +695,14 @@ fn write_text(path: &Path, text: &str) -> io::Result<()> {
 }
 
 fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
-    match std::env::var_os(variable) {
+    xdg_dir_from(std::env::var_os(variable), &home(), fallback)
+}
+
+// Taken as given, relative or not, as config.py does: the two sides must name the same files.
+fn xdg_dir_from(value: Option<std::ffi::OsString>, home: &Path, fallback: &str) -> PathBuf {
+    match value {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => home().join(fallback),
+        _ => home.join(fallback),
     }
 }
 
@@ -1170,5 +1164,62 @@ mod tests {
             "\"/opt/vino whisper/gui\""
         );
         assert_eq!(exec_arg("/bin/100%"), "/bin/100%%");
+    }
+
+    #[test]
+    fn an_exec_argument_with_nothing_reserved_is_left_bare() {
+        assert_eq!(
+            exec_arg("/usr/bin/vinowhisper-gui"),
+            "/usr/bin/vinowhisper-gui"
+        );
+        assert_eq!(exec_arg("--sessions"), "--sessions");
+        assert_eq!(exec_arg("a=b,c:d@e+f"), "a=b,c:d@e+f");
+    }
+
+    #[test]
+    fn every_character_the_desktop_entry_spec_reserves_quotes_the_argument() {
+        for reserved in " \t\n\"'\\><~|&;$*?#()`".chars() {
+            let quoted = exec_arg(&format!("a{reserved}b"));
+            assert!(
+                quoted.starts_with('"') && quoted.ends_with('"'),
+                "{reserved:?} gave {quoted}"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_exec_arguments_escape_what_the_shell_and_the_key_file_would_read() {
+        assert_eq!(exec_arg("say \"hi\""), "\"say \\\\\"hi\\\\\"\"");
+        assert_eq!(exec_arg("a$b"), "\"a\\\\$b\"");
+        assert_eq!(exec_arg("a`b"), "\"a\\\\`b\"");
+        assert_eq!(exec_arg("a\\b"), "\"a\\\\\\\\b\"");
+        assert_eq!(exec_arg("50% off"), "\"50%% off\"");
+        assert_eq!(exec_arg("it's"), "\"it's\"");
+    }
+
+    #[test]
+    fn an_xdg_directory_is_used_as_given_even_when_relative() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            xdg_dir_from(Some("/elsewhere/config".into()), home, ".config"),
+            PathBuf::from("/elsewhere/config")
+        );
+        assert_eq!(
+            xdg_dir_from(Some("relative/config".into()), home, ".config"),
+            PathBuf::from("relative/config")
+        );
+    }
+
+    #[test]
+    fn an_unset_or_empty_xdg_directory_falls_back_under_home() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            xdg_dir_from(None, home, ".config"),
+            PathBuf::from("/home/u/.config")
+        );
+        assert_eq!(
+            xdg_dir_from(Some("".into()), home, ".local/state"),
+            PathBuf::from("/home/u/.local/state")
+        );
     }
 }

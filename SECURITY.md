@@ -7,7 +7,12 @@ node, transcribed by a model running on local hardware, and printed to your
 terminal. There is no network call in the capture or transcription path, no
 telemetry, and no cloud service involved at any point. OpenVINO ships Intel's
 usage telemetry (Google Analytics), on unless you opt out; vinoWhisper never
-loads it, and runs the model export with it off (`CI=true`). Your
+loads it, and runs the model export with it off (`CI=true`). OpenVINO takes a
+missing consent file as consent, so the package makes `openvino_telemetry`
+unimportable in its own process before anything imports `openvino`, and the
+converter then falls back to its no-op stub. `optimum-cli` is a separate
+process that block does not reach, which is why the export sets `CI=true`: it
+is the switch OpenVINO's converter honours (it passes `disable_in_ci`). Your
 `~/intel/openvino_telemetry` consent file is left alone. The only outbound
 traffic the project ever makes is package installation and the one-time model
 download from Hugging Face, both of which you trigger explicitly and the second

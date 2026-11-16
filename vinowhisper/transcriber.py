@@ -136,9 +136,7 @@ class BaseTranscriber:
                         if streamed:
                             raise
                         lost = str(exc)
-                    # Outside the except block: its traceback holds _generate's
-                    # frame, and with it the dead pipeline, which would stay in
-                    # memory (and on the device) through the reload.
+                    # Outside the except block, whose traceback would keep the dead pipeline alive.
                     if lost:
                         self._reload_after_reset(lost)
                         language = self._generate(samples, streamer, biased)
@@ -198,9 +196,7 @@ class WhisperTranscriber(BaseTranscriber):
     def _build(self, selection: devices.Selection, model_dir: Path) -> None:
         import openvino_genai as ov_genai
 
-        # The compiler or driver from `ovfetch npu install`, before OpenVINO
-        # opens the NPU. Only the NPU needs it; on another device a bad prefix
-        # should not stop the server.
+        # Before OpenVINO opens the NPU; on another device a bad prefix must not stop the server.
         try:
             ovfetch.preload()
         except ovfetch.OvfetchError:
@@ -367,9 +363,7 @@ class WhisperTranscriber(BaseTranscriber):
                 **options,
             )
             text = "".join(heard)
-        # On noise the prompt answers with its own terms, or loops on a word it suggests
-        # ("Xochitl, Cebu, Cebu, ..." over barking on the NPU, 2026-11-11); a plain decode
-        # says whether anything like them was spoken.
+        # On noise the prompt answers with its own terms or loops; a plain decode is the check.
         looped = stitch.is_loop(text)
         if looped or vocabulary.only_terms(text, self._terms):
             biased_text, heard[:] = text, []

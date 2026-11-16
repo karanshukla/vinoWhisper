@@ -99,8 +99,7 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-/// The models on disk: each command answers `model status|fetch|delete` in JSON lines.
-/// Whisper has no fetch (vinowhisper-setup exports it) and adds `delete-source`.
+/// The models on disk; Whisper has no fetch (vinowhisper-setup exports it) and adds `delete-source`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Cleanup,

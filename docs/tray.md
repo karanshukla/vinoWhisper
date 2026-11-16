@@ -846,6 +846,13 @@ variable beats the file:
 - **Not streamed.** The text is pasted once, after the whole answer has been checked.
 - The pill says "Cleaning up with the model" while the model runs, from the
   `Cleaning` event.
+- **The cue words cover English, French, German and Spanish together**, because the
+  language is not known where they are checked (auto). A false hit costs one request,
+  and so does a word from another language that happens to match. A miss is only a
+  correction spoken with none of the words, which `always` mode still catches.
+- **Only service failures count against it.** A reason that is about the answer means
+  the model ran. Http errors, an unreachable server, timeouts and exceptions are the
+  server or the model failing.
 - **It turns itself off on errors** (#87), because each failed request holds the
   typing back by up to the whole budget. A missing model (or an http 400) turns it off
   until the settings change, and downloading the model counts as a change: whether the
@@ -924,6 +931,20 @@ pressing the key and starting to speak at once. Collect the lines. If
 starts and the first word is probably clipped. If it is usually chunk 3 or
 later, there is headroom. Write the result here with the date; the instrument
 was added 2026-10-07 and has not been run on hardware.
+
+### The settings window
+
+`vinowhisper-gui` runs with vsync off. With vsync, a buffer swap waits on a
+frame callback that KWin holds back from a window it considers hidden, and
+the window stops answering pings ("Not Responding", seen 2026-10-11). It only
+redraws on input, so nothing is lost. eframe 0.37 skips the blocking swap on
+Wayland itself (egui#5136); turning vsync off keeps X11 covered too.
+
+About's Updates row runs whichever updater the install has: the release
+installer leaves itself as `~/.local/bin/vinowhisper-upgrade`, which installs a
+release's wheel, tray and this window; a release's Flatpak bundle installs the
+next one with `vinowhisper-flatpak-update`; a checkout has neither, so About
+links to the release.
 
 ### Screen readers
 

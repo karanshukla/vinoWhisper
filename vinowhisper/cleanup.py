@@ -147,10 +147,7 @@ def _words(text: str) -> list[str]:
     return [word for word in words if any(ch.isalnum() for ch in word)]
 
 
-# Cues that cleanup has something to do. A false hit costs one request; a miss is only a
-# correction spoken with none of these words, which "always" mode still catches.
-# English, French, German and Spanish together: the language is not known here (auto), and a
-# word from another language that happens to match costs one request, not a wrong answer.
+# Cues that cleanup has something to do, in all four languages at once (docs/tray.md).
 _FILLERS = frozenset(
     {"um", "umm", "uh", "uhh", "er", "erm", "hmm"}
     | {"euh", "heu", "bah", "ben", "hum"}
@@ -422,9 +419,7 @@ def clean_up(text: str, settings: Settings, transport: Transport = local) -> Out
     return done(result, True, None)
 
 
-# Reasons that are about the answer, not the service: the model ran, so they never
-# count against it. Anything else (http errors, unreachable, timeouts, an exception's type
-# name) is the server or the model failing.
+# About the answer, not the service: the model ran, so these never count against it.
 _ANSWER_REASONS = frozenset(
     {
         None,

@@ -117,6 +117,12 @@ covered:
 | Alpine | | None: musl, so upstream glibc builds do not apply | From the package index |
 | NixOS | | `hardware.cpu.intel.npu.enable` (25.11+) | Config snippets, not `nix-env` lines |
 
+openSUSE's `libze_intel_npu1` (Tumbleweed 1.38.0, Leap 16.0 1.35.0, checked
+2026-11-05) is the user-mode driver only: its spec builds with
+`ENABLE_NPU_COMPILER_BUILD=OFF`, and unlike Fedora's rpm and Intel's debs it
+does not require the Level Zero loader, which is why `level-zero` is listed
+beside it.
+
 Anything else gets generic advice, and says so. Derivatives not listed are
 matched through `ID_LIKE`. On every distro the NPU compiler library
 (`libopenvino_intel_npu_compiler.so`) comes from Intel's release archive,
