@@ -249,7 +249,7 @@ class Wizard:
             kind = "NPU"
         if self.model == config.CANARY_MODEL:
             return self.check_canary(kind)
-        variant = "npu" if kind == "NPU" else "stateful"
+        variant = export_variant(kind)
         directory = config.model_dir(kind, self.multilingual)
         model_id = config.model_id(self.multilingual)
         export = config.export_command(variant, self.multilingual)
@@ -260,6 +260,11 @@ class Wizard:
             )
 
         self.say(f"  No {variant} export at {directory}.")
+        return self._download_and_export(variant, directory, model_id, export)
+
+    def _download_and_export(
+        self, variant: str, directory: Path, model_id: str, export: str
+    ) -> Outcome:
         cli = self._export_tool()
         if isinstance(cli, Outcome):
             return cli
@@ -365,14 +370,12 @@ class Wizard:
         # exits when idle. What is left to do is undo what earlier versions installed.
         units = launch.old_units()
         if units:
-            self.say("  The server no longer runs from systemd units; these are left over:")
-            for unit in units:
-                self.say(f"    {unit}")
-            self.say("  $ systemctl --user disable --now " + " ".join(launch.UNITS))
+            for line in old_unit_lines(units):
+                self.say(line)
             if not self.confirm("remove them?"):
                 return Outcome(None, "old units left in place; they still start the server")
             launch.retire_units()
-        if self.explicit_device and self.device != config.load_device():
+        if device_needs_saving(self.explicit_device, self.device, config.load_device()):
             if self.dry_run:
                 return Outcome(None, f"would write device {self.device} to {config.SERVER_FILE}")
             try:
@@ -384,21 +387,14 @@ class Wizard:
         # A running server keeps the old code, device and model until it is stopped.
         if not launch.stop():
             return Outcome(False, "the running server did not stop; `vinowhisper-server --stop`")
-        removed = "old systemd units removed; " if units else ""
-        return Outcome(
-            True,
-            f"{removed}device {self.device}; the server starts on first use and exits when idle",
-        )
+        return Outcome(True, server_summary(bool(units), self.device))
 
     def link_binaries(self) -> Outcome:
         bin_dir = Path(sys.executable).parent
         entry_points = [(bin_dir / f"vinowhisper-{name}") for name in COMMANDS]
         missing = [path.name for path in entry_points if not path.exists()]
         if missing:
-            return Outcome(
-                False,
-                f"{', '.join(missing)} not next to {sys.executable} — run `uv sync` first",
-            )
+            return Outcome(False, missing_commands_summary(missing, sys.executable))
         if bin_dir == BIN_DIR:
             return Outcome(True, f"already installed in {BIN_DIR}")
 
@@ -413,10 +409,7 @@ class Wizard:
                 link.unlink()
             link.symlink_to(path)
 
-        on_path = str(BIN_DIR) in os.environ.get("PATH", "").split(os.pathsep)
-        if not on_path:
-            return Outcome(True, f"linked, but {BIN_DIR} is not on your PATH — add it")
-        return Outcome(True, f"linked into {BIN_DIR}")
+        return Outcome(True, linked_summary(BIN_DIR, os.environ.get("PATH", "")))
 
     def install_completion(self) -> Outcome:
         source = _repo_root() / "scripts/vinowhisper-completion.bash"
@@ -447,7 +440,7 @@ class Wizard:
                 return got
             path = got
 
-        if path.is_relative_to(Path.home()):
+        if wants_launcher(path, Path.home()):
             self.run([str(path), "--install"], "add a launcher entry for it?")
         self.run([str(path), "--autostart"], "start it in the tray at login?")
         if replaced:
@@ -455,11 +448,7 @@ class Wizard:
             self.run([str(path), "restart"], "restart a running tray so it uses this one?")
 
         settings = self._install_settings_window()
-        summary = f"{path} (open it from the app menu, or run vinowhisper-tray)"
-        if settings.ok:
-            return Outcome(True, f"{summary}; settings window {settings.summary}")
-        # The tray works without the window, so a missing window does not fail the step.
-        return Outcome(None, f"{summary}; no settings window: {settings.summary}")
+        return overlay_outcome(path, settings)
 
     def _install_settings_window(self) -> Outcome:
         path = overlay.installed(BIN_DIR, overlay.SETTINGS)
@@ -616,6 +605,49 @@ def export_argv(
         argv.append("--disable-stateful")
     argv.append(str(out))
     return argv
+
+
+def export_variant(kind: str) -> str:
+    return "npu" if kind == "NPU" else "stateful"
+
+
+def old_unit_lines(units: list[Path]) -> list[str]:
+    return [
+        "  The server no longer runs from systemd units; these are left over:",
+        *(f"    {unit}" for unit in units),
+        "  $ systemctl --user disable --now " + " ".join(launch.UNITS),
+    ]
+
+
+def device_needs_saving(explicit: bool, device: str, saved: str) -> bool:
+    return explicit and device != saved
+
+
+def server_summary(units_removed: bool, device: str) -> str:
+    removed = "old systemd units removed; " if units_removed else ""
+    return f"{removed}device {device}; the server starts on first use and exits when idle"
+
+
+def missing_commands_summary(missing: list[str], executable: str) -> str:
+    return f"{', '.join(missing)} not next to {executable} — run `uv sync` first"
+
+
+def linked_summary(bin_dir: Path, path_env: str) -> str:
+    if str(bin_dir) not in path_env.split(os.pathsep):
+        return f"linked, but {bin_dir} is not on your PATH — add it"
+    return f"linked into {bin_dir}"
+
+
+def wants_launcher(path: Path, home: Path) -> bool:
+    return path.is_relative_to(home)
+
+
+def overlay_outcome(path: Path, settings: Outcome) -> Outcome:
+    summary = f"{path} (open it from the app menu, or run vinowhisper-tray)"
+    if settings.ok:
+        return Outcome(True, f"{summary}; settings window {settings.summary}")
+    # The tray works without the window, so a missing window does not fail the step.
+    return Outcome(None, f"{summary}; no settings window: {settings.summary}")
 
 
 def progress_percent(done: int, total: int, last: int) -> int | None:
