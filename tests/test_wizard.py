@@ -1293,3 +1293,53 @@ def test_check_model_hands_a_canary_choice_to_the_canary_check(monkeypatch, tmp_
         ("check_canary", "GPU"),
         ("outcome", True, "canary"),
     ]
+
+
+def test_only_an_npu_gets_the_static_export():
+    assert wizard.export_variant("NPU") == "npu"
+    assert wizard.export_variant("GPU") == "stateful"
+    assert wizard.export_variant("CPU") == "stateful"
+
+
+def test_the_old_unit_lines_list_each_unit_before_the_command_that_removes_them():
+    lines = wizard.old_unit_lines([wizard.Path("/u/a"), wizard.Path("/u/b")])
+    assert lines[1:3] == ["    /u/a", "    /u/b"]
+    assert lines[-1].startswith("  $ systemctl --user disable --now ")
+
+
+def test_a_device_is_saved_only_when_it_was_asked_for_and_differs():
+    assert wizard.device_needs_saving(True, "GPU", "NPU") is True
+    assert wizard.device_needs_saving(True, "NPU", "NPU") is False
+    assert wizard.device_needs_saving(False, "GPU", "NPU") is False
+
+
+def test_the_server_summary_mentions_removed_units_only_when_there_were_some():
+    assert wizard.server_summary(True, "CPU").startswith("old systemd units removed; device CPU")
+    assert wizard.server_summary(False, "CPU").startswith("device CPU;")
+
+
+def test_the_missing_commands_summary_names_each_and_the_interpreter():
+    assert wizard.missing_commands_summary(["a", "b"], "/v/python") == (
+        "a, b not next to /v/python — run `uv sync` first"
+    )
+
+
+def test_a_link_summary_warns_only_when_the_directory_is_off_the_path():
+    bin_dir = wizard.Path("/h/.local/bin")
+    assert wizard.linked_summary(bin_dir, "/usr/bin:/h/.local/bin") == "linked into /h/.local/bin"
+    assert "not on your PATH" in wizard.linked_summary(bin_dir, "/usr/bin:/h/.local")
+    assert "not on your PATH" in wizard.linked_summary(bin_dir, "")
+
+
+def test_a_launcher_is_wanted_only_for_a_binary_under_the_home():
+    home = wizard.Path("/h")
+    assert wizard.wants_launcher(wizard.Path("/h/.local/bin/t"), home) is True
+    assert wizard.wants_launcher(wizard.Path("/usr/bin/t"), home) is False
+
+
+def test_a_missing_settings_window_leaves_the_overlay_step_undone_not_failed():
+    tray = wizard.Path("/h/t")
+    with_window = wizard.overlay_outcome(tray, wizard.Outcome(True, "/h/g"))
+    assert with_window.ok is True and with_window.summary.endswith("settings window /h/g")
+    without = wizard.overlay_outcome(tray, wizard.Outcome(None, "why"))
+    assert without.ok is None and without.summary.endswith("no settings window: why")
