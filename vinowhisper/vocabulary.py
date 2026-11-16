@@ -77,14 +77,9 @@ ECHO_SIMILARITY = 0.4
 
 
 def _distance(a: str, b: str, limit: int) -> int:
-    if abs(len(a) - len(b)) > limit:
-        return limit + 1
-    row = list(range(len(b) + 1))
-    for i, x in enumerate(a, 1):
-        diagonal, row[0] = row[0], i
-        for j, y in enumerate(b, 1):
-            diagonal, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, diagonal + (x != y))
-    return row[-1]
+    from rapidfuzz.distance import Levenshtein
+
+    return Levenshtein.distance(a, b, score_cutoff=limit)
 
 
 def _slack(term: str) -> int:

@@ -73,8 +73,7 @@ def mel_filters() -> np.ndarray:
 _FILTERS: np.ndarray | None = None
 
 
-# Parakeet's extractor without torch: log-mel normalised per bin over the real frames,
-# zero-padded to FRAMES, with the mask the encoder needs (an unmasked pad moves its output).
+# Parakeet's extractor without torch; an unmasked pad moves the encoder's output.
 def features(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     global _FILTERS
     if _FILTERS is None:

@@ -33,6 +33,70 @@ _QUIET = "quiet"
 _HANDS_FREE = "hands-free"
 _EOF = "eof"
 
+_START = "start"
+_STOP = "stop"
+_CANCEL = "cancel"
+_IGNORE = "ignore"
+_UNKNOWN = "unknown"
+
+
+def command_action(command: str, generation: int) -> str:
+    if command == "start":
+        return _START
+    if command in ("stop", f"{_FULL} {generation}", f"{_QUIET} {generation}"):
+        return _STOP
+    if command == _HANDS_FREE:
+        return _HANDS_FREE
+    if not command or command.startswith((_FULL, _QUIET)):
+        return _IGNORE
+    if command == "cancel":
+        return _CANCEL
+    return _UNKNOWN
+
+
+def too_little_to_decode(audio_s: float, level: float) -> bool:
+    return audio_s < MIN_AUDIO_S or level < config.SILENCE_RMS_THRESHOLD
+
+
+def preview_due(since_preview: int, quiet_s: float) -> bool:
+    return (
+        since_preview >= config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ
+        and quiet_s < config.PREVIEW_QUIET_S
+    )
+
+
+def worth_previewing(tail: np.ndarray, threshold: float) -> bool:
+    return (
+        tail.size >= config.PREVIEW_MIN_S * config.SAMPLE_RATE_HZ and audio.rms(tail) >= threshold
+    )
+
+
+class SilenceCount:
+    def __init__(self) -> None:
+        self.speech = 0
+        self.quiet = 0
+        self._held: list[tuple[int, float]] = []
+
+    def hold(self, size: int, level: float) -> None:
+        self._held.append((size, level))
+
+    def score(self, threshold: float) -> None:
+        for size, level in self._held:
+            if level >= threshold:
+                self.speech += size
+                self.quiet = 0
+            else:
+                self.quiet += size
+        self._held.clear()
+
+    @property
+    def speech_then_silence(self) -> bool:
+        rate = config.SAMPLE_RATE_HZ
+        return (
+            self.speech >= config.HANDS_FREE_MIN_SPEECH_S * rate
+            and self.quiet >= config.HANDS_FREE_SILENCE_S * rate
+        )
+
 
 class Emit(Protocol):
     def __call__(self, record: dict) -> None: ...
@@ -119,8 +183,7 @@ class _Segmenter:
         if chunk.size == 0:
             return None
         level = audio.rms(chunk)
-        # A near-silent chunk (a dropout) would pin the floor under real room noise;
-        # any floor this low yields the fixed threshold anyway.
+        # A near-silent chunk (a dropout) must not become the floor: docs/tray.md, "Dictation".
         settling = self._total < config.NOISE_FLOOR_SETTLE_S * config.SAMPLE_RATE_HZ
         if not settling and level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
             self._floor = min(self._floor, level)
@@ -259,8 +322,7 @@ class _Decoder:
         return clean(" ".join(self.texts))
 
     def joined(self) -> str:
-        # Replacements run on the joined text, not per piece, so a phrase split
-        # across two segments still matches.
+        # On the joined text, not per piece, so a phrase split across two pieces still matches.
         return self.apply_replacements(self.spoken())
 
     def apply_replacements(self, text: str) -> str:
@@ -369,10 +431,8 @@ class Dictation:
         self._decoder: _Decoder | None = None
         self._lock = threading.Lock()
         self._hands_free = False
-        self._speech = 0
-        self._quiet = 0
+        self._silence = SilenceCount()
         self._since_preview = 0
-        self._unsettled: list[tuple[int, float]] = []
 
     def feed(self, lines: Iterable[str]) -> threading.Thread:
         def read() -> None:
@@ -395,19 +455,16 @@ class Dictation:
             self._close()
 
     def handle(self, command: str) -> None:
-        if command == "start":
+        action = command_action(command, self._generation)
+        if action == _START:
             self._start()
-        elif command in ("stop", f"{_FULL} {self._generation}"):
+        elif action == _STOP:
             self._stop(transcribe=True)
-        elif command == _HANDS_FREE:
+        elif action == _HANDS_FREE:
             self._latch_hands_free()
-        elif command == f"{_QUIET} {self._generation}":
-            self._stop(transcribe=True)
-        elif command.startswith((_FULL, _QUIET)):
-            pass
-        elif command == "cancel":
+        elif action == _CANCEL:
             self._stop(transcribe=False)
-        elif command:
+        elif action == _UNKNOWN:
             self._emit({"event": "Error", "message": f"unknown command {command!r}"})
 
     def _start(self) -> None:
@@ -420,10 +477,8 @@ class Dictation:
         self._stop_sent = False
         self._trace = _Trace(self._clock()) if self._trace_on else None
         self._hands_free = False
-        self._speech = 0
-        self._quiet = 0
+        self._silence = SilenceCount()
         self._since_preview = 0
-        self._unsettled = []
         self._cleaner.prepare()
         self._segmenter = _Segmenter(keep=bool(os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")))
         self._decoder = _Decoder(
@@ -460,16 +515,24 @@ class Dictation:
                 self._stop_if_quiet()
 
     def _stop_if_quiet(self) -> None:
-        wanted = config.HANDS_FREE_SILENCE_S * config.SAMPLE_RATE_HZ
-        heard = config.HANDS_FREE_MIN_SPEECH_S * config.SAMPLE_RATE_HZ
-        if (
-            self._hands_free
-            and not self._stop_sent
-            and self._speech >= heard
-            and self._quiet >= wanted
-        ):
+        if self._hands_free and not self._stop_sent and self._silence.speech_then_silence:
             self._stop_sent = True
             self._commands.put(f"{_QUIET} {self._generation}")
+
+    def _stop_at_the_limit(self) -> None:
+        if not self._stop_sent and self._captured >= config.DICTATION_MAX_S * config.SAMPLE_RATE_HZ:
+            self._stop_sent = True
+            self._commands.put(f"{_FULL} {self._generation}")
+
+    def _preview(self, segmenter: _Segmenter, decoder: _Decoder, size: int) -> None:
+        self._since_preview += size
+        # The counter keeps running through a pause, so speech resuming previews at once.
+        if not preview_due(self._since_preview, segmenter.quiet_s):
+            return
+        self._since_preview = 0
+        tail = segmenter.peek()
+        if worth_previewing(tail, segmenter.threshold):
+            decoder.preview(tail, self._captured)
 
     def _tap(self, samples: np.ndarray) -> None:
         self._note_chunk(samples)
@@ -482,38 +545,14 @@ class Dictation:
             self._captured += samples.size
             segment = segmenter.add(samples)
             # Room noise only reads as quiet once the floor is known, so score the opening then.
-            self._unsettled.append((samples.size, level))
+            self._silence.hold(samples.size, level)
             if segmenter.settled:
-                for size, held in self._unsettled:
-                    if held >= segmenter.threshold:
-                        self._speech += size
-                        self._quiet = 0
-                    else:
-                        self._quiet += size
-                self._unsettled.clear()
+                self._silence.score(segmenter.threshold)
             if segment is not None:
                 _submit(decoder, segment)
             self._stop_if_quiet()
-            self._since_preview += samples.size
-            # A pause is when the key usually comes up, and a preview then would still be
-            # decoding at release. The counter keeps running, so speech resuming previews at once.
-            if (
-                self._since_preview >= config.PREVIEW_EVERY_S * config.SAMPLE_RATE_HZ
-                and segmenter.quiet_s < config.PREVIEW_QUIET_S
-            ):
-                self._since_preview = 0
-                tail = segmenter.peek()
-                if (
-                    tail.size >= config.PREVIEW_MIN_S * config.SAMPLE_RATE_HZ
-                    and audio.rms(tail) >= segmenter.threshold
-                ):
-                    decoder.preview(tail, self._captured)
-            if (
-                not self._stop_sent
-                and self._captured >= config.DICTATION_MAX_S * config.SAMPLE_RATE_HZ
-            ):
-                self._stop_sent = True
-                self._commands.put(f"{_FULL} {self._generation}")
+            self._preview(segmenter, decoder, samples.size)
+            self._stop_at_the_limit()
 
     def _discard(self) -> None:
         with self._lock:
@@ -559,37 +598,49 @@ class Dictation:
             return
         self._report_trace()
         released_at = time.monotonic()
+        tail_wait_s = self._end_recording(recording, released_at, wait_for_tail=transcribe)
+        if tail_wait_s is None:
+            return
+        if not transcribe:
+            self._discard()
+            self._emit({"event": "Cancelled"})
+            return
+        with self._lock:
+            if self._decoder is not None:
+                self._decoder.mute()
+        with self._lock:
+            segmenter, decoder = self._segmenter, self._decoder
+            self._segmenter = self._decoder = None
+        if segmenter is None or decoder is None:
+            return
+        self._decode_the_rest(segmenter, decoder, released_at, tail_wait_s)
+
+    def _end_recording(
+        self, recording: _Recording, released_at: float, wait_for_tail: bool
+    ) -> float | None:
         tail_wait_s = 0.0
         try:
             recording.check_alive()
-            if transcribe:
+            if wait_for_tail:
                 _wait_for_tail(recording)
                 tail_wait_s = time.monotonic() - released_at
         except CaptureError as exc:
             recording.__exit__(None, None, None)
             self._discard()
             self._emit({"event": "Error", "message": f"Microphone capture failed: {exc}"})
-            return
+            return None
         recording.__exit__(None, None, None)
-        if transcribe:
-            with self._lock:
-                if self._decoder is not None:
-                    self._decoder.mute()
-        if not transcribe:
-            self._discard()
-            self._emit({"event": "Cancelled"})
-            return
-        with self._lock:
-            segmenter, decoder = self._segmenter, self._decoder
-            self._segmenter = self._decoder = None
-        if segmenter is None or decoder is None:
-            return
+        return tail_wait_s
+
+    def _decode_the_rest(
+        self, segmenter: _Segmenter, decoder: _Decoder, released_at: float, tail_wait_s: float
+    ) -> None:
         raw = segmenter.peek()
         full = segmenter.full()
         note = segmenter.note()
         final = segmenter.finish()
         _keep_audio(raw, final, full)
-        if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
+        if _cleanup_debug():
             print(
                 f"[vinowhisper] gate: {note} final={final.size / config.SAMPLE_RATE_HZ:.2f}s",
                 file=sys.stderr,
@@ -605,7 +656,7 @@ class Dictation:
     def _finish(self, segmenter: _Segmenter, decoder: _Decoder, released_at: float) -> None:
         audio_s = segmenter.total_s
         level = segmenter.rms
-        if audio_s < MIN_AUDIO_S or level < config.SILENCE_RMS_THRESHOLD:
+        if too_little_to_decode(audio_s, level):
             decoder.cancel()
             self._emit(
                 {"event": "Dictated", "text": "", "audio_s": audio_s, "total_s": 0.0, "rms": level}
@@ -613,25 +664,11 @@ class Dictation:
             return
         self._emit({"event": "Transcribing", "audio_s": audio_s})
 
-        warmup = self._warmup
-        if warmup is not None:
-            warmup.done.wait()
-            if warmup.error is not None:
-                decoder.cancel()
-                self._emit(_server_error(warmup.error))
-                return
-            if warmup.health:
-                self._emit(_ready(warmup.health))
-                warmup.health = {}
-
-        decoder.finish()
-        if isinstance(decoder.error, requests.RequestException):
-            self._emit(_server_error(decoder.error))
+        if not self._server_answered(decoder):
             return
+        decoder.finish()
         if decoder.error is not None:
-            message = f"Transcription failed: {decoder.error}"
-            print(f"[vinowhisper] {message}", file=sys.stderr)
-            self._emit({"event": "Error", "message": message})
+            self._emit(_decode_error(decoder.error))
             return
         text, cleaned = self._tidy(decoder)
         self._emit(
@@ -644,8 +681,24 @@ class Dictation:
                 "rms": level,
             }
         )
-        # Cleanup just turned itself off: the pill says so once the text is typed. Its own
-        # record, after Dictated, so an older tray skips it and still types.
+        self._pass_on_notice()
+
+    def _server_answered(self, decoder: _Decoder) -> bool:
+        warmup = self._warmup
+        if warmup is None:
+            return True
+        warmup.done.wait()
+        if warmup.error is not None:
+            decoder.cancel()
+            self._emit(_server_error(warmup.error))
+            return False
+        if warmup.health:
+            self._emit(_ready(warmup.health))
+            warmup.health = {}
+        return True
+
+    def _pass_on_notice(self) -> None:
+        # Its own record, after Dictated, so an older tray skips it and still types.
         notice = self._cleaner.take_notice()
         if notice is not None:
             print(f"[vinowhisper] {notice}", file=sys.stderr)
@@ -656,29 +709,12 @@ class Dictation:
         if not spoken or not self._cleaner.active:
             return decoder.apply_replacements(spoken), False
         if not self._cleaner.wants(spoken):
-            print(
-                f"[vinowhisper] cleanup: skipped, nothing to fix "
-                f"(in {len(spoken)} chars, {len(decoder.texts)} pieces)",
-                file=sys.stderr,
-            )
-            if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
-                print(f"[vinowhisper] cleanup-debug pieces={decoder.texts!r}", file=sys.stderr)
+            _log_cleanup_skipped(spoken, decoder.texts)
             return decoder.apply_replacements(spoken), False
         # The model takes a second or two, so the overlay says why the text is late.
         self._emit({"event": "Cleaning"})
         outcome = self._cleaner(spoken)
-        status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
-        print(
-            f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms "
-            f"(in {len(spoken)} chars, out {len(outcome.text)}, {len(decoder.texts)} pieces)",
-            file=sys.stderr,
-        )
-        if os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1":
-            print(f"[vinowhisper] cleanup-debug pieces={decoder.texts!r}", file=sys.stderr)
-            print(f"[vinowhisper] cleanup-debug in ={spoken!r}", file=sys.stderr)
-            print(f"[vinowhisper] cleanup-debug out={outcome.text!r}", file=sys.stderr)
-            if outcome.answer is not None:
-                print(f"[vinowhisper] cleanup-debug model={outcome.answer!r}", file=sys.stderr)
+        _log_cleanup(spoken, decoder.texts, outcome)
         return decoder.apply_replacements(outcome.text), outcome.cleaned
 
     def _close(self) -> None:
@@ -688,6 +724,35 @@ class Dictation:
         self._discard()
 
 
+def _cleanup_debug() -> bool:
+    return os.environ.get("VINOWHISPER_CLEANUP_DEBUG") == "1"
+
+
+def _log_cleanup_skipped(spoken: str, pieces: list[str]) -> None:
+    print(
+        f"[vinowhisper] cleanup: skipped, nothing to fix "
+        f"(in {len(spoken)} chars, {len(pieces)} pieces)",
+        file=sys.stderr,
+    )
+    if _cleanup_debug():
+        print(f"[vinowhisper] cleanup-debug pieces={pieces!r}", file=sys.stderr)
+
+
+def _log_cleanup(spoken: str, pieces: list[str], outcome: cleanup.Outcome) -> None:
+    status = "ok" if outcome.cleaned else f"raw, {outcome.reason}"
+    print(
+        f"[vinowhisper] cleanup: {status} in {outcome.elapsed_s * 1000:.0f}ms "
+        f"(in {len(spoken)} chars, out {len(outcome.text)}, {len(pieces)} pieces)",
+        file=sys.stderr,
+    )
+    if _cleanup_debug():
+        print(f"[vinowhisper] cleanup-debug pieces={pieces!r}", file=sys.stderr)
+        print(f"[vinowhisper] cleanup-debug in ={spoken!r}", file=sys.stderr)
+        print(f"[vinowhisper] cleanup-debug out={outcome.text!r}", file=sys.stderr)
+        if outcome.answer is not None:
+            print(f"[vinowhisper] cleanup-debug model={outcome.answer!r}", file=sys.stderr)
+
+
 def _warm_cleanup() -> None:
     from .client import TranscriptionClient
 
@@ -695,8 +760,6 @@ def _warm_cleanup() -> None:
 
 
 class _FileCleaner:
-    # The breaker outlives each settings read: changed settings are what untrip it.
-
     def __init__(
         self,
         load: Callable[[], cleanup.Settings | None] | None = None,
@@ -708,6 +771,7 @@ class _FileCleaner:
         self._load = load
         self._transport = transport
         self._warm = warm
+        # The breaker outlives each settings read: changed settings are what untrip it.
         self._breaker = breaker or cleanup.Breaker()
         self._notice: str | None = None
         self._settings: cleanup.Settings | None = None
@@ -795,22 +859,26 @@ def _keep_audio(raw: np.ndarray, decoded: np.ndarray, full: np.ndarray) -> None:
             return
         directory.chmod(0o700)
         for name, samples in (("raw", raw), ("decoded", decoded), ("full", full)):
-            pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
-            descriptor = os.open(
-                directory / f"{stamp}-{name}.wav",
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
-                0o600,
-            )
-            with os.fdopen(descriptor, "wb") as handle, wave.open(handle, "wb") as out:
-                out.setnchannels(1)
-                out.setsampwidth(2)
-                out.setframerate(config.SAMPLE_RATE_HZ)
-                out.writeframes(pcm16.tobytes())
-        kept = sorted(directory.glob("*.wav"))
-        for old in kept[: max(0, len(kept) - 3 * _KEPT_PIECES)]:
-            old.unlink(missing_ok=True)
+            _write_private_wav(directory / f"{stamp}-{name}.wav", samples)
+        _drop_all_but_the_newest(directory)
     except OSError as exc:
         print(f"[vinowhisper] could not keep audio: {exc}", file=sys.stderr)
+
+
+def _write_private_wav(path: Path, samples: np.ndarray) -> None:
+    pcm16 = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as handle, wave.open(handle, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(config.SAMPLE_RATE_HZ)
+        out.writeframes(pcm16.tobytes())
+
+
+def _drop_all_but_the_newest(directory: Path) -> None:
+    kept = sorted(directory.glob("*.wav"))
+    for old in kept[: max(0, len(kept) - 3 * _KEPT_PIECES)]:
+        old.unlink(missing_ok=True)
 
 
 def _submit(decoder: _Decoder, segment: np.ndarray) -> None:
@@ -832,6 +900,14 @@ def _ready(health: dict) -> dict:
         "degraded": bool(health.get("degraded", False)),
         "warnings": [str(warning) for warning in health.get("warnings", [])],
     }
+
+
+def _decode_error(exc: Exception) -> dict:
+    if isinstance(exc, requests.RequestException):
+        return _server_error(exc)
+    message = f"Transcription failed: {exc}"
+    print(f"[vinowhisper] {message}", file=sys.stderr)
+    return {"event": "Error", "message": message}
 
 
 def _server_error(exc: Exception) -> dict:

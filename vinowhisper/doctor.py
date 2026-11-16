@@ -3,6 +3,7 @@ import json
 import shutil
 import sys
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -82,51 +83,61 @@ def _devices() -> list[Result]:
     ]
 
     found = devices.hardware()
-    intel_npu = [hw for hw in found if hw.kind == "NPU" and hw.vendor == "Intel"]
-    other_npu = [hw for hw in found if hw.kind == "NPU" and hw.vendor != "Intel"]
-
     npu = [device for device in inventory if device.kind == "NPU"]
-    if npu:
-        results.append(Result(OK, "npu", str(npu[0])))
-    elif found and not intel_npu:
-        if other_npu:
-            results.append(Result(WARN, "npu", f"{other_npu[0]}, which OpenVINO cannot drive"))
-        else:
-            results.append(Result(UNKNOWN, "npu", "none on the PCI bus, so no driver to install"))
-    else:
-        results.append(Result(FAIL, "npu", "not enumerated by OpenVINO"))
-        for note in devices.npu_preflight():
-            status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
-            results.append(Result(status, f"npu: {note.label}", note.detail))
+    presence = npu_presence(npu, found)
+    results.append(presence)
+    if presence.status == FAIL:
+        results += _note_results(devices.npu_preflight(), FAIL, "npu: ")
         remedy = distro.remediation(distro.NPU_DRIVER)
         results.append(
             Result(WARN, "npu: userspace driver", "\n" + "\n".join(remedy.lines()).lstrip())
         )
 
-    if npu or intel_npu or not found:
-        for note in devices.npu_userspace():
-            status = OK if note.ok else (UNKNOWN if note.ok is None else FAIL)
-            results.append(Result(status, f"npu: {note.label}", note.detail))
+    if npu or not found or has_intel_npu(found):
+        results += _note_results(devices.npu_userspace(), FAIL, "npu: ")
 
-    for note in devices.gpu_notes(inventory, found):
-        status = OK if note.ok else (UNKNOWN if note.ok is None else WARN)
-        results.append(Result(status, note.label, note.detail))
+    results += _note_results(devices.gpu_notes(inventory, found), WARN)
+    results.append(_selected_device(inventory))
+    return results
 
+
+def has_intel_npu(found: Iterable[devices.Hardware]) -> bool:
+    return any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in found)
+
+
+def npu_presence(npu: Sequence[object], found: Sequence[devices.Hardware]) -> Result:
+    if npu:
+        return Result(OK, "npu", str(npu[0]))
+    if not found or has_intel_npu(found):
+        return Result(FAIL, "npu", "not enumerated by OpenVINO")
+    other_npu = [hw for hw in found if hw.kind == "NPU"]
+    if other_npu:
+        return Result(WARN, "npu", f"{other_npu[0]}, which OpenVINO cannot drive")
+    return Result(UNKNOWN, "npu", "none on the PCI bus, so no driver to install")
+
+
+def _note_results(notes: Iterable[devices.Note], bad: str, prefix: str = "") -> list[Result]:
+    return [
+        Result(
+            OK if note.ok else (UNKNOWN if note.ok is None else bad),
+            f"{prefix}{note.label}",
+            note.detail,
+        )
+        for note in notes
+    ]
+
+
+def _selected_device(inventory: list[devices.Device]) -> Result:
     try:
         selection = devices.select(config.DEFAULT_DEVICE, inventory)
     except devices.DeviceError as exc:
-        results.append(Result(FAIL, "selected device", str(exc)))
-        return results
-
-    results.append(
-        Result(
-            OK if not selection.degraded else WARN,
-            "selected device",
-            f"{selection.device.name}"
-            + ("" if not selection.degraded else " — NOT the NPU, captions will lag further"),
-        )
+        return Result(FAIL, "selected device", str(exc))
+    return Result(
+        OK if not selection.degraded else WARN,
+        "selected device",
+        f"{selection.device.name}"
+        + ("" if not selection.degraded else " — NOT the NPU, captions will lag further"),
     )
-    return results
 
 
 def _openvino_version() -> str | None:
@@ -337,7 +348,10 @@ def _server() -> list[Result]:
         ]
     except ValueError:
         return [Result(FAIL, "server", f"{address} /health returned non-JSON")]
+    return health_results(payload, address)
 
+
+def health_results(payload: dict, address: object) -> list[Result]:
     results = [Result(OK, "server", f"{address} on {payload.get('device', '?')}")]
     if payload.get("version") and payload["version"] != __version__:
         results.append(

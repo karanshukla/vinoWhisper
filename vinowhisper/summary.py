@@ -22,8 +22,7 @@ KEY_POINTS = 8
 POINT_CHARS = 180
 TITLE_WORDS = 8
 OVERVIEW_SENTENCES = 3
-# Greedy decoding without it looped on a long summary ("captions captions…"), #121.
-# At 1.1 it reworded enough to bring in things the transcript never said.
+# Without it greedy decoding loops on a long summary; higher, it invents (docs/sessions.md).
 REPETITION_PENALTY = 1.05
 MAX_FAILURES = 3
 # The NPU has had no caption or dictation request for this long before a summary starts.
@@ -256,8 +255,7 @@ def summarise(
     parts = chunks(transcript, limit)
     if not parts:
         raise ValueError("the transcript is empty")
-    # The shape is ours, not the model's: it ignored a shape asked for in one pass, and
-    # that pass kept only the end of a long session.
+    # The shape is assembled here: asked for in one pass, the model ignored it (docs/sessions.md).
     per_part = [
         points_in(
             generate(

@@ -5,7 +5,7 @@ import sys
 import pytest
 from conftest import fake_version
 
-from vinowhisper import capture, config, distro, integrity, wizard
+from vinowhisper import capture, config, devices, distro, integrity, wizard
 
 
 def test_the_npu_export_disables_stateful():
@@ -366,3 +366,28 @@ def test_the_file_decoder_step_installs_ffmpeg_or_is_skipped_without_failing(mon
     monkeypatch.setattr(wizard.shutil, "which", lambda name: f"/usr/bin/{name}")
     assert instance.check_decoder().ok is True
     assert len(ran) == 1
+
+
+def _hw(kind: str, vendor: str) -> devices.Hardware:
+    return devices.Hardware(slot="0000:00:0b.0", kind=kind, vendor=vendor, pci_id="0000:0000")
+
+
+def test_an_intel_npu_or_an_unreadable_bus_still_gets_the_driver_offer():
+    assert wizard.npu_without_a_driver([_hw("NPU", "Intel")]) is None
+    assert wizard.npu_without_a_driver([]) is None
+
+
+def test_a_non_intel_npu_or_no_npu_at_all_gets_no_driver_offer():
+    amd = wizard.npu_without_a_driver([_hw("NPU", "AMD")])
+    assert amd is not None and "cannot drive a non-Intel NPU" in amd[0]
+    assert wizard.npu_without_a_driver([_hw("GPU", "Intel")]) == [
+        "No NPU on the PCI bus, so there is no NPU driver to install."
+    ]
+
+
+def test_the_export_plan_names_the_pinned_revision_and_the_command_before_anything_runs():
+    source = wizard.model_source.Source("openai/whisper-small.en", "e8727524f962abcdef")
+    plan = wizard.export_plan(source, ["optimum-cli", "export", "openvino"])
+    assert "openai/whisper-small.en@e8727524f962 " in plan[1]
+    assert plan[-1].endswith("optimum-cli export openvino")
+    assert "TMPDIR=" in plan[-1]

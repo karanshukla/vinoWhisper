@@ -214,8 +214,7 @@ def needs_cleanup(text: str) -> bool:
     return any(a == b for a, b in zip(words, words[1:], strict=False))
 
 
-# What a deletion can leave behind. Anything else the model writes must already be in the
-# transcript, so a reply cannot add shell punctuation or a newline to a terminal paste.
+# All a reply may add; anything else must be in the transcript, so no shell syntax reaches a paste.
 _ADDABLE = frozenset(".,!?:'\"-\u2013\u2014\u2026")
 
 
@@ -437,8 +436,7 @@ _SETUP_FAILURES = {
     "model missing": "LLM cleanup off: the cleanup model isn't downloaded. Download it in Settings.",
     "http 400": "LLM cleanup off: the server refused the request (http 400).",
 }
-# Each failed request can hold the typing back by the whole budget (#87), so a service that
-# keeps failing is left alone for a while instead of costing every dictation 3s.
+# A failing service is left alone for a while: each failure holds the typing back (#87).
 STRIKES = 3
 COOLDOWN_S = 600.0
 

@@ -12,12 +12,10 @@ from .integrity import sha256_file
 
 PINS_PATH = Path(__file__).resolve().parent / "cleanup_model.json"
 REVISION_MARKER = ".vinowhisper-revision"
-# Size, mtime and inode of each file when it last hashed clean (docs/tray.md).
-# It catches corruption and careless edits, not a same-user attacker, who can rewrite it.
+# Size, mtime and inode at the last clean hash; no defence against the same user (docs/tray.md).
 VERIFIED_STAMP = ".vinowhisper-verified"
 
-# The NPU compiles for a fixed window. 3072 holds the cleanup prompt and five minutes of
-# dictation; 1024 holds the edited copy of that dictation coming back.
+# The NPU's fixed window: the prompt plus five minutes of dictation, and its edited copy.
 MAX_PROMPT_LEN = 3072
 MIN_RESPONSE_LEN = 1024
 

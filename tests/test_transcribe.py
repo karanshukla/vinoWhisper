@@ -630,3 +630,33 @@ def test_cancelling_saves_nothing(command, tmp_path, capsys, monkeypatch):
     assert transcribe.main([str(path)]) == 130
     assert "nothing was saved" in capsys.readouterr().err
     assert not config.TRANSCRIPT_DIR.exists()
+
+
+def test_progress_rounds_to_a_tenth_and_keeps_an_unknown_duration_unknown():
+    assert transcribe.progress_record(12.34, None, 1.26, 40) == {
+        "event": "Progress",
+        "position_s": 12.3,
+        "duration_s": None,
+        "elapsed_s": 1.3,
+        "words": 40,
+    }
+    assert transcribe.progress_record(1.0, 99.96, 0.0, 0)["duration_s"] == 100.0
+
+
+def test_done_reports_the_audio_in_seconds_and_the_bundle_path(tmp_path):
+    record = transcribe.done_record(tmp_path / "a.vwsession", 7, config.SAMPLE_RATE_HZ * 3, 0.44)
+    assert record == {
+        "event": "Done",
+        "path": str(tmp_path / "a.vwsession"),
+        "words": 7,
+        "audio_s": 3.0,
+        "elapsed_s": 0.4,
+    }
+
+
+def test_a_file_with_no_audio_or_no_words_saves_nothing_and_one_word_is_enough():
+    assert transcribe.nothing_to_save("a.mp3", 0, 0) == "a.mp3 has no audio in it"
+    assert transcribe.nothing_to_save("a.mp3", 16000, 0) == (
+        "no speech found in a.mp3; nothing was saved"
+    )
+    assert transcribe.nothing_to_save("a.mp3", 1, 1) is None
