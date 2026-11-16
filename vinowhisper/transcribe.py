@@ -448,12 +448,10 @@ def transcribe_file(
     segmenter = Segmenter(speech=speech, say=detector_stopped)
     if health.get("live_active"):
         segmenter.limit(config.FILE_PIECE_BUSY_MIN_S, config.FILE_PIECE_BUSY_MAX_S)
-    decoded_s = 0.0
     working_since = time.monotonic()
     heard: collections.Counter[str] = collections.Counter()
 
     def decode(pieces: list[Piece]) -> None:
-        nonlocal decoded_s
         for piece in pieces:
             if piece.samples.size:
                 samples, _ = audio.normalize(piece.samples, config.TARGET_RMS, config.MAX_GAIN)
@@ -463,16 +461,8 @@ def transcribe_file(
                     heard[client.heard_language] += len(words)
                 transcript.piece(piece, words)
                 _pace(segmenter, client)
-            decoded_s = piece.end_s
-            emit(
-                {
-                    "event": "Progress",
-                    "position_s": round(decoded_s, 1),
-                    "duration_s": None if duration_s is None else round(duration_s, 1),
-                    "elapsed_s": round(time.monotonic() - working_since, 1),
-                    "words": transcript.words,
-                }
-            )
+            elapsed_s = time.monotonic() - working_since
+            emit(progress_record(piece.end_s, duration_s, elapsed_s, transcript.words))
 
     total = 0
     for frame in frames(path, which):
@@ -480,10 +470,9 @@ def transcribe_file(
         decode(segmenter.add(frame))
     decode(segmenter.finish())
 
-    if total == 0:
-        raise TranscribeError(f"{path.name} has no audio in it")
-    if transcript.words == 0:
-        raise TranscribeError(f"no speech found in {path.name}; nothing was saved")
+    nothing = nothing_to_save(path.name, total, transcript.words)
+    if nothing is not None:
+        raise TranscribeError(nothing)
 
     attestation = bundle.new_attestation(
         started,
@@ -498,16 +487,38 @@ def transcribe_file(
     )
     target = _free_bundle_path(directory or config.TRANSCRIPT_DIR, started)
     bundle.write(bundle.Bundle(target, transcript.text(), attestation))
-    emit(
-        {
-            "event": "Done",
-            "path": str(target),
-            "words": transcript.words,
-            "audio_s": round(total / config.SAMPLE_RATE_HZ, 1),
-            "elapsed_s": round(time.monotonic() - working_since, 1),
-        }
-    )
+    emit(done_record(target, transcript.words, total, time.monotonic() - working_since))
     return target
+
+
+def progress_record(
+    position_s: float, duration_s: float | None, elapsed_s: float, words: int
+) -> dict:
+    return {
+        "event": "Progress",
+        "position_s": round(position_s, 1),
+        "duration_s": None if duration_s is None else round(duration_s, 1),
+        "elapsed_s": round(elapsed_s, 1),
+        "words": words,
+    }
+
+
+def done_record(target: Path, words: int, samples: int, elapsed_s: float) -> dict:
+    return {
+        "event": "Done",
+        "path": str(target),
+        "words": words,
+        "audio_s": round(samples / config.SAMPLE_RATE_HZ, 1),
+        "elapsed_s": round(elapsed_s, 1),
+    }
+
+
+def nothing_to_save(name: str, samples: int, words: int) -> str | None:
+    if samples == 0:
+        return f"{name} has no audio in it"
+    if words == 0:
+        return f"no speech found in {name}; nothing was saved"
+    return None
 
 
 def _clock(seconds: float) -> str:
