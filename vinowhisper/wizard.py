@@ -203,22 +203,28 @@ class Wizard:
         for warning in selection.warnings:
             self.say(f"  ⚠ {warning}")
         found = devices.hardware()
-        intel_npu = any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in found)
         if not any(device.kind == "NPU" for device in inventory):
             self.say("")
-            if found and not intel_npu:
-                for hw in found:
-                    if hw.kind == "NPU":
-                        self.say(f"  {hw}: OpenVINO cannot drive a non-Intel NPU.")
-                if not any(hw.kind == "NPU" for hw in found):
-                    self.say("  No NPU on the PCI bus, so there is no NPU driver to install.")
-            else:
-                for line in devices.npu_missing_help(self.distro):
+            no_driver_to_install = npu_without_a_driver(found)
+            if no_driver_to_install is not None:
+                for line in no_driver_to_install:
                     self.say(f"  {line}")
-                command = distro.install_command(distro.NPU_DRIVER, self.distro)
-                if command and self.run(command.split(), "install the NPU driver?"):
-                    return Outcome(None, "NPU driver installed — reboot, then re-run this")
+            elif self._offer_npu_driver():
+                return Outcome(None, "NPU driver installed — reboot, then re-run this")
+        installed = self._offer_gpu_runtime(inventory, found)
+        if installed is not None:
+            return installed
+        return Outcome(None, f"falling back to {selection.device.name}")
 
+    def _offer_npu_driver(self) -> bool:
+        for line in devices.npu_missing_help(self.distro):
+            self.say(f"  {line}")
+        command = distro.install_command(distro.NPU_DRIVER, self.distro)
+        return bool(command and self.run(command.split(), "install the NPU driver?"))
+
+    def _offer_gpu_runtime(
+        self, inventory: list[devices.Device], found: list[devices.Hardware]
+    ) -> Outcome | None:
         for note in devices.gpu_notes(inventory, found, self.distro):
             if note.ok is True:
                 continue
@@ -234,7 +240,7 @@ class Wizard:
                 if distro.install_needs_reboot(self.distro):
                     return Outcome(None, "GPU runtime added to the next boot; reboot, then re-run")
                 return Outcome(None, "GPU runtime installed; re-run this to pick it up")
-        return Outcome(None, f"falling back to {selection.device.name}")
+        return None
 
     def check_model(self) -> Outcome:
         try:
@@ -254,32 +260,15 @@ class Wizard:
             )
 
         self.say(f"  No {variant} export at {directory}.")
-        cli = optimum_cli()
-        if cli is None:
-            self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
-            if not self.install_export_extra():
-                return Outcome(None, "install the export extra, then re-run this")
-            cli = optimum_cli()
-            if cli is None:
-                return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
-
+        cli = self._export_tool()
+        if isinstance(cli, Outcome):
+            return cli
         source = model_source.load(model_id)
         if source is None:
             return Outcome(False, f"no pinned source for {model_id}; reinstall vinowhisper")
         argv = [*memory_cap_argv(), cli, *export_argv(variant, directory, source.directory)[1:]]
-        self.say("  This downloads ~1GB from Hugging Face and takes a few minutes.")
-        self.say(
-            f"  $ fetch {source.model_id}@{source.revision[:12]} into {source.directory}, "
-            "checking every file's sha256"
-        )
-        self.say(
-            f"  Temporary export files go under {config.EXPORT_TMP_ROOT} (on disk, not /tmp), "
-            "removed afterwards"
-        )
-        self.say(
-            f"  $ {' '.join(f'{key}={value}' for key, value in _EXPORT_ENV.items())} "
-            f"TMPDIR={config.EXPORT_TMP_ROOT}/… " + " ".join(argv)
-        )
+        for line in export_plan(source, argv):
+            self.say(f"  {line}")
         if not self.confirm("download and export it now?"):
             return Outcome(None, f"run {export} when ready")
         try:
@@ -291,6 +280,18 @@ class Wizard:
         if self.export(argv):
             return self.check_digests(variant, directory, f"exported to {directory}", model_id)
         return Outcome(None, f"run {export} when ready")
+
+    def _export_tool(self) -> str | Outcome:
+        cli = optimum_cli()
+        if cli is not None:
+            return cli
+        self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
+        if not self.install_export_extra():
+            return Outcome(None, "install the export extra, then re-run this")
+        cli = optimum_cli()
+        if cli is None:
+            return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
+        return cli
 
     def check_canary(self, kind: str) -> Outcome:
         from . import canary, llm
@@ -539,8 +540,7 @@ class Wizard:
         self.step("Model export", self.check_model)
         self.step("Language", self.save_language)
         self.step("Server", self.setup_server)
-        # The Flatpak carries its commands, the tray and the windows, and Flatpak exports
-        # their menu entries; nothing of it goes in ~/.local.
+        # The Flatpak carries its commands and menu entries; nothing of it goes in ~/.local.
         if not self.flatpak:
             self.step("Commands on PATH", self.link_binaries)
             self.step("Bash completion", self.install_completion)
@@ -549,6 +549,9 @@ class Wizard:
             if any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in devices.hardware()):
                 self.step("NPU platform data (optional)", self.install_ovfetch, optional=True)
 
+        return self._report()
+
+    def _report(self) -> int:
         style.emit()
         if self.failed:
             style.emit(
@@ -617,6 +620,25 @@ def export_argv(
         argv.append("--disable-stateful")
     argv.append(str(out))
     return argv
+
+
+def npu_without_a_driver(found: list[devices.Hardware]) -> list[str] | None:
+    if not found or any(hw.kind == "NPU" and hw.vendor == "Intel" for hw in found):
+        return None
+    lines = [f"{hw}: OpenVINO cannot drive a non-Intel NPU." for hw in found if hw.kind == "NPU"]
+    return lines or ["No NPU on the PCI bus, so there is no NPU driver to install."]
+
+
+def export_plan(source: model_source.Source, argv: list[str]) -> list[str]:
+    return [
+        "This downloads ~1GB from Hugging Face and takes a few minutes.",
+        f"$ fetch {source.model_id}@{source.revision[:12]} into {source.directory}, "
+        "checking every file's sha256",
+        f"Temporary export files go under {config.EXPORT_TMP_ROOT} (on disk, not /tmp), "
+        "removed afterwards",
+        f"$ {' '.join(f'{key}={value}' for key, value in _EXPORT_ENV.items())} "
+        f"TMPDIR={config.EXPORT_TMP_ROOT}/… " + " ".join(argv),
+    ]
 
 
 def optimum_cli() -> str | None:

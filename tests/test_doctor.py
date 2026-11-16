@@ -279,3 +279,59 @@ def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):
     )
     result = doctor._media_decoder()
     assert result.status == doctor.OK and "gst-launch-1.0" in result.detail
+
+
+def _hw(kind: str, vendor: str) -> devices.Hardware:
+    return devices.Hardware(slot="0000:00:0b.0", kind=kind, vendor=vendor, pci_id="0000:0000")
+
+
+def test_an_npu_openvino_enumerates_is_ok_whatever_the_bus_says():
+    assert doctor.npu_presence(["NPU (Intel(R) AI Boost)"], []).status == doctor.OK
+
+
+def test_an_intel_npu_on_the_bus_that_openvino_does_not_see_is_a_failure():
+    assert doctor.npu_presence([], [_hw("NPU", "Intel")]).status == doctor.FAIL
+
+
+def test_an_unreadable_bus_with_no_npu_enumerated_is_a_failure_not_a_guess():
+    assert doctor.npu_presence([], []).status == doctor.FAIL
+
+
+def test_a_non_intel_npu_is_a_warning_that_openvino_cannot_drive_it():
+    result = doctor.npu_presence([], [_hw("GPU", "Intel"), _hw("NPU", "AMD")])
+    assert result.status == doctor.WARN
+    assert "cannot drive" in result.detail
+
+
+def test_a_bus_with_no_npu_at_all_has_no_driver_to_install():
+    result = doctor.npu_presence([], [_hw("GPU", "Intel")])
+    assert result.status == doctor.UNKNOWN
+    assert "no driver to install" in result.detail
+
+
+def test_a_note_that_fails_takes_the_status_its_check_gives_it():
+    notes = [
+        devices.Note(True, "a", "fine"),
+        devices.Note(None, "b", "unknown"),
+        devices.Note(False, "c", "bad"),
+    ]
+    results = doctor._note_results(notes, doctor.WARN, "npu: ")
+    assert [r.status for r in results] == [doctor.OK, doctor.UNKNOWN, doctor.WARN]
+    assert [r.label for r in results] == ["npu: a", "npu: b", "npu: c"]
+
+
+def test_health_names_the_device_and_passes_on_each_warning():
+    results = doctor.health_results(
+        {"device": "CPU", "version": doctor.__version__, "warnings": ["not the NPU"]}, "sock"
+    )
+    assert [(r.status, r.label) for r in results] == [
+        (doctor.OK, "server"),
+        (doctor.WARN, "server device"),
+    ]
+    assert results[0].detail == "sock on CPU"
+
+
+def test_a_server_of_another_version_is_told_to_stop():
+    results = doctor.health_results({"device": "NPU", "version": "0.0.1"}, "sock")
+    assert find(results, "server version").status == doctor.WARN
+    assert "--stop" in find(results, "server version").detail
