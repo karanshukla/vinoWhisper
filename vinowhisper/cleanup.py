@@ -77,7 +77,7 @@ class Outcome:
     cleaned: bool
     reason: str | None
     elapsed_s: float
-    # What the model said, kept for the debug dump when it was refused.
+    # For the debug dump when it was refused.
     answer: str | None = None
 
 
@@ -128,7 +128,7 @@ def load_settings(
     ready: Callable[[], bool] | None = None,
     path: Path | None = None,
 ) -> Settings | None:
-    # test_an_environment_variable_beats_the_file pins the order.
+    # (pinned by `test_cleanup.py::test_an_environment_variable_beats_the_file`)
     env = os.environ if env is None else env
     if not enabled(env, path):
         return None
@@ -436,7 +436,7 @@ _SETUP_FAILURES = {
     "model missing": "LLM cleanup off: the cleanup model isn't downloaded. Download it in Settings.",
     "http 400": "LLM cleanup off: the server refused the request (http 400).",
 }
-# A failing service is left alone for a while: each failure holds the typing back (#87).
+# A failing service is left alone for a while: each failure holds the typing back.
 STRIKES = 3
 COOLDOWN_S = 600.0
 

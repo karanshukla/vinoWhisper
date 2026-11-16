@@ -33,7 +33,7 @@ impl SessionsWindow {
         });
     }
 
-    // In place, like a confirmation, rather than a modal over a window that may be half a screen.
+    // In place, not a modal: the window may be half a screen.
     pub(super) fn export_panel(&mut self, ui: &mut egui::Ui, path: &std::path::Path) {
         let Some(dialog) = self.export_dialog.as_mut().filter(|d| d.path == path) else {
             return;
@@ -112,7 +112,7 @@ impl SessionsWindow {
         ui.add_space(12.0);
         let dismissed = match result {
             Ok(exported) => {
-                let mut text = if exported.fallback {
+                let mut text = if exported.saved_without_dialog {
                     format!(
                         "There's no save dialog on this desktop, so it's in {}.",
                         exported.path.display()

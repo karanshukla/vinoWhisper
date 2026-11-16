@@ -42,7 +42,8 @@ pub fn take_ready(path: &Path) -> Vec<Ready> {
 
 const MAX_LABEL_CHARS: usize = 120;
 
-// The title is model-written from untrusted captions, and notification bodies may be markup.
+// The title is model-written from untrusted captions, and notification bodies may be markup
+// (pinned by `tests::a_title_cannot_carry_markup_or_run_on`).
 fn plain(text: &str) -> String {
     let mut out = String::new();
     for (count, ch) in text.chars().filter(|ch| !ch.is_control()).enumerate() {

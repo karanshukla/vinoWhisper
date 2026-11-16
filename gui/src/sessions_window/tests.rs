@@ -3,8 +3,8 @@ use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 
-// Nothing is listed, read or spawned: `show` never refreshes, and no test presses a button
-// that runs vinowhisper-session.
+// `show` never lists, reads or spawns, and no test presses a button that runs
+// vinowhisper-session.
 struct Under {
     window: SessionsWindow,
     styled: bool,
@@ -40,6 +40,9 @@ fn scratch_settings() -> PathBuf {
         .join(format!("vinowhisper-gui-test-{}-{n}", std::process::id()))
         .join("gui.json")
 }
+
+const CARD_WITH_SUMMARY: usize = 0;
+const CARD_WITHOUT_SUMMARY: usize = 1;
 
 fn listing() -> Listing {
     sessions::parse_listing(
@@ -116,7 +119,6 @@ fn each_session_is_listed_with_what_it_can_do() {
             .count(),
         2
     );
-    // A summary to read, or one to ask for; the rest waits behind More.
     harness.get_by_role_and_label(Role::Button, "Summary");
     harness.get_by_role_and_label(Role::Button, "Summarise");
     assert_eq!(
@@ -168,7 +170,6 @@ fn a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it() {
     harness.run();
     harness.get_by_role_and_label(Role::Button, "All sessions");
     harness.get_by_role_and_label(Role::Button, "Show in folder");
-    // Once, as the viewer's heading, not again from the summary's own title.
     assert_eq!(
         harness
             .query_all_by_role_and_label(Role::Heading, "Local captions talk")
@@ -200,7 +201,16 @@ fn a_transcript_opened_at_a_stamp_marks_that_paragraph() {
             .query_by_label("vinoWhisper transcript, x")
             .is_none()
     );
-    assert!(harness.state().window.state.lock().unwrap().viewer.scrolled);
+    assert!(
+        harness
+            .state()
+            .window
+            .state
+            .lock()
+            .unwrap()
+            .viewer
+            .jumped_to_stamp
+    );
 }
 
 #[test]
@@ -225,7 +235,6 @@ fn reading(fragment: &str, text: &str) -> Viewer {
     }
 }
 
-// The exporter runs on its own thread; step until its answer is in.
 fn until_exported(harness: &mut Harness<'static, Under>) {
     for _ in 0..500 {
         harness.step();
@@ -337,10 +346,9 @@ fn export_from_a_card_offers_only_the_transcript_without_a_summary_and_cancels()
     let seen = exporter_answering(&mut harness, Ok(None));
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
-    // The second card has no summary.
     harness
         .query_all_by_role_and_label(Role::Button, "More")
-        .nth(1)
+        .nth(CARD_WITHOUT_SUMMARY)
         .unwrap()
         .click();
     harness.run();
@@ -362,10 +370,9 @@ fn export_from_a_card_offers_only_the_transcript_without_a_summary_and_cancels()
     assert!(harness.state().window.export_dialog.is_none());
     assert!(seen.lock().unwrap().is_empty());
 
-    // A card with a summary starts on both.
     harness
         .query_all_by_role_and_label(Role::Button, "More")
-        .next()
+        .nth(CARD_WITH_SUMMARY)
         .unwrap()
         .click();
     harness.run();
@@ -382,7 +389,7 @@ fn without_a_save_dialog_the_notice_says_where_it_went_and_what_was_left_out() {
         Ok(Some(Exported {
             path: "/home/me/Documents/vinoWhisper/2026-10-26 Transcript.md".into(),
             summary_missing: true,
-            fallback: true,
+            saved_without_dialog: true,
             ..Exported::default()
         })),
     );
@@ -467,18 +474,21 @@ fn copy_puts_the_part_on_screen_on_the_clipboard() {
     );
     harness.run();
     harness.get_by_role_and_label(Role::Button, "Copied");
+}
 
-    // Nothing to copy until the text is in.
+#[test]
+fn there_is_nothing_to_copy_until_the_text_is_in() {
+    let mut harness = harness(true);
     harness.state_mut().window.state.lock().unwrap().viewer = Viewer {
         text: None,
-        ..reading("transcript", text)
+        ..reading("transcript", "vinoWhisper transcript, x\n\n[00:00] One.\n")
     };
     harness.run();
     let copy = harness.get_by_role_and_label(Role::Button, "Copy");
     assert!(copy.accesskit_node().is_disabled());
 }
 
-// A stand-in for vinoSpeak#42's `vinospeak --file BUNDLE --part PART`.
+// A stand-in for `vinospeak --file BUNDLE --part PART`.
 fn fake_speaker(body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -648,7 +658,6 @@ fn going_back_to_all_sessions_stops_it_and_a_card_reads_its_summary() {
     harness.run();
     assert!(harness.state().window.reading.is_none());
 
-    // The first card has a summary; its More menu reads that, then offers to stop.
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
     let _ = std::fs::remove_file(&args);
@@ -720,7 +729,6 @@ fn an_import_that_lost_its_speech_detector_says_so_with_the_result() {
     harness.run();
     harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
     harness.get_by_label("Import note: the speech detector stopped at 0:05.");
-    // The next import starts with none.
     harness
         .get_by_role_and_label(Role::Button, "Import audio or video…")
         .click();
@@ -759,8 +767,10 @@ fn import_audio_transcribes_the_file_picked_and_offers_its_transcript() {
     });
     harness.run();
     harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
-    // The list is read again by the window's next frame, not by this test.
-    assert!(harness.state().window.state.lock().unwrap().relist);
+    assert!(
+        harness.state().window.state.lock().unwrap().relist,
+        "the window's next frame lists again"
+    );
     harness.get_by_role_and_label(Role::Button, "Transcript of the import");
     assert_eq!(
         harness.state().window.state.lock().unwrap().imported,
@@ -780,14 +790,22 @@ fn an_import_under_way_says_how_far_it_is_and_cannot_be_started_twice() {
     harness.get_by_label("Transcribing lecture.mp3: 12:30 of 45:00.");
     let button = harness.get_by_role_and_label(Role::Button, "Import audio or video…");
     assert!(button.accesskit_node().is_disabled());
+}
 
-    // Without ffprobe the length is not known.
+#[test]
+fn without_ffprobe_an_import_says_only_how_far_it_has_got() {
+    let mut harness = harness(true);
+    harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.state_mut().window.state.lock().unwrap().import =
         Some(importing("lecture.mp3", 750.0, None));
     harness.run();
     harness.get_by_label("Transcribing lecture.mp3: 12:30 so far.");
+}
 
-    // Before the dialog answers there is no file to name.
+#[test]
+fn before_the_dialog_answers_the_import_names_no_file() {
+    let mut harness = harness(true);
+    harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.state_mut().window.state.lock().unwrap().import = Some(Import::default());
     harness.run();
     harness.get_by_label("Waiting for the file dialog.");
@@ -868,7 +886,6 @@ fn a_narrow_window_keeps_import_as_a_named_plus_button() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.set_size(egui::vec2(340.0, 560.0));
     harness.run();
-    // Same name for a screen reader; the text label would run under the title.
     harness.get_by_role_and_label(Role::Button, "Import audio or video…");
     assert!(harness.query_by_label("Import audio or video…").is_some());
     harness.get_by_role_and_label(Role::Heading, "Saved sessions");
@@ -906,7 +923,7 @@ fn opened(path: &str, state: &str) -> Opened {
             state: state.into(),
             ..Exported::default()
         },
-        fallback: true,
+        by_xdg_open: true,
     }
 }
 
@@ -940,8 +957,10 @@ fn open_in_sends_the_tab_being_read_to_the_last_app_picked() {
         }]
     );
     harness.get_by_label("Opened /d/2026-10-27 Local captions talk.odt.");
-    // Using the remembered app writes nothing.
-    assert!(!harness.state().window.settings_path.exists());
+    assert!(
+        !harness.state().window.settings_path.exists(),
+        "using the remembered app writes nothing"
+    );
 }
 
 #[test]
@@ -959,13 +978,14 @@ fn the_app_picked_from_the_menu_is_remembered_in_the_settings() {
     until_opened(&mut harness);
     assert_eq!(seen.lock().unwrap()[0].format, Format::Markdown);
     assert_eq!(seen.lock().unwrap()[0].scope, Scope::Transcript);
-    // A closed app chooser says nothing.
-    assert!(harness.query_by_label_contains("Opened").is_none());
+    assert!(
+        harness.query_by_label_contains("Opened").is_none(),
+        "a closed app chooser says nothing"
+    );
     harness.get_by_role_and_label(Role::Button, "Open in text editor");
 
     let path = harness.state().window.settings_path.clone();
     assert_eq!(Settings::load_from(&path).open_in, OpenIn::TextEditor);
-    // The next window starts on it.
     let mut next = SessionsWindow::with(true);
     next.open_in = Settings::load_from(&path).open_in;
     assert_eq!(next.open_in, OpenIn::TextEditor);
@@ -1006,10 +1026,9 @@ fn an_edited_copy_is_opened_as_it_is_and_the_notice_says_so() {
     );
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
-    // The card without a summary sends its transcript.
     harness
         .query_all_by_role_and_label(Role::Button, "More")
-        .nth(1)
+        .nth(CARD_WITHOUT_SUMMARY)
         .unwrap()
         .click();
     harness.run();

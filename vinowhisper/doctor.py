@@ -163,7 +163,7 @@ def _ovfetch() -> list[Result]:
                 f"not installed; `{ovfetch.INSTALL_HINT}` adds Intel's per-platform driver data",
             )
         ]
-    # Its bounds are pessimistic on purpose, so nothing it says is a FAIL.
+    # Its bounds are pessimistic on purpose (pinned by `test_doctor.py::test_an_ovfetch_note_is_never_a_failure`).
     return [
         Result(OK if note.ok else (UNKNOWN if note.ok is None else WARN), note.label, note.detail)
         for note in ovfetch.notes(status, _openvino_version())
@@ -171,7 +171,7 @@ def _ovfetch() -> list[Result]:
 
 
 def _failed_devices() -> list[Result]:
-    # Cleared unconditionally: a device that still fails is re-marked after one attempt.
+    # (pinned by `test_doctor.py::test_a_failed_device_mark_is_reported_and_cleared`)
     cleared = failures.clear()
     if not cleared:
         return [Result(OK, "failed devices", "none marked")]
@@ -215,7 +215,6 @@ def _vocabulary() -> list[Result]:
     reason = vocabulary.unprompted(kind, model, step, language)
     status = WARN if problem else OK
     if reason is not None:
-        # Still worth having: near-miss spellings are corrected after the decode.
         return [Result(status, label, f"{summary}, spelling correction only: {reason}")]
     return [Result(status, label, f"{summary}, given to dictation on {kind} and used to correct")]
 
@@ -228,7 +227,7 @@ def _models() -> list[Result]:
         needed_kind = "NPU"
 
     results = []
-    # The multilingual export is opt-in (`--language`), so it is only checked once it exists.
+    # (pinned by `test_doctor.py::test_the_multilingual_export_is_checked_only_once_it_exists`)
     for multilingual in (False, True):
         npu_dir = config.model_dir("NPU", multilingual)
         stateful_dir = config.model_dir("CPU", multilingual)

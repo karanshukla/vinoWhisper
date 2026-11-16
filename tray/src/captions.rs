@@ -171,7 +171,7 @@ impl Captions {
             Event::Silence { elapsed_s, .. } => {
                 self.silent_for = Some(elapsed_s);
                 if elapsed_s >= PARAGRAPH_SILENCE_S {
-                    // Scheduled, not applied: add_words spends it on the next real word.
+                    // (pinned by `tests::a_pause_breaks_the_paragraph_only_once_a_word_arrives`)
                     self.break_pending = true;
                 }
             }
@@ -284,7 +284,8 @@ impl Captions {
             (Phase::Failed(_), _) => (Tone::Bad, "stopped".to_owned()),
         };
 
-        // The words carry the state now that there is no dot: a fault is red, the rest dim.
+        // With no dot, the words carry the state
+        // (pinned by `tests::sustained_silence_turns_the_status_red_and_says_so`).
         let label_tone = if dot == Tone::Bad {
             Tone::Bad
         } else {
@@ -624,8 +625,7 @@ mod tests {
         let (dot, status) = captions.status();
         assert_eq!(dot, Tone::Bad);
         assert_eq!(status[0].text, "no signal 12s");
-        // With no dot, the words themselves turn red.
-        assert_eq!(status[0].tone, Tone::Bad);
+        assert_eq!(status[0].tone, Tone::Bad, "with no dot, the words turn red");
     }
 
     fn status_text(captions: &Captions) -> String {

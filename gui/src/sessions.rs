@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::Deserialize;
+
+use crate::forward::beside_us_or_on_path;
 pub use vinowhisper_settings::OpenIn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +22,8 @@ impl Part {
     }
 }
 
-// What `--open` names: `<bundle>`, `<bundle>#summary`, `<bundle>#transcript@MM:SS`.
+// `<bundle>`, `<bundle>#summary` or `<bundle>#transcript@MM:SS` (pinned by
+// `tests::open_targets_name_a_part_and_a_stamp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub path: PathBuf,
@@ -44,7 +47,7 @@ pub fn stamp(seconds: u64) -> String {
 
 impl Target {
     pub fn parse(raw: &str) -> Target {
-        // Split at the last '#' only when what follows is a fragment, so a '#' in a path stays.
+        // (pinned by `tests::a_hash_that_is_not_a_fragment_stays_in_the_path`)
         if let Some((path, fragment)) = raw.rsplit_once('#') {
             let (part, at) = match fragment.split_once('@') {
                 Some((part, at)) => (part, Some(at)),
@@ -92,11 +95,17 @@ pub struct Entry {
     pub error: Option<String>,
 }
 
+/// The length of an RFC 3339 time cut to the minute, `2026-10-27T14:05`.
+const TO_THE_MINUTE: usize = 16;
+
 impl Entry {
+    // (pinned by `tests::a_session_is_named_by_its_start_to_the_minute`,
+    // `tests::a_session_without_a_full_start_time_is_named_by_its_file`)
     pub fn when(&self) -> String {
         match &self.started {
-            // "2026-10-27T14:05:12-04:00" reads as "2026-10-27 14:05".
-            Some(started) if started.len() >= 16 => started[..16].replace('T', " "),
+            Some(started) if started.len() >= TO_THE_MINUTE => {
+                started[..TO_THE_MINUTE].replace('T', " ")
+            }
             _ => self.name.trim_end_matches(".vwsession").to_owned(),
         }
     }
@@ -162,7 +171,8 @@ pub enum Piece {
     Stamp(u64),
 }
 
-// Summaries written before the server tidied the model's "(0:02)" into "[00:02]" carry both.
+// Older summaries carry the model's own "(0:02)" beside "[00:02]" (pinned by
+// `tests::the_models_own_stamps_are_links_and_other_brackets_are_text`).
 fn loose_stamp(text: &str) -> Option<u64> {
     let (minutes, seconds) = text.split_once(':')?;
     if minutes.is_empty() {
@@ -204,13 +214,13 @@ pub fn pieces(line: &str) -> Vec<Piece> {
 pub enum SummaryLine {
     Heading(String),
     Bullet(String),
-    // A whole line in _underscores_: the footer saying a model wrote it.
-    Note(String),
+    Footer(String),
     Text(String),
     Blank,
 }
 
-// The model strays from "# " and "- ": deeper headings and "*" bullets are drawn as such.
+// The model strays from "# " and "- " (pinned by
+// `tests::summary_lines_are_drawn_as_what_they_mean_not_their_marks`).
 pub fn summary_line(line: &str) -> SummaryLine {
     let line = line.trim_end();
     if line.trim().is_empty() {
@@ -228,48 +238,49 @@ pub fn summary_line(line: &str) -> SummaryLine {
         return SummaryLine::Bullet(item.trim().to_owned());
     }
     if trimmed.len() > 2 && trimmed.starts_with('_') && trimmed.ends_with('_') {
-        return SummaryLine::Note(trimmed.trim_matches('_').to_owned());
+        return SummaryLine::Footer(trimmed.trim_matches('_').to_owned());
     }
     SummaryLine::Text(line.to_owned())
 }
 
-// Paragraphs of a transcript with the second each starts at; the header has none.
-pub fn paragraphs(transcript: &str) -> Vec<(Option<u64>, String)> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Paragraph {
+    /// `None` for the transcript's header.
+    pub start_s: Option<u64>,
+    pub text: String,
+}
+
+pub fn paragraphs(transcript: &str) -> Vec<Paragraph> {
     transcript
         .split("\n\n")
         .map(str::trim)
         .filter(|block| !block.is_empty())
         .map(|block| {
-            let at = block
+            let start_s = block
                 .strip_prefix('[')
                 .and_then(|rest| rest.split_once("] "))
                 .and_then(|(stamp, _)| parse_stamp(stamp));
-            (at, block.to_owned())
+            Paragraph {
+                start_s,
+                text: block.to_owned(),
+            }
         })
         .collect()
 }
 
-// The paragraph to scroll to: the last one starting at or before the stamp.
-pub fn paragraph_at(paragraphs: &[(Option<u64>, String)], at_s: u64) -> Option<usize> {
+// The last one starting at or before `at_s` (pinned by
+// `tests::opening_at_a_stamp_lands_on_the_paragraph_holding_it`).
+pub fn paragraph_at(paragraphs: &[Paragraph], at_s: u64) -> Option<usize> {
     paragraphs
         .iter()
         .enumerate()
-        .filter(|(_, (start, _))| start.is_some_and(|start| start <= at_s))
+        .filter(|(_, p)| p.start_s.is_some_and(|start| start <= at_s))
         .map(|(index, _)| index)
         .next_back()
 }
 
-// Beside this binary when it is installed there, else from PATH.
-fn sibling(name: &str) -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from(name))
-}
-
 fn command() -> PathBuf {
-    sibling("vinowhisper-session")
+    beside_us_or_on_path("vinowhisper-session")
 }
 
 fn run(args: &[&OsStr]) -> Result<String, String> {
@@ -314,9 +325,22 @@ pub fn act(action: &str, path: Option<&Path>) -> Result<(), String> {
 }
 
 pub fn show_in_folder(path: &Path) {
-    // The FileManager1 interface selects the file; xdg-open on the folder is the fallback.
+    if !select_in_file_manager(path)
+        && let Some(folder) = path.parent()
+    {
+        let _ = Command::new("xdg-open")
+            .arg(folder)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|mut child| std::thread::spawn(move || child.wait()));
+    }
+}
+
+fn select_in_file_manager(path: &Path) -> bool {
     let uri = format!("file://{}", path.display());
-    let selected = Command::new("dbus-send")
+    Command::new("dbus-send")
         .args([
             "--session",
             "--dest=org.freedesktop.FileManager1",
@@ -329,19 +353,9 @@ pub fn show_in_folder(path: &Path) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success());
-    if !selected && let Some(folder) = path.parent() {
-        let _ = Command::new("xdg-open")
-            .arg(folder)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|mut child| std::thread::spawn(move || child.wait()));
-    }
+        .is_ok_and(|status| status.success())
 }
 
-// What `vinowhisper-session export --part` takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     Both,
@@ -407,9 +421,8 @@ pub struct Exported {
     pub parts: Vec<String>,
     pub summary_missing: bool,
     pub state: String,
-    // Saved to the documents folder because there was no save dialog to ask.
     #[serde(skip)]
-    pub fallback: bool,
+    pub saved_without_dialog: bool,
 }
 
 fn export_args<'a>(request: &'a ExportRequest, out: Option<&'a Path>) -> Vec<&'a OsStr> {
@@ -450,11 +463,10 @@ pub fn export(
 pub enum Chosen {
     Path(PathBuf),
     Cancelled,
-    // No FileChooser portal, or it failed: the reason, for the log.
-    NoPortal(String),
+    NoPortal { reason: String },
 }
 
-// "file:///home/me/My%20Notes.md" -> /home/me/My Notes.md; None for anything but a local file.
+// (pinned by `tests::a_file_uri_from_the_portal_is_a_local_path`)
 pub fn file_uri_path(uri: &str) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
     let rest = uri.strip_prefix("file://")?;
@@ -484,7 +496,7 @@ pub fn save_dialog(suggested: &Path, format: Format) -> Chosen {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // The portal opens a folder that exists; a first export has not made it yet.
+    // The portal only opens a folder that exists.
     let folder = suggested
         .parent()
         .filter(|dir| std::fs::create_dir_all(dir).is_ok());
@@ -512,10 +524,14 @@ fn chosen(asked: Result<ashpd::desktop::file_chooser::SelectedFiles, ashpd::Erro
             .and_then(|uri| file_uri_path(uri.as_str()))
         {
             Some(path) => Chosen::Path(path),
-            None => Chosen::NoPortal("the file dialog gave no local file".to_owned()),
+            None => Chosen::NoPortal {
+                reason: "the file dialog gave no local file".to_owned(),
+            },
         },
         Err(ashpd::Error::Response(ResponseError::Cancelled)) => Chosen::Cancelled,
-        Err(err) => Chosen::NoPortal(err.to_string()),
+        Err(err) => Chosen::NoPortal {
+            reason: err.to_string(),
+        },
     }
 }
 
@@ -536,7 +552,8 @@ pub fn open_dialog() -> Chosen {
     chosen(asked)
 }
 
-// Globs, not "audio/*": a portal looks MIME types up by name, and a wildcard is not one.
+// Globs, not "audio/*": a portal looks MIME types up by name (pinned by
+// `tests::the_file_dialog_filters_by_extension_in_either_case_not_by_wildcard_mime`).
 const MEDIA_EXTENSIONS: [&str; 20] = [
     "mp3", "m4a", "m4b", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "amr", "mp4",
     "m4v", "mkv", "webm", "mov", "avi", "mpg", "wmv",
@@ -559,15 +576,15 @@ fn media_filter() -> ashpd::desktop::file_chooser::FileFilter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportEvent {
     Chosen(String),
-    // The child's pid, which Cancel signals.
-    Started(u32),
-    // Its output has ended: the pid is about to be reaped and must not be signalled.
-    Ending,
+    Started {
+        pid: u32,
+    },
+    // The pid is about to be reaped and must not be signalled.
+    OutputEnded,
     Progress {
         position_s: f64,
         duration_s: Option<f64>,
     },
-    // The speech detector is off or stopped: the import goes on, breaking on silence.
     Warning(String),
     Done(PathBuf),
     Failed(String),
@@ -596,7 +613,7 @@ pub fn parse_import_line(line: &str) -> Option<ImportEvent> {
 pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<PathBuf, String> {
     use std::io::BufRead;
     use std::os::unix::process::CommandExt;
-    let mut command = Command::new(sibling("vinowhisper-transcribe"));
+    let mut command = Command::new(beside_us_or_on_path("vinowhisper-transcribe"));
     command
         // After "--": a file name may start with a dash.
         .args(["--json", "--"])
@@ -604,8 +621,8 @@ pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<Path
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    // SAFETY: prctl only, which is async-signal-safe. An import must not outlive the window:
-    // nothing would be left to cancel it. The signal follows this thread, which waits on it.
+    // SAFETY: prctl only, which is async-signal-safe. An import must not outlive the window,
+    // which is the only way to cancel it; the signal follows this thread, which waits on it.
     unsafe {
         command.pre_exec(|| {
             rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))
@@ -615,7 +632,7 @@ pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<Path
     let mut child = command.spawn().map_err(|err| {
         format!("could not run vinowhisper-transcribe ({err}); vinowhisper-setup links it")
     })?;
-    on_event(ImportEvent::Started(child.id()));
+    on_event(ImportEvent::Started { pid: child.id() });
     let mut outcome = None;
     if let Some(stdout) = child.stdout.take() {
         for line in std::io::BufReader::new(stdout)
@@ -630,7 +647,7 @@ pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<Path
             }
         }
     }
-    on_event(ImportEvent::Ending);
+    on_event(ImportEvent::OutputEnded);
     let status = child.wait().map_err(|err| err.to_string())?;
     outcome.unwrap_or_else(|| Err(format!("vinowhisper-transcribe stopped ({status})")))
 }
@@ -642,14 +659,13 @@ pub fn cancel_import(pid: u32) {
     }
 }
 
-// Asks which file (the open dialog) and transcribes it; Ok(None) when the user cancelled.
 pub fn import_with_dialog(
     on_event: &mut dyn FnMut(ImportEvent),
 ) -> Result<Option<PathBuf>, String> {
     let file = match open_dialog() {
         Chosen::Path(file) => file,
         Chosen::Cancelled => return Ok(None),
-        Chosen::NoPortal(why) => {
+        Chosen::NoPortal { reason: why } => {
             eprintln!("[vinowhisper-gui] no file dialog: {why}");
             return Err(
                 "there's no file dialog on this desktop; run `vinowhisper-transcribe FILE` in a terminal"
@@ -682,11 +698,10 @@ pub fn open_in_label(open_in: OpenIn) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Opened {
     pub exported: Exported,
-    // No OpenURI portal, so xdg-open picked the app.
-    pub fallback: bool,
+    pub by_xdg_open: bool,
 }
 
-// A kept copy, not a temp file: people edit it, and an edited one is never written over.
+// A kept copy, not a temp file: people edit it, and `--reuse` never writes over it.
 pub fn export_kept(request: &ExportRequest) -> Result<Exported, String> {
     let mut args = export_args(request, None);
     args.push("--reuse".as_ref());
@@ -705,7 +720,6 @@ pub fn open_file(path: &Path) -> Result<Launched, String> {
     use ashpd::desktop::ResponseError;
     use ashpd::desktop::open_uri::OpenFileRequest;
     let file = std::fs::File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    // ask: the desktop's own app chooser, which remembers the pick itself.
     let asked = async_io::block_on(async {
         OpenFileRequest::default()
             .ask(true)
@@ -725,48 +739,64 @@ pub fn open_file(path: &Path) -> Result<Launched, String> {
                 .stderr(Stdio::null())
                 .spawn()
                 .map_err(|err| format!("could not run xdg-open: {err}"))?;
-            // On a bare compositor xdg-open can wait for the app to exit; still running is launched.
-            for _ in 0..20 {
-                if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
-                    return if status.success() {
-                        Ok(Launched::XdgOpen)
-                    } else {
-                        Err(format!("xdg-open found no app for {}", path.display()))
-                    };
+            match exit_within(&mut child, XDG_OPEN_GRACE)? {
+                Some(status) if !status.success() => {
+                    Err(format!("xdg-open found no app for {}", path.display()))
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                Some(_) => Ok(Launched::XdgOpen),
+                None => {
+                    std::thread::spawn(move || child.wait());
+                    Ok(Launched::XdgOpen)
+                }
             }
-            std::thread::spawn(move || child.wait());
-            Ok(Launched::XdgOpen)
         }
     }
 }
 
-// Ok(None) when the user closed the app chooser.
+// On a bare compositor xdg-open can wait for the app to exit, so still running after this
+// counts as launched.
+const XDG_OPEN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+pub(crate) fn exit_within(
+    child: &mut std::process::Child,
+    grace: std::time::Duration,
+) -> Result<Option<std::process::ExitStatus>, String> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+    let deadline = std::time::Instant::now() + grace;
+    loop {
+        if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
+            return Ok(Some(status));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
 pub fn open_in(request: &ExportRequest) -> Result<Option<Opened>, String> {
     let exported = export_kept(request)?;
     Ok(match open_file(&exported.path)? {
         Launched::Cancelled => None,
         launched => Some(Opened {
             exported,
-            fallback: launched == Launched::XdgOpen,
+            by_xdg_open: launched == Launched::XdgOpen,
         }),
     })
 }
 
-// Ok(None) when the user cancelled the save dialog.
 pub fn export_with_dialog(request: &ExportRequest) -> Result<Option<Exported>, String> {
     let suggested = export_path(request)?;
     match save_dialog(&suggested, request.format) {
-        // The dialog already asked about replacing a file.
+        // The dialog has asked about replacing the file.
         Chosen::Path(path) => export(request, Some(&path), true).map(Some),
         Chosen::Cancelled => Ok(None),
-        Chosen::NoPortal(why) => {
+        Chosen::NoPortal { reason: why } => {
             eprintln!(
                 "[vinowhisper-gui] no save dialog ({why}); exporting to the documents folder"
             );
             let mut exported = export(request, None, false)?;
-            exported.fallback = true;
+            exported.saved_without_dialog = true;
             Ok(Some(exported))
         }
     }
@@ -867,7 +897,7 @@ mod tests {
         assert_eq!(summary_line("  * b"), SummaryLine::Bullet("b".into()));
         assert_eq!(
             summary_line("_Machine-written summary._"),
-            SummaryLine::Note("Machine-written summary.".into())
+            SummaryLine::Footer("Machine-written summary.".into())
         );
         assert_eq!(summary_line("   "), SummaryLine::Blank);
     }
@@ -877,7 +907,7 @@ mod tests {
         let text = "vinoWhisper transcript, x\n\n[00:00] One.\n\n[01:10] Two.\n\n[61:05] Three.\n";
         let found = paragraphs(text);
         assert_eq!(found.len(), 4);
-        assert_eq!(found[0].0, None);
+        assert_eq!(found[0].start_s, None);
         assert_eq!(paragraph_at(&found, 100), Some(2));
         assert_eq!(paragraph_at(&found, 3665), Some(3));
         assert_eq!(paragraph_at(&found, 0), Some(1));
@@ -933,6 +963,37 @@ mod tests {
     }
 
     #[test]
+    fn without_ffprobe_an_import_knows_how_far_it_has_got_but_not_the_length() {
+        assert_eq!(
+            parse_import_line(r#"{"event": "Progress", "position_s": 15.3, "duration_s": null}"#),
+            Some(ImportEvent::Progress {
+                position_s: 15.3,
+                duration_s: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_session_is_named_by_its_start_to_the_minute() {
+        let entry = Entry {
+            name: "a.vwsession".into(),
+            started: Some("2026-10-27T14:05:12-04:00".into()),
+            ..Entry::default()
+        };
+        assert_eq!(entry.when(), "2026-10-27 14:05");
+    }
+
+    #[test]
+    fn a_session_without_a_full_start_time_is_named_by_its_file() {
+        let entry = Entry {
+            name: "2026-10-27-140512.vwsession".into(),
+            started: Some("2026-10-27T14".into()),
+            ..Entry::default()
+        };
+        assert_eq!(entry.when(), "2026-10-27-140512");
+    }
+
+    #[test]
     fn an_import_reads_what_vinowhisper_transcribe_prints() {
         assert_eq!(
             parse_import_line(
@@ -941,14 +1002,6 @@ mod tests {
             Some(ImportEvent::Progress {
                 position_s: 15.3,
                 duration_s: Some(75.0)
-            })
-        );
-        // No ffprobe: the length is not known, only how far it has got.
-        assert_eq!(
-            parse_import_line(r#"{"event": "Progress", "position_s": 15.3, "duration_s": null}"#),
-            Some(ImportEvent::Progress {
-                position_s: 15.3,
-                duration_s: None
             })
         );
         assert_eq!(
@@ -995,7 +1048,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exported.path, PathBuf::from("/d/2026-10-27 Transcript.md"));
-        assert!(exported.summary_missing && !exported.fallback);
+        assert!(exported.summary_missing && !exported.saved_without_dialog);
         let request = ExportRequest {
             path: "/t/a.vwsession".into(),
             scope: Scope::from(Part::Summary),

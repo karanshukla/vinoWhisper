@@ -38,18 +38,16 @@ class OvfetchError(Exception):
     pass
 
 
-# What preload() loaded, once it has: a failed attempt is retried next time.
+# (pinned by `test_ovfetch.py::test_preload_runs_once`, `test_ovfetch.py::test_a_library_that_will_not_load_is_named_and_retried`)
 _preloaded: list[str] | None = None
 
 
+# Run after `import openvino` (the compiler links OpenVINO's TBB) and before anything opens
+# the NPU. RTLD_GLOBAL, so the driver's later dlopen by soname gets the copy already loaded.
+# In the file's order: a driver loaded before the Level Zero loader crashes on its first
+# call into it (ovfetch's README, 2026-10-24) (pinned by
+# `test_ovfetch.py::test_preload_loads_the_list_in_its_order_and_globally`).
 def preload(prefix: Path | None = None) -> list[str]:
-    """Load the libraries `ovfetch npu install` put in its prefix, so the NPU
-    driver finds its compiler (or vinowhisper runs the prefix's driver). Each
-    line of `ovfetch-preload.txt`, in its order, with RTLD_GLOBAL: when the
-    driver later asks for one by soname, the dynamic linker returns the copy
-    already loaded. Must run after `import openvino` (the compiler links
-    OpenVINO's TBB) and before anything opens the NPU; the second call is a
-    no-op. Nothing happens without a prefix. Returns what was loaded."""
     global _preloaded
     if _preloaded is not None:
         return list(_preloaded)

@@ -67,8 +67,9 @@ const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
 const COPIED: &str = "Copied";
 const COPY_REFUSED: &str = "Finish dictating before copying";
 const NO_SETTINGS_WINDOW: &str = "No settings window: run vinowhisper-setup --gui";
-// Under ipc's 2s, so the sender hears a timeout from us rather than from its socket.
+const BUSY: &str = "vinowhisper-tray is busy; try again";
 const ANSWER_WITHIN: Duration = Duration::from_millis(1500);
+const _: () = assert!(ANSWER_WITHIN.as_millis() < ipc::TIMEOUT.as_millis());
 const NOTICE_FOR: Duration = Duration::from_secs(3);
 // Each applied switch costs a model load, so wait out a burst of menu clicks.
 const SPEECH_SETTLE: Duration = Duration::from_millis(1500);
@@ -216,62 +217,9 @@ pub fn run(options: Options) -> Result<(), String> {
         })
         .map_err(|err| format!("command channel: {err}"))?;
 
-    let ipc = {
-        let tx = tx.clone();
-        let forward = move |request| {
-            // These two answer from the event loop, so wait for it there.
-            let answered = |command: fn(mpsc::Sender<ipc::Reply>) -> Command| {
-                let (answer, reply) = mpsc::channel();
-                let _ = tx.send(command(answer));
-                reply
-                    .recv_timeout(ANSWER_WITHIN)
-                    .unwrap_or_else(|_| Err("vinowhisper-tray is busy; try again".into()))
-            };
-            let command = match request {
-                Request::Show => Command::Show,
-                Request::Hide => Command::Hide,
-                Request::Toggle => Command::Toggle,
-                Request::Quit => Command::Quit,
-                Request::Reload => return answered(Command::Reload),
-                Request::Shortcuts => return answered(Command::QueryShortcuts),
-                Request::ConfigureShortcut => Command::ConfigureShortcut,
-                Request::Dictate => {
-                    // A tap: starts hands-free, or finishes what is running.
-                    let _ = tx.send(Command::DictateKey { down: true });
-                    Command::DictateKey { down: false }
-                }
-                Request::DictatePress => Command::DictateKey { down: true },
-                Request::DictateRelease => Command::DictateKey { down: false },
-                Request::Ping => return Ok(String::new()),
-                Request::SummariesReady => {
-                    crate::summaries::announce_ready(open_settings_window);
-                    return Ok(String::new());
-                }
-            };
-            let _ = tx.send(command);
-            Ok(String::new())
-        };
-        match ipc::listen(forward) {
-            Ok(listener) => Some(listener),
-            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => return Err(err.to_string()),
-            Err(err) => {
-                eprintln!(
-                    "[vinowhisper-tray] `vinowhisper-tray toggle` will not reach this instance: {err}"
-                );
-                None
-            }
-        }
-    };
-
+    let ipc = listen_for_requests(tx.clone())?;
     // Before the portal: it refuses a shortcut to an app with no desktop file.
-    match install::ensure_launcher() {
-        Ok(Some(path)) => eprintln!(
-            "[vinowhisper-tray] added a launcher at {} (the shortcut portal needs one)",
-            path.display()
-        ),
-        Ok(None) => {}
-        Err(err) => eprintln!("[vinowhisper-tray] no launcher, so no global shortcut: {err}"),
-    }
+    ensure_launcher();
     let settings = Settings::load();
     let shortcut = Shortcut::spawn(settings.shortcut.clone(), tx.clone());
     let portal = Portal::spawn(tx.clone(), settings.typing_idle_minutes);
@@ -345,6 +293,81 @@ pub fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
+fn listen_for_requests(tx: Sender<Command>) -> Result<Option<ipc::Listener>, String> {
+    match ipc::listen(move |request| forward(&tx, request)) {
+        Ok(listener) => Ok(Some(listener)),
+        Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => Err(err.to_string()),
+        Err(err) => {
+            eprintln!(
+                "[vinowhisper-tray] `vinowhisper-tray toggle` will not reach this instance: {err}"
+            );
+            Ok(None)
+        }
+    }
+}
+
+enum Route {
+    Send(Vec<Command>),
+    AwaitAnswer(fn(mpsc::Sender<ipc::Reply>) -> Command),
+    AnswerNow,
+    SummariesReady,
+}
+
+fn route(request: Request) -> Route {
+    let key = |down| Command::DictateKey { down };
+    match request {
+        Request::Show => Route::Send(vec![Command::Show]),
+        Request::Hide => Route::Send(vec![Command::Hide]),
+        Request::Toggle => Route::Send(vec![Command::Toggle]),
+        Request::Quit => Route::Send(vec![Command::Quit]),
+        Request::Reload => Route::AwaitAnswer(Command::Reload),
+        Request::Shortcuts => Route::AwaitAnswer(Command::QueryShortcuts),
+        Request::ConfigureShortcut => Route::Send(vec![Command::ConfigureShortcut]),
+        // (pinned by `tests::a_dictate_request_is_a_tap_of_the_key`)
+        Request::Dictate => Route::Send(vec![key(true), key(false)]),
+        Request::DictatePress => Route::Send(vec![key(true)]),
+        Request::DictateRelease => Route::Send(vec![key(false)]),
+        Request::Ping => Route::AnswerNow,
+        Request::SummariesReady => Route::SummariesReady,
+    }
+}
+
+fn forward(tx: &Sender<Command>, request: Request) -> ipc::Reply {
+    match route(request) {
+        Route::Send(commands) => {
+            for command in commands {
+                let _ = tx.send(command);
+            }
+        }
+        Route::AwaitAnswer(command) => return await_answer(tx, command),
+        Route::AnswerNow => {}
+        Route::SummariesReady => crate::summaries::announce_ready(open_settings_window),
+    }
+    Ok(String::new())
+}
+
+fn await_answer(
+    tx: &Sender<Command>,
+    command: fn(mpsc::Sender<ipc::Reply>) -> Command,
+) -> ipc::Reply {
+    let (answer, reply) = mpsc::channel();
+    let _ = tx.send(command(answer));
+    reply
+        .recv_timeout(ANSWER_WITHIN)
+        .unwrap_or_else(|_| Err(BUSY.into()))
+}
+
+fn ensure_launcher() {
+    match install::ensure_launcher() {
+        Ok(Some(path)) => eprintln!(
+            "[vinowhisper-tray] added a launcher at {} (the shortcut portal needs one)",
+            path.display()
+        ),
+        Ok(None) => {}
+        Err(err) => eprintln!("[vinowhisper-tray] no launcher, so no global shortcut: {err}"),
+    }
+}
+
 impl App {
     fn handle(&mut self, command: Command) {
         match command {
@@ -384,19 +407,7 @@ impl App {
             }
             Command::Dictation { generation, event } => {
                 if self.dictator_is(generation) {
-                    match &event {
-                        Dictate::Level { .. } => {}
-                        Dictate::Dictated { text } => trace(format_args!(
-                            "dictate says Dictated ({} chars)",
-                            text.chars().count()
-                        )),
-                        event => trace(format_args!("dictate says {event:?}")),
-                    }
-                    let action = self.dictation.event(event);
-                    if let Some(Action::Paste(text)) = &action {
-                        self.recent.push(text);
-                    }
-                    self.dictate(action);
+                    self.on_dictate_event(event);
                 }
             }
             Command::DictatorExited {
@@ -420,14 +431,7 @@ impl App {
             }
             Command::Caption { generation, event } => {
                 if self.is_current(generation) {
-                    let before = self.captions.frame();
-                    self.captions.apply(event);
-                    if self.captions.silent_long_enough_to_hide() {
-                        trace(format_args!("silent past hide_after_silence_s, hiding"));
-                        self.hide();
-                    } else if self.captions.frame() != before {
-                        self.draw();
-                    }
+                    self.on_caption_event(event);
                 }
             }
             Command::CaptionExited {
@@ -439,6 +443,33 @@ impl App {
         }
         self.track_idle();
         self.sync_tray();
+    }
+
+    fn on_dictate_event(&mut self, event: Dictate) {
+        match &event {
+            Dictate::Level { .. } => {}
+            Dictate::Dictated { text } => trace(format_args!(
+                "dictate says Dictated ({} chars)",
+                text.chars().count()
+            )),
+            event => trace(format_args!("dictate says {event:?}")),
+        }
+        let action = self.dictation.event(event);
+        if let Some(Action::Paste(text)) = &action {
+            self.recent.push(text);
+        }
+        self.dictate(action);
+    }
+
+    fn on_caption_event(&mut self, event: Event) {
+        let before = self.captions.frame();
+        self.captions.apply(event);
+        if self.captions.silent_long_enough_to_hide() {
+            trace(format_args!("silent past hide_after_silence_s, hiding"));
+            self.hide();
+        } else if self.captions.frame() != before {
+            self.draw();
+        }
     }
 
     fn track_idle(&mut self) {
@@ -518,13 +549,12 @@ impl App {
         }
     }
 
-    // Applies only what differs, so a save of one field does not restart captions.
     fn reload(&mut self) -> ipc::Reply {
         let was = self.source();
         let old = std::mem::replace(&mut self.settings, Settings::load());
         let changes = self.settings.changes_from(&old);
         if changes.source {
-            // The file now says what the user wants, over a one-run --source flag.
+            // The file's new source beats a one-run --source flag.
             self.source_override = None;
         }
         if self.source() != was {
@@ -544,24 +574,21 @@ impl App {
             }
         }
         if changes.shortcut {
-            // The portal keeps the binding the user already has; the file's trigger is only
-            // its suggestion for a shortcut it has not bound yet.
             eprintln!(
                 "[vinowhisper-tray] the shortcut in gui.json changed; an existing binding is \
                  changed from vinowhisper-gui (Shortcuts), not here"
             );
         }
-        if self.set_speech(Speech::load()) {
+        if self.try_set_speech(Speech::load()) {
             Ok(String::new())
         } else {
-            // Put the file back, so the window reads what is really in use.
+            // Undo the refused switch in the file the settings window reads.
             self.speech.save();
             Err(SWITCH_REFUSED.into())
         }
     }
 
-    // false when refused: a switch mid-dictation would drop what was said.
-    fn set_speech(&mut self, speech: Speech) -> bool {
+    fn try_set_speech(&mut self, speech: Speech) -> bool {
         let speech = speech.normalised();
         if speech == self.speech {
             return true;
@@ -608,7 +635,10 @@ impl App {
     fn refuse_speech_switch(&mut self) {
         eprintln!("[vinowhisper-tray] language not changed: {SWITCH_REFUSED}");
         self.flash(SWITCH_REFUSED);
-        // The menu may already show the clicked choice; push the real one back.
+        self.resend_tray_view();
+    }
+
+    fn resend_tray_view(&mut self) {
         self.tray_view = None;
         self.sync_tray();
     }
@@ -840,5 +870,57 @@ pub fn trace(message: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("VINOWHISPER_TRAY_TRACE").is_some_and(|v| v == "1")) {
         eprintln!("[vinowhisper-tray] {message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dictate_request_is_a_tap_of_the_key() {
+        let Route::Send(commands) = route(Request::Dictate) else {
+            panic!("dictate is sent, not answered");
+        };
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::DictateKey { down: true },
+                Command::DictateKey { down: false }
+            ]
+        ));
+    }
+
+    #[test]
+    fn press_and_release_requests_are_one_key_edge_each() {
+        for (request, down) in [
+            (Request::DictatePress, true),
+            (Request::DictateRelease, false),
+        ] {
+            let Route::Send(commands) = route(request) else {
+                panic!("{request:?} is sent, not answered");
+            };
+            assert!(
+                matches!(commands.as_slice(), [Command::DictateKey { down: d }] if *d == down),
+                "{request:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reload_and_shortcuts_wait_for_the_event_loops_answer() {
+        for request in [Request::Reload, Request::Shortcuts] {
+            assert!(
+                matches!(route(request), Route::AwaitAnswer(_)),
+                "{request:?}"
+            );
+        }
+        assert!(matches!(route(Request::Ping), Route::AnswerNow));
+    }
+
+    #[test]
+    fn an_event_loop_that_never_answers_is_reported_busy() {
+        let (tx, _commands) = channel::channel();
+        assert_eq!(await_answer(&tx, Command::Reload), Err(BUSY.into()));
     }
 }

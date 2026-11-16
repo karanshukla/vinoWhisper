@@ -368,6 +368,22 @@ def test_transcript_is_off_unless_asked_for(monkeypatch, tmp_path, capsys):
     assert list(tmp_path.iterdir()) == []
 
 
+def _trackers_made(monkeypatch, tmp_path, source):
+    made = []
+    monkeypatch.setattr(caption.playing, "Tracker", lambda target: made.append(target))
+    flags = ("--source", source, "--transcript", str(tmp_path / "t"))
+    assert _scripted(monkeypatch, tmp_path, *flags) == 0
+    return made
+
+
+def test_a_mic_session_does_not_track_what_is_playing(monkeypatch, tmp_path, capsys):
+    assert _trackers_made(monkeypatch, tmp_path, "mic") == []
+
+
+def test_a_system_audio_session_tracks_what_is_playing(monkeypatch, tmp_path, capsys):
+    assert _trackers_made(monkeypatch, tmp_path, "output") == [None]
+
+
 def _failing(monkeypatch, exc, *flags):
     def fake_events(**_kwargs):
         yield events.Ready(device="NPU")

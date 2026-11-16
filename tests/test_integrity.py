@@ -17,9 +17,7 @@ import pytest
 
 from vinowhisper import config, integrity
 
-# A stripped IR tail. Real exports put rt_info at the end of the graph, after
-# several hundred KB of layers, which is why the reader seeks rather than
-# reads the whole file.
+# A stripped IR tail: real exports put rt_info after several hundred KB of layers.
 _RT_INFO = """\
 	<rt_info>
 		<info name="OpenVINO Runtime" value="{runtime}" />
@@ -67,9 +65,6 @@ def pin_for(directory: Path, variant: str = "npu", model_id: str = config.MODEL_
     return {f"{model_id}/{variant}": pin}
 
 
-# --- reading the export ---------------------------------------------------
-
-
 def test_every_file_in_the_export_is_digested(tmp_path):
     """Not just the weights: generation_config decides how decoding behaves."""
     digests = integrity.digest_export(make_export(tmp_path / "npu"))
@@ -103,9 +98,6 @@ def test_an_export_with_no_readable_rt_info_reports_nothing(tmp_path):
     directory.mkdir()
     (directory / "openvino_encoder_model.xml").write_text("<net/>", encoding="utf-8")
     assert integrity.read_toolchain(directory) == {}
-
-
-# --- verification ---------------------------------------------------------
 
 
 def test_an_untouched_export_verifies(tmp_path):
@@ -346,9 +338,6 @@ def test_the_shipped_pin_names_the_transformers_release_that_breaks_the_export()
     assert pin.bad_toolchain({"transformers_version": "5.5.4"})
 
 
-# --- every failure names its fix ------------------------------------------
-
-
 @pytest.mark.parametrize(
     "status",
     [
@@ -375,9 +364,6 @@ def test_every_non_verified_status_prints_a_command(tmp_path, status):
         or "setup" in text
         or "pinned export was produced by" in text
     )
-
-
-# --- the pin file itself --------------------------------------------------
 
 
 def test_the_shipped_pin_file_parses_and_covers_both_variants():
@@ -430,9 +416,6 @@ def test_writing_a_pin_leaves_the_other_entries_alone(tmp_path):
     written = json.loads(path.read_text(encoding="utf-8"))
     assert set(written["exports"]) == {"a/model/npu", "b/model/stateful"}
     assert written["schema"] == integrity.SCHEMA
-
-
-# --- the toolchain is read from every graph, not one -----------------------
 
 
 def test_the_toolchain_merges_what_each_graph_knows(tmp_path):

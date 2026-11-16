@@ -49,8 +49,10 @@ uv run poe check    # ruff, ruff format --check, mypy, pytest
   only be verified on hardware, say so in the PR instead of faking a test.
 - A red `test_characterization_*` test means a deliberate oddity changed.
   Say in the PR whether that was the point.
-- Keep code comments to one line, and only where the code would invite a
-  wrong "fix". Longer reasoning goes in `docs/`.
+- Comments are the last resort: extract, name, or pin a rule with a test pair
+  first, and cite the test from the code it governs. See
+  [docs/comment-style.md](docs/comment-style.md); the Doc Links CI job checks the
+  citations. Longer reasoning goes in `docs/`.
 - Measured claims carry a date.
 - Commits are conventional (`feat:`, `fix:`, `docs:`, ...); the changelog is
   generated from them.

@@ -75,7 +75,7 @@ def documents_dir() -> Path:
             if match:
                 found = match.group(1).replace("$HOME", str(home))
     path = Path(found).expanduser() if found else home / "Documents"
-    # xdg-user-dirs points a disabled directory at $HOME itself.
+    # (pinned by `test_session_export.py::test_a_documents_dir_pointed_at_home_means_home_documents`)
     return home / "Documents" if path == home else path
 
 
@@ -155,7 +155,7 @@ def _summary_blocks(summary: str, title: str | None) -> list[Block]:
         hashes = len(line) - len(line.lstrip("#"))
         if 1 <= hashes <= 6 and line[hashes:].startswith(" "):
             text = line[hashes:].strip()
-            # The summary's own title is the document's.
+            # (pinned by `test_session_export.py::test_the_summary_title_becomes_the_documents_not_a_second_heading`)
             if not skipped_title and hashes == 1 and text == title:
                 skipped_title = True
                 continue
@@ -171,7 +171,7 @@ def _summary_blocks(summary: str, title: str | None) -> list[Block]:
 
 def _transcript_blocks(transcript: str) -> list[Block]:
     paragraphs = [p.strip() for p in transcript.split("\n\n") if p.strip()]
-    # The header line is what the facts above already say.
+    # (pinned by `test_session_export.py::test_the_transcript_header_line_is_left_out`)
     if paragraphs and paragraphs[0].startswith("vinoWhisper transcript, "):
         paragraphs = paragraphs[1:]
     return [Block("paragraph", " ".join(p.split("\n"))) for p in paragraphs]
@@ -202,7 +202,6 @@ def to_markdown(document: Document) -> str:
         lines += ["", f"## {name}"]
         previous = ""
         for block in blocks:
-            # Bullets in a row stay one list.
             if not (block.kind == "bullet" and previous == "bullet"):
                 lines.append("")
             if block.kind == "heading":
@@ -353,7 +352,7 @@ def _meta(document: Document) -> str:
 def to_odt(document: Document) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        # Like the bundle: mimetype first, stored, so `file` and the magic see an ODT.
+        # (pinned by `test_session_export.py::test_the_odt_mimetype_sits_where_file_and_file_managers_read_it`)
         entries = [
             ("mimetype", ODT_MIMETYPE, zipfile.ZIP_STORED),
             ("META-INF/manifest.xml", _MANIFEST.encode(), zipfile.ZIP_DEFLATED),
@@ -394,13 +393,13 @@ def _write(path: Path, data: bytes, force: bool) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        # Leaving the private store on purpose: readable like any document.
+        # (pinned by `test_session_export.py::test_the_file_is_readable_by_others_and_written_atomically`)
         os.chmod(temp, 0o644)
         if force:
             os.replace(temp, path)
             return
         try:
-            # A link fails if the name is taken, so two exports cannot clobber each other.
+            # Unlike a rename, a link fails if the name is taken.
             os.link(temp, path)
         except FileExistsError:
             raise ExportError(f"{path} already exists; --force replaces it") from None
@@ -455,13 +454,13 @@ def export(
     if force or not _into_dir(out):
         _write(first, data, force)
         return Exported(first, document.parts, document.summary_missing, "written")
-    # Into a directory nothing is replaced: a taken name gets " (2)", " (3)", ...
+    # (pinned by `test_session_export.py::test_into_a_directory_a_taken_name_is_numbered_not_replaced`)
     for n in range(1, 100):
         candidate = _numbered(first, n)
         if reuse and candidate.is_file():
             if candidate.read_bytes() == data:
                 return Exported(candidate, document.parts, document.summary_missing, "unchanged")
-            # Edited since, or the summary changed: either way the file is the user's now.
+            # (pinned by `test_session_export.py::test_reuse_keeps_an_earlier_export_and_says_whether_it_was_edited`)
             if _from_session(candidate, read, fmt):
                 return Exported(candidate, document.parts, document.summary_missing, "edited")
             continue

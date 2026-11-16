@@ -193,16 +193,6 @@ def test_a_prefix_from_npu_install_is_reported():
     assert all(note.label != "npu: ovfetch prefix" for note in ovfetch.notes(status(), "2026.4.0"))
 
 
-# --- the NPU prefix's libraries --------------------------------------------
-#
-# `ovfetch npu install` puts the compiler a distro's driver package lacks (or a
-# whole driver) in ~/.local/lib/ovfetch-npu, off the linker path. vinowhisper
-# loads them itself, in the order ovfetch-preload.txt gives, before OpenVINO
-# opens the NPU. Measured 2026-10-24 (ovfetch's README): a driver loaded
-# before the Level Zero loader crashes on its first call into it, so the order
-# is the file's, not ours.
-
-
 @pytest.fixture
 def loader(monkeypatch):
     loaded: list[tuple[str, int]] = []
@@ -254,11 +244,7 @@ def test_a_library_that_will_not_load_is_named_and_retried(tmp_path, loader, mon
     monkeypatch.setattr(ovfetch.ctypes, "CDLL", failing)
     with pytest.raises(ovfetch.OvfetchError, match="libmissing.so"):
         ovfetch.preload(prefix)
-    # Not cached as done: the next attempt loads again.
     assert ovfetch._preloaded is None
-
-
-# --- installing it -------------------------------------------------------
 
 
 def _pin(tmp_path, body=b"\x7fELF ovfetch", arch="x86_64"):

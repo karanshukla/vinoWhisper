@@ -1,5 +1,8 @@
 use super::*;
 
+// The portal takes a moment to answer a fresh tray.
+const FRESH_TRAY_PORTAL_DELAY: Duration = Duration::from_millis(1500);
+
 impl SettingsWindow {
     pub(super) fn ask_shortcuts(&self, ctx: &egui::Context, after: Duration) {
         let shortcuts = Arc::clone(&self.shortcuts);
@@ -54,8 +57,7 @@ impl SettingsWindow {
                     .show(ui, |ui, _| {
                         if ui.add(Button::primary("Start vinoWhisper")).clicked() {
                             forward::run_tray(&["--hidden"]);
-                            // The portal takes a moment to answer a fresh tray.
-                            self.ask_shortcuts(ui.ctx(), Duration::from_millis(1500));
+                            self.ask_shortcuts(ui.ctx(), FRESH_TRAY_PORTAL_DELAY);
                         }
                     });
             }

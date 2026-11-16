@@ -13,7 +13,6 @@ pub(super) fn spawn_settings(args: &[String]) -> std::io::Result<()> {
         .spawn()
     {
         Ok(mut child) => {
-            // Reaped off the event loop; the window outlives nothing it needs from us.
             std::thread::spawn(move || {
                 let _ = child.wait();
             });

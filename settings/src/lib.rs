@@ -104,8 +104,8 @@ impl Language {
         Language::Auto,
     ];
 
-    // config.languages("canary-1b-v2"). Auto only translates: Canary cannot detect a
-    // language to transcribe it (Speech::normalised).
+    // config.languages("canary-1b-v2") (pinned by
+    // `tests::every_whisper_language_is_also_a_canary_language`)
     pub const CANARY: [Language; 26] = [
         Language::En,
         Language::Bg,
@@ -201,8 +201,9 @@ impl Speech {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Speech::default();
         };
-        // Field by field like config.load_language: an unknown model (a newer version's) is
-        // Whisper, and a bad or contradictory language is English without losing the model.
+        // Field by field like config.load_language (pinned by
+        // `tests::an_unknown_model_is_whisper_and_keeps_the_language`,
+        // `tests::a_language_the_model_lacks_is_english_like_the_server`).
         let Ok(serde_json::Value::Object(raw)) = serde_json::from_str(&text) else {
             return Speech::default();
         };
@@ -218,19 +219,13 @@ impl Speech {
             None => Some(Task::Transcribe),
             Some(v) => serde_json::from_value(v.clone()).ok(),
         };
-        match (language, task) {
-            (Some(language), Some(task))
-                if Speech {
+        match language.zip(task) {
+            Some((language, task))
+                if Speech::is_normal(Speech {
                     language,
                     task,
                     model,
-                }
-                .normalised()
-                    == (Speech {
-                        language,
-                        task,
-                        model,
-                    }) =>
+                }) =>
             {
                 Speech {
                     language,
@@ -245,6 +240,10 @@ impl Speech {
         }
     }
 
+    fn is_normal(self) -> bool {
+        self.normalised() == self
+    }
+
     /// The pair the server would accept: English never translates, an unknown language is English.
     pub fn normalised(mut self) -> Speech {
         if !self.model.languages().contains(&self.language) || self.auto_cannot_transcribe() {
@@ -256,7 +255,8 @@ impl Speech {
         self
     }
 
-    // Canary has no language detection to transcribe with.
+    // Canary has no language detection to transcribe with (pinned by
+    // `tests::canary_keeps_auto_only_to_translate`).
     fn auto_cannot_transcribe(self) -> bool {
         self.model == SpeechModel::Canary
             && self.language == Language::Auto
@@ -463,7 +463,7 @@ fn has_xml(dir: &Path) -> bool {
     })
 }
 
-/// Where the sessions window's "Open in…" sends a session (#138): the last one picked.
+/// Where the sessions window's "Open in…" sends a session: the last one picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenIn {
@@ -472,15 +472,14 @@ pub enum OpenIn {
     TextEditor,
 }
 
-// The settings window's Wayland app id; the tray installs a desktop entry under it for the icon.
+// The tray installs a desktop entry under it for the window's icon.
 pub const SETTINGS_APP_ID: &str = "io.github.karanshukla.vinowhisper.settings";
 
-// The tray's APP_ID: the icon every vinoWhisper desktop entry uses.
+// The tray's APP_ID.
 pub const APP_ICON: &str = "io.github.karanshukla.vinowhisper";
 
-// Saved sessions in the app menu, off until the Sessions page turns it on. The file being
-// there is the setting, as vinoSearch does for its search window. No StartupWMClass: the
-// sessions window's app id is the settings window's.
+// The entry's file being there is the setting, as for vinoSearch's search window. No
+// StartupWMClass: the sessions window's app id is the settings window's.
 pub const SESSIONS_ENTRY_ID: &str = "io.github.karanshukla.vinowhisper.sessions";
 
 pub fn sessions_entry_in(data: &Path) -> PathBuf {
@@ -586,9 +585,9 @@ pub struct Settings {
     pub hide_after_silence_s: u64,
     pub save_transcripts: bool,
     pub open_in: OpenIn,
-    /// Pause MPRIS players that are playing while dictating, and resume them after (#163).
+    /// Pause MPRIS players that are playing while dictating, and resume them after.
     pub pause_media: bool,
-    /// A space before a dictation typed straight after another one (#120).
+    /// A space before a dictation typed straight after another one.
     pub smart_spacing: bool,
     /// Minutes the remote-desktop session stays open after a dictation; 0 keeps it open.
     pub typing_idle_minutes: u64,
@@ -667,15 +666,16 @@ pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
-// Renamed over the file, so a reader or a crash never sees half of one: every
-// loader reads a broken file as defaults, silently.
+// Every loader reads a broken file as defaults, silently, so a save renames a whole file
+// over it (pinned by `tests::a_save_replaces_the_file_rather_than_rewriting_it`,
+// `tests::a_failed_save_leaves_the_old_file_and_no_partial`).
 fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let text = serde_json::to_string_pretty(value).map_err(io::Error::other)? + "\n";
     write_text(path, &text)
 }
 
 fn write_text(path: &Path, text: &str) -> io::Result<()> {
-    // Through a symlink, so a dotfiles-managed link stays a link.
+    // (pinned by `tests::a_save_through_a_symlink_keeps_the_link`)
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
@@ -698,7 +698,7 @@ fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
     xdg_dir_from(std::env::var_os(variable), &home(), fallback)
 }
 
-// Taken as given, relative or not, as config.py does: the two sides must name the same files.
+// Taken as given, relative or not, as config.py does: both sides must name the same files.
 fn xdg_dir_from(value: Option<std::ffi::OsString>, home: &Path, fallback: &str) -> PathBuf {
     match value {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
@@ -759,7 +759,6 @@ mod tests {
         let new = Settings {
             size: TextSize::Large,
             tray_idle_minutes: 0,
-            // not acted on live: save_transcripts is read when the next session starts
             save_transcripts: true,
             ..Settings::default()
         };
@@ -799,8 +798,11 @@ mod tests {
             ..Settings::default()
         };
         changed.save_to(&path).unwrap();
-        // A new inode: renamed into place, so no reader saw it truncated.
-        assert_ne!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().ino(),
+            before,
+            "renamed into place, so no reader saw it truncated"
+        );
         assert_eq!(Settings::load_from(&path), changed);
         let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -834,10 +836,13 @@ mod tests {
     fn a_failed_save_leaves_the_old_file_and_no_partial() {
         let path = scratch("failed");
         Settings::default().save_to(&path).unwrap();
-        // A directory where the file should be: the rename fails.
-        let blocked = path.parent().unwrap().join("blocked.json");
-        std::fs::create_dir_all(blocked.join("inside")).unwrap();
-        assert!(Settings::default().save_to(&blocked).is_err());
+        let a_directory_in_the_way = path.parent().unwrap().join("blocked.json");
+        std::fs::create_dir_all(a_directory_in_the_way.join("inside")).unwrap();
+        assert!(
+            Settings::default()
+                .save_to(&a_directory_in_the_way)
+                .is_err()
+        );
         let partials = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .filter(|entry| {
@@ -1000,7 +1005,11 @@ mod tests {
             r#"{"language":"fr","task":"translate","model":"canary-1b-v2"}"#
         );
         assert_eq!(Speech::load_from(&path), speech);
-        // Written before #143: no model is Whisper.
+    }
+
+    #[test]
+    fn a_file_from_before_canary_is_whisper() {
+        let path = scratch("speech-no-model");
         std::fs::write(&path, r#"{"language":"fr","task":"translate"}"#).unwrap();
         assert_eq!(Speech::load_from(&path).model, SpeechModel::Whisper);
     }

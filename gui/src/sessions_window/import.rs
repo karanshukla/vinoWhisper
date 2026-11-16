@@ -20,8 +20,8 @@ impl SessionsWindow {
                 if let Some(import) = locked.import.as_mut() {
                     match event {
                         ImportEvent::Chosen(name) => import.name = name,
-                        ImportEvent::Started(pid) => import.pid = Some(pid),
-                        ImportEvent::Ending => import.pid = None,
+                        ImportEvent::Started { pid } => import.pid = Some(pid),
+                        ImportEvent::OutputEnded => import.pid = None,
                         ImportEvent::Progress {
                             position_s,
                             duration_s,
@@ -42,7 +42,8 @@ impl SessionsWindow {
             locked.import_warnings = import.warnings;
             locked.imported = match result {
                 Ok(Some(path)) => Some(Ok(path)),
-                // Closing the dialog, or Cancel, is not a failure to report.
+                // (pinned by `tests::a_failed_import_says_why_and_a_closed_dialog_says_nothing`,
+                // `tests::cancel_marks_the_import_and_its_ending_is_not_reported_as_a_failure`)
                 Ok(None) => None,
                 Err(_) if cancelled => None,
                 Err(why) => Some(Err(why)),
@@ -139,7 +140,6 @@ impl SessionsWindow {
             if dismissed {
                 state.imported = None;
             }
-            // Either dismissal clears them: they are about the import just shown.
             state.import_warnings.clear();
         }
     }

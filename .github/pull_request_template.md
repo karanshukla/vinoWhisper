@@ -23,6 +23,6 @@ server and no OpenVINO there. Say which of these applies:
 
 ## Checklist
 
-- [ ] Comments explain *why*, not what, and any measured claim carries a date
+- [ ] Comments follow [docs/comment-style.md](../docs/comment-style.md), and any measured claim carries a date
 - [ ] README / CLAUDE.md updated if behaviour or setup changed
 - [ ] No secrets, tokens or machine-specific paths committed

@@ -5,7 +5,7 @@ impl SessionsWindow {
         self.reading.as_ref().is_some_and(|r| r.path == path)
     }
 
-    // One reading at a time: starting one, or Stop, ends the last.
+    // (pinned by `tests::stop_ends_the_reading_and_whatever_it_started`)
     pub(super) fn read_aloud(&mut self, path: &std::path::Path, part: Part) {
         let was = self.reading.take().map(|r| r.path.clone());
         self.read_error = None;

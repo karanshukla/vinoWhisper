@@ -31,15 +31,13 @@ use parts::*;
 struct Viewer {
     target: Option<Target>,
     text: Option<Result<String, String>>,
-    // Scrolled to target.at_s already; only the first frame after loading jumps.
-    scrolled: bool,
+    jumped_to_stamp: bool,
     copied: bool,
 }
 
 #[derive(Clone, Default)]
 struct SessionsState {
     listing: Option<Result<Listing, String>>,
-    // While the server is summarising, the list is read again every REFRESH_EVERY.
     listed_at: Option<std::time::Instant>,
     refreshing: bool,
     viewer: Viewer,
@@ -52,11 +50,10 @@ struct SessionsState {
     import: Option<Import>,
     imported: Option<Result<PathBuf, String>>,
     import_warnings: Vec<String>,
-    // An import added a session: the next frame lists again.
     relist: bool,
 }
 
-// A file being transcribed into a session; `name` is empty until the dialog answers.
+// `name` is empty until the dialog answers.
 #[derive(Clone, Default)]
 struct Import {
     name: String,
@@ -75,21 +72,17 @@ struct ExportDialog {
     has_summary: bool,
 }
 
-// Asks where (the save dialog) and writes; Ok(None) when the user cancelled. Tests swap it.
+// Tests swap these for stand-ins; `Ok(None)` is a dialog the user closed.
 type Exporter = Arc<dyn Fn(&ExportRequest) -> Result<Option<Exported>, String> + Send + Sync>;
-// Exports a kept copy and hands it to an app; Ok(None) when the app chooser was closed.
 type Opener = Arc<dyn Fn(&ExportRequest) -> Result<Option<Opened>, String> + Send + Sync>;
-
-// Asks which file and transcribes it, reporting as it goes; Ok(None) when the dialog was closed.
 type Importer =
     Arc<dyn Fn(&mut dyn FnMut(ImportEvent)) -> Result<Option<PathBuf>, String> + Send + Sync>;
 
 const REFRESH_EVERY: Duration = Duration::from_secs(2);
 
-// Under this the header and the import banner drop what does not fit.
+// (pinned by `tests::a_narrow_window_keeps_import_as_a_named_plus_button`)
 const NARROW_BELOW: f32 = 560.0;
 const LIST_MAX_WIDTH: f32 = 760.0;
-// Narrower than the list: this is for reading.
 const READING_MAX_WIDTH: f32 = 640.0;
 
 struct SessionsWindow {
@@ -99,12 +92,11 @@ struct SessionsWindow {
     focused: bool,
     listed_once: bool,
     kde_header: Option<theme::KdeHeader>,
-    // The window's buttons and edges are drawn here, not by the desktop (vino-ui's `window`).
     app_title_bar: bool,
     text_scale: Option<f32>,
     export_dialog: Option<ExportDialog>,
     exporter: Exporter,
-    // vinoSpeak, looked up once when the window opens; no button without it.
+    // (pinned by `tests::read_aloud_is_not_offered_without_vinospeak`)
     speaker: Option<PathBuf>,
     reading: Option<Reading>,
     read_error: Option<String>,
@@ -191,7 +183,7 @@ impl SessionsWindow {
         std::thread::spawn(move || {
             let text = sessions::show(&target.path, target.part);
             let mut state = state.lock().unwrap();
-            // Only if it is still the one asked for: a quick second click wins.
+            // A quicker second click has replaced it.
             if state.viewer.target.as_ref() == Some(&target) {
                 state.viewer.text = Some(text);
             }
@@ -225,7 +217,7 @@ impl SessionsWindow {
         });
     }
 
-    // The window minus its side effects but the buttons', for tests to drive alone.
+    // Draws without listing, reading or spawning, so tests can drive it.
     fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
@@ -241,9 +233,9 @@ impl SessionsWindow {
             .show(ui, |ui| {
                 if self.app_title_bar {
                     vino_ui::window::drag(ui, ui.clip_rect(), "header");
-                    // In the window's corner, not in a row: the header's first row differs between list and session.
+                    // Not in a row: the header's first row differs between list and session.
                     vino_ui::window::corner(ui);
-                    // The header is the handle, so a press on a label drags the window.
+                    // A press on a label drags the window.
                     ui.style_mut().interaction.selectable_labels = false;
                 }
                 if viewing {
@@ -260,7 +252,6 @@ impl SessionsWindow {
                             if ui.add(Button::ghost("Settings")).clicked() {
                                 forward::open_settings("sessions");
                             }
-                            // The label runs under the title in a narrow window: a plus there.
                             let name = "Import audio or video…";
                             let idle = state.import.is_none();
                             let import = if ctx.content_rect().width() < NARROW_BELOW {

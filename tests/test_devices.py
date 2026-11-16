@@ -84,10 +84,8 @@ def test_preflight_reports_a_permission_problem(monkeypatch, tmp_path):
     node.chmod(0o000)
     monkeypatch.setattr(devices, "accel_nodes", lambda: [node])
     notes = devices.npu_preflight()
-    assert notes[0].ok is True  # the node exists
-    # Running as root defeats the permission check entirely, which is fine —
-    # the assertion is that the check reports one way or the other, with the
-    # group hint attached when it fails.
+    assert notes[0].ok is True
+    # As root the check passes, so the hint is only asserted when it fails.
     permission = notes[1]
     assert permission.label == "device permissions"
     if permission.ok is False:
@@ -116,22 +114,22 @@ def test_missing_npu_help_ends_with_the_distro_remediation(monkeypatch):
     assert any("linux-npu-driver" in line for line in lines)
 
 
-# --- Userspace NPU libraries ---------------------------------------------
-#
-# The case each of these covers is one where every kernel-side check above
-# passes and the NPU still cannot compile a model, which is exactly the failure
-# that is invisible without this.
-
-
 def fake_lib(path, marker: str = "") -> None:
     """A stand-in .so: real enough for the marker scan, 200 bytes rather than 127MB."""
     path.write_bytes(b"\x7fELF" + b"\x00" * 64 + marker.encode() + b"\x00" * 64)
 
 
-# What each driver's binary names, measured 2026-09-28 with `strings`: 1.35.0
-# stores the loader's name split, so only its prefix appears.
+# What `strings` found in each driver, 2026-09-28.
 DRIVER_1_35 = "npu-linux-driver-ci-1.35.0.20260722\0libopenvino_intel_npu_compiler_l\0libnpu_driver_compiler.so"
 DRIVER_1_32 = "npu-linux-driver-ci-1.32.0.20260402\0libnpu_driver_compiler.so"
+
+
+COMPILER_BUILD = "2026.3.0-22159-4089686065a-0722.205447"
+
+
+def backend(libdir, version: str, marker: str = "") -> None:
+    fake_lib(libdir / f"libze_intel_npu.so.{version}", marker)
+    (libdir / "libze_intel_npu.so.1").symlink_to(f"libze_intel_npu.so.{version}")
 
 
 @pytest.fixture
@@ -145,33 +143,48 @@ def labelled(notes, label):
 
 
 def test_userspace_reports_both_libraries_and_their_versions(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    backend(libdir, "1.35.0", DRIVER_1_35)
     fake_lib(libdir / devices.COMPILER_LIB)
-    fake_lib(libdir / devices.COMPILER_LOADER, "2026.3.0-22159-4089686065a-0722.205447")
+    fake_lib(libdir / devices.COMPILER_LOADER, COMPILER_BUILD)
 
     notes = devices.npu_userspace()
-    backend = labelled(notes, "level-zero NPU backend")
-    assert backend.ok is True
-    assert "1.35.0.20260722" in backend.detail
+    level_zero = labelled(notes, "level-zero NPU backend")
+    assert level_zero.ok is True
+    assert "1.35.0.20260722" in level_zero.detail
 
     compiler = labelled(notes, "NPU compiler")
     assert compiler.ok is True
-    # Trailing build metadata past the git hash is noise, and is not reported.
-    assert "OpenVINO 2026.3.0-22159-4089686065a)" in compiler.detail
+    assert "2026.3.0-22159-4089686065a" in compiler.detail
+
+
+def test_the_compiler_version_drops_build_metadata_past_the_git_hash(libdir):
+    backend(libdir, "1.35.0", DRIVER_1_35)
+    fake_lib(libdir / devices.COMPILER_LIB)
+    fake_lib(libdir / devices.COMPILER_LOADER, COMPILER_BUILD)
+
+    detail = labelled(devices.npu_userspace(), "NPU compiler").detail
+    assert "OpenVINO 2026.3.0-22159-4089686065a)" in detail
+
+
+def missing_compiler(libdir) -> devices.Note:
+    backend(libdir, "1.35.0", DRIVER_1_35)
+    return labelled(devices.npu_userspace(), "NPU compiler")
 
 
 def test_a_missing_compiler_is_a_failure_carrying_the_extraction_steps(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
-
-    compiler = labelled(devices.npu_userspace(), "NPU compiler")
+    compiler = missing_compiler(libdir)
     assert compiler.ok is False
-    # The whole point of this check: it is not caught by anything upstream.
-    assert "still enumerates" in compiler.detail
-    # ovfetch 0.6.0 fetches it with no root; the hand steps stay as the fallback.
-    assert compiler.detail.index("ovfetch npu install") < compiler.detail.index("dpkg-deb")
+    assert "dpkg-deb" in compiler.detail
     assert "linux-npu-driver/releases" in compiler.detail
+
+
+def test_a_missing_compiler_warns_that_the_npu_still_enumerates(libdir):
+    assert "still enumerates" in missing_compiler(libdir).detail
+
+
+def test_a_missing_compiler_offers_ovfetch_before_the_hand_steps(libdir):
+    detail = missing_compiler(libdir).detail
+    assert detail.index("ovfetch npu install") < detail.index("dpkg-deb")
 
 
 def test_the_ovfetch_prefix_is_searched_first_once_it_holds_a_preload_list(monkeypatch, tmp_path):
@@ -189,8 +202,7 @@ def test_the_ovfetch_prefix_is_searched_first_once_it_holds_a_preload_list(monke
 
 
 def test_driver_1_32_is_satisfied_by_its_own_compiler(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.32.0", DRIVER_1_32)
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.32.0")
+    backend(libdir, "1.32.0", DRIVER_1_32)
     fake_lib(libdir / devices.LEGACY_COMPILER_LIB, "2026.0.0-20965-abcdef01234")
 
     compiler = labelled(devices.npu_userspace(), "NPU compiler")
@@ -207,8 +219,7 @@ def test_characterization_driver_1_32_is_not_satisfied_by_the_newer_compiler(lib
     on every OpenVINO from 2025.4 to 2026.4, which is what was once mistaken for
     a driver/OpenVINO version ceiling. Accepting any compiler here would pass it.
     """
-    fake_lib(libdir / "libze_intel_npu.so.1.32.0", DRIVER_1_32)
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.32.0")
+    backend(libdir, "1.32.0", DRIVER_1_32)
     fake_lib(libdir / devices.COMPILER_LIB)
     fake_lib(libdir / devices.COMPILER_LOADER)
 
@@ -219,16 +230,14 @@ def test_characterization_driver_1_32_is_not_satisfied_by_the_newer_compiler(lib
 
 
 def test_the_loader_without_the_compiler_it_loads_is_a_failure(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0", DRIVER_1_35)
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    backend(libdir, "1.35.0", DRIVER_1_35)
     fake_lib(libdir / devices.COMPILER_LOADER)
 
     assert labelled(devices.npu_userspace(), "NPU compiler").ok is False
 
 
 def test_a_driver_naming_no_known_compiler_is_unknown_not_ok(libdir):
-    fake_lib(libdir / "libze_intel_npu.so.1.99.0")
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.99.0")
+    backend(libdir, "1.99.0")
     fake_lib(libdir / devices.COMPILER_LIB)
     fake_lib(libdir / devices.COMPILER_LOADER)
 
@@ -252,8 +261,7 @@ def test_a_reverted_soname_symlink_is_caught_and_named(libdir):
 def test_the_newest_backend_being_selected_raises_nothing(libdir):
     """The same two files, with the symlink the right way round: no warning."""
     fake_lib(libdir / "libze_intel_npu.so.1.32.0")
-    fake_lib(libdir / "libze_intel_npu.so.1.35.0")
-    (libdir / "libze_intel_npu.so.1").symlink_to("libze_intel_npu.so.1.35.0")
+    backend(libdir, "1.35.0")
     fake_lib(libdir / devices.COMPILER_LIB)
     fake_lib(libdir / devices.COMPILER_LOADER)
 
@@ -277,13 +285,6 @@ def test_library_dirs_puts_ld_library_path_first(monkeypatch, tmp_path):
     assert all(directory.is_dir() for directory in dirs)
 
 
-# --- Devices marked failed (issue #7) ------------------------------------
-#
-# A device that enumerates and then fails to compile is re-attempted on every
-# socket activation, paying the model load each time, until systemd's start
-# limit takes the socket down. The mark is what stops that.
-
-
 def marked(*names: str) -> dict[str, failures.Failure]:
     return {
         name: failures.Failure(name, "2026-09-16T17:00:00+00:00", "compile failed")
@@ -295,7 +296,6 @@ def test_auto_skips_a_marked_device_and_says_so_first(inventory):
     selection = devices.select("auto", inventory("NPU", "GPU", "CPU"), failed=marked("NPU"))
     assert selection.device.kind == "GPU"
     assert selection.degraded
-    # First, because the status bar shows only the first warning.
     assert selection.warnings[0].startswith("NPU failed on 2026-09-16")
     assert "vinowhisper-doctor" in selection.warnings[0]
 

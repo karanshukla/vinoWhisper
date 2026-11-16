@@ -306,11 +306,12 @@ startup per Tab, only on `--target`.
 
 ## Conventions
 
-- **Comments are minimal.** No module, class or function docstrings in
-  `vinowhisper/`, no `//!` or item docs in `tray/src/`. A comment stays only
-  where the code would invite a wrong "fix" without it, and then it is one
-  line. Rationale, measurements and gotchas go in the matching `docs/` page.
-  `tests/` is exempt.
+- **Comments are the last resort.** Extract, name, or pin a rule with a test
+  pair first, and cite the test from the code it governs; see
+  [comment-style.md](comment-style.md). The Doc Links CI job checks the
+  citations. No module, class or function docstrings in `vinowhisper/`, no
+  `//!` or item docs in `tray/src/`. Rationale, measurements and gotchas go in
+  the matching `docs/` page.
 - **Measured claims carry a date.** "Measured 2026-08-07: the sink monitor
   reads 0.98x of the app's level while muted" is worth keeping. "The monitor
   is pre-mute" on its own is how the project spent a week believing the
@@ -331,7 +332,7 @@ startup per Tab, only on `--target`.
 
 | Workflow | Runs | What it is for |
 |---|---|---|
-| `ci.yml` | every push and PR | `uv lock --check`, ruff, mypy, pytest with coverage on 3.11 to 3.13, the built wheel's commands (`scripts/smoke_wheel.sh`), shellcheck, the Rust crates' `cargo` checks and coverage, and a build at each crate's `rust-version` |
+| `ci.yml` | every push and PR | `uv lock --check`, ruff, mypy, pytest with coverage on 3.11 to 3.13, the built wheel's commands (`scripts/smoke_wheel.sh`), shellcheck, the Rust crates' `cargo` checks and coverage, a build at each crate's `rust-version`, and Doc Links (every test a comment cites exists) |
 | `bandit.yml` | pushes and PRs to main, and Mondays | The Bandit scan, into Security > Code scanning, then the same scan as a gate. Config is `[tool.bandit]`, so `poe security` matches it |
 | `audit.yml` | Mondays, and on changes to `uv.lock` or a `Cargo.lock` | pip-audit on the locked runtime and dev set, and on the export extra as a warning only (`transformers<5.4` carries two advisories whose fixes break the NPU export; see CLAUDE.md); `cargo audit` on the three Cargo locks |
 | `deps-canary.yml` | Mondays, and on changes to `pyproject.toml` or `uv.lock` | The full dependency set, which nothing on the PR path installs |

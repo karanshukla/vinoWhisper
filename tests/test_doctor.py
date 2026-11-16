@@ -46,8 +46,36 @@ def test_npu_export_present_and_correct(monkeypatch, model_dirs):
     model_dirs("npu", with_past=True)
     results = doctor._models()
     assert find(results, "model (npu)").status == doctor.OK
-    # The CPU export is simply absent, which is not a problem on an NPU box.
-    assert find(results, "model (stateful)").status == doctor.UNKNOWN
+
+
+def test_an_npu_box_without_the_cpu_export_is_not_a_problem(monkeypatch, model_dirs):
+    use_device(monkeypatch, "NPU")
+    model_dirs("npu", with_past=True)
+    assert find(doctor._models(), "model (stateful)").status == doctor.UNKNOWN
+
+
+@pytest.fixture
+def multilingual_dirs(monkeypatch, tmp_path):
+    npu = tmp_path / "multilingual-npu"
+    monkeypatch.setattr(config, "MULTILINGUAL_MODEL_DIR", npu)
+    monkeypatch.setattr(config, "MULTILINGUAL_STATEFUL_MODEL_DIR", tmp_path / "multilingual-cpu")
+    return npu
+
+
+def test_the_multilingual_export_is_checked_only_once_it_exists(
+    monkeypatch, model_dirs, multilingual_dirs
+):
+    use_device(monkeypatch, "NPU")
+    labels = [result.label for result in doctor._models()]
+    assert not any("multilingual" in label for label in labels)
+
+
+def test_an_existing_multilingual_export_is_checked(monkeypatch, model_dirs, multilingual_dirs):
+    use_device(monkeypatch, "NPU")
+    multilingual_dirs.mkdir()
+    labels = [result.label for result in doctor._models()]
+    assert "model (npu, multilingual)" in labels
+    assert "model (stateful, multilingual)" in labels
 
 
 def test_npu_export_without_disable_stateful_is_a_failure(monkeypatch, model_dirs):
@@ -154,9 +182,6 @@ def test_unknown_distro_is_a_warning_not_a_failure(monkeypatch, tmp_path):
     assert doctor._distro().status == doctor.WARN
 
 
-# --- digest verification --------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "status, required, expected",
     [
@@ -165,15 +190,24 @@ def test_unknown_distro_is_a_warning_not_a_failure(monkeypatch, tmp_path):
         (integrity.DRIFT, True, doctor.WARN),
         (integrity.MISMATCH, True, doctor.FAIL),
         (integrity.KNOWN_BAD, True, doctor.FAIL),
-        # Same finding on the export this machine will never load: still worth
-        # reporting, not worth failing the run over.
-        (integrity.MISMATCH, False, doctor.WARN),
-        (integrity.KNOWN_BAD, False, doctor.WARN),
     ],
 )
 def test_the_doctor_grades_a_digest_result_by_whether_the_export_is_needed(
     monkeypatch, tmp_path, status, required, expected
 ):
+    _verify_as(monkeypatch, status)
+    assert doctor._digests("npu", tmp_path, required).status == expected
+
+
+@pytest.mark.parametrize("status", [integrity.MISMATCH, integrity.KNOWN_BAD])
+def test_a_bad_digest_on_an_export_this_machine_never_loads_is_only_a_warning(
+    monkeypatch, tmp_path, status
+):
+    _verify_as(monkeypatch, status)
+    assert doctor._digests("npu", tmp_path, False).status == doctor.WARN
+
+
+def _verify_as(monkeypatch, status):
     monkeypatch.setattr(
         integrity,
         "verify",
@@ -181,12 +215,25 @@ def test_the_doctor_grades_a_digest_result_by_whether_the_export_is_needed(
             status=status, model_id=config.MODEL_ID, variant=variant, directory=directory
         ),
     )
-    assert doctor._digests("npu", tmp_path, required).status == expected
+
+
+@pytest.mark.parametrize(
+    ("ok", "expected"), [(True, doctor.OK), (False, doctor.WARN), (None, doctor.UNKNOWN)]
+)
+def test_an_ovfetch_note_is_never_a_failure(monkeypatch, ok, expected):
+    intel_npu = devices.Hardware(slot="0000:00:0b.0", kind="NPU", vendor="Intel", pci_id="0x643e")
+    monkeypatch.setattr(devices, "hardware", lambda: [intel_npu])
+    monkeypatch.setattr(doctor.ovfetch, "detect", lambda: {})
+    monkeypatch.setattr(
+        doctor.ovfetch, "notes", lambda status, version: [devices.Note(ok, "l", "")]
+    )
+    monkeypatch.setattr(doctor, "_openvino_version", lambda: None)
+    assert [result.status for result in doctor._ovfetch()] == [expected]
 
 
 def test_digests_are_only_checked_on_an_export_of_the_right_shape(model_dirs, monkeypatch):
     """A wrong-variant export fails first, so hashing it says nothing useful."""
-    model_dirs("npu", with_past=False)  # NPU dir holding the stateful export
+    model_dirs("npu", with_past=False)
     monkeypatch.setattr(devices, "available", lambda: [])
     labels = [result.label for result in doctor._models()]
     assert "model (npu)" in labels

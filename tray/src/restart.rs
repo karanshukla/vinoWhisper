@@ -42,7 +42,8 @@ pub fn exited(pid: Pid) -> bool {
     is_zombie(&stat)
 }
 
-// The comm field may hold spaces and parentheses; the state follows its last ')'.
+// The comm field may hold spaces and parentheses; the state follows its last ')'
+// (pinned by `tests::a_zombie_counts_as_exited`).
 fn is_zombie(stat: &str) -> bool {
     stat.rsplit_once(')')
         .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))

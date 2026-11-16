@@ -1,9 +1,13 @@
 use super::*;
 
-// The window buttons' width past `header_frame`'s 20 inset, plus 12 before the row's last button.
+const HEADER_INSET: f32 = 20.0;
+const GAP_BEFORE_LAST_BUTTON: f32 = 12.0;
+
+// The window buttons' width past `header_frame`'s inset.
 pub(super) fn controls_room(ui: &egui::Ui) -> f32 {
-    let room = vino_ui::window::controls_width() + vino_ui::window::BAR_GAP + 12.0;
-    (room - 20.0 - ui.spacing().item_spacing.x).max(0.0)
+    let room =
+        vino_ui::window::controls_width() + vino_ui::window::BAR_GAP + GAP_BEFORE_LAST_BUTTON;
+    (room - HEADER_INSET - ui.spacing().item_spacing.x).max(0.0)
 }
 
 pub(super) fn stamp_pill(ui: &mut egui::Ui, seconds: u64) -> egui::Response {
@@ -38,7 +42,7 @@ pub(super) fn stamp_pill(ui: &mut egui::Ui, seconds: u64) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-// A section's label: small caps with the count after it, read as "Sessions (12)".
+// Read as "Sessions (12)".
 pub(super) fn section(ui: &mut egui::Ui, title: &str, n: usize) {
     let p = theme::palette(ui.ctx());
     ui.add_space(14.0);
