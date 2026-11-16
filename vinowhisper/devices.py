@@ -93,7 +93,7 @@ def select(
         wanted = preferred.upper()
         for device in devices:
             if device.name.upper() == wanted or device.kind == wanted:
-                # Not downgraded: whoever typed it wants this device tried again.
+                # (pinned by `test_devices.py::test_an_explicit_device_is_tried_despite_its_mark`)
                 retry = (
                     (
                         f"{failed[device.name]}. Trying it anyway because you asked "
@@ -313,7 +313,7 @@ def npu_preflight(distro_info: "distro.Distro | None" = None) -> list[Note]:
     else:
         fix = "`sudo usermod -aG render $USER`, then log out and back in"
         if (distro_info or distro.detect()).image == distro.IMAGE_OSTREE:
-            # nss-altfiles: usermod only edits /etc/group, and the image keeps system groups in /usr/lib/group.
+            # (pinned by `test_devices.py::test_fedora_atomic_gets_the_group_copy_before_usermod`)
             fix = (
                 "`grep -E '^render:' /usr/lib/group | sudo tee -a /etc/group`, then "
                 + fix
@@ -334,11 +334,17 @@ COMPILER_LIB = "libopenvino_intel_npu_compiler.so"
 COMPILER_LOADER = "libopenvino_intel_npu_compiler_loader.so"
 LEGACY_COMPILER_LIB = "libnpu_driver_compiler.so"
 
-# (name the driver binary carries, libraries that route needs). 1.35.0 stores
-# the loader's name split, so only its prefix is searchable.
+
+@dataclass(frozen=True)
+class _CompilerRoute:
+    named_in_driver: bytes
+    libraries: tuple[str, ...]
+
+
 COMPILER_ROUTES = (
-    (b"libopenvino_intel_npu_compiler_l", (COMPILER_LOADER, COMPILER_LIB)),
-    (LEGACY_COMPILER_LIB.encode(), (LEGACY_COMPILER_LIB,)),
+    # 1.35.0 stores the loader's name split, so only its prefix is searchable.
+    _CompilerRoute(b"libopenvino_intel_npu_compiler_l", (COMPILER_LOADER, COMPILER_LIB)),
+    _CompilerRoute(LEGACY_COMPILER_LIB.encode(), (LEGACY_COMPILER_LIB,)),
 )
 
 FLATPAK_LIBRARY_DIR = "/app/lib"
@@ -350,8 +356,7 @@ LIBRARY_DIRS = (
     "/usr/local/lib",
 )
 
-# `ovfetch npu install`'s prefix: searched before the system directories, as at run time,
-# and only once it holds the preload list (docs/hardware.md).
+# (pinned by `test_devices.py::test_the_ovfetch_prefix_is_searched_first_once_it_holds_a_preload_list`)
 OVFETCH_NPU_PREFIX = Path.home() / ".local/lib/ovfetch-npu"
 OVFETCH_PRELOAD_LIST = "ovfetch-preload.txt"
 
@@ -374,7 +379,6 @@ def library_dirs() -> list[Path]:
     prefix = ovfetch_npu_prefix()
     first = [str(prefix)] if prefix is not None else []
     if sandbox.flatpak_id() is not None:
-        # The Flatpak's own Level Zero loader, NPU driver and compiler.
         first.append(FLATPAK_LIBRARY_DIR)
     for text in first + [entry for entry in raw if entry] + list(LIBRARY_DIRS):
         try:
@@ -501,7 +505,11 @@ def compiler_routes(driver: Path) -> list[tuple[str, ...]]:
             driver.open("rb") as handle,
             mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data,
         ):
-            return [libs for needle, libs in COMPILER_ROUTES if data.find(needle) != -1]
+            return [
+                route.libraries
+                for route in COMPILER_ROUTES
+                if data.find(route.named_in_driver) != -1
+            ]
     except (OSError, ValueError):
         return []
 

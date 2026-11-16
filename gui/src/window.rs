@@ -102,42 +102,41 @@ struct SettingsWindow {
     whisper_model: Arc<Mutex<ModelState>>,
     confirm_delete_whisper: bool,
     confirm_delete_source: bool,
-    // A delete was started: its effects are applied once the status says Whisper is gone.
+    // (pinned by `tests::a_whisper_delete_takes_effect_once_the_status_says_it_is_gone`,
+    // `tests::a_whisper_delete_that_failed_changes_nothing_on_the_page`)
     whisper_delete_pending: bool,
+    // (pinned by `tests::a_canary_delete_switches_to_whisper_once_the_status_says_it_is_gone`,
+    // `tests::a_canary_delete_that_failed_leaves_canary_the_speech_model`)
     canary_delete_pending: bool,
     multilingual: bool,
     canary: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
-    // The window's buttons and edges are drawn here, not by the desktop (vino-ui's `window`).
     app_title_bar: bool,
-    // Zoom follows the desktop's factor only when it changes, so a Ctrl + or - since then is kept.
+    // (pinned by `tests::the_desktop_text_scale_sets_zoom_but_keeps_a_later_ctrl_plus`)
     text_scale: Option<f32>,
     shortcuts: Arc<Mutex<Shortcuts>>,
-    // Which page last asked the tray, so arriving on Shortcuts asks again.
-    shown: Option<Page>,
+    last_page_shown: Option<Page>,
     refused: Arc<Mutex<Option<String>>>,
     notice: Option<String>,
-    // Why a model switch changed the language, so it never happens silently.
+    // (pinned by `tests::a_model_switch_that_drops_the_language_says_so`)
     speech_note: Option<String>,
     summaries: Summaries,
     summaries_dirty: bool,
     settings_dirty: bool,
-    // vocabulary.txt, written on each add and remove: the server reads it per dictation.
+    // The server reads it per dictation, so each add and remove writes it (pinned by
+    // `tests::a_term_typed_into_the_vocabulary_is_written_to_the_file_and_listed`).
     vocabulary_path: PathBuf,
     vocabulary: Vec<String>,
     new_term: String,
     vocabulary_error: Option<String>,
-    // The sessions window's app menu entry, and why the last change to it failed.
     apps_data: PathBuf,
     in_app_menu: bool,
     app_menu_error: Option<String>,
-    // From the session listing, read when the Sessions page is shown.
     model_ready: Arc<Mutex<Option<bool>>>,
     updater: vino_ui::update::Updater,
 }
 
-// vinowhisper-upgrade for a release install, vinowhisper-flatpak-update for a release Flatpak, else a link.
 fn updater() -> vino_ui::update::Updater {
     let updater = vino_ui::update::Updater::new(vino_ui::App::Whisper, env!("CARGO_PKG_VERSION"));
     if vinowhisper_settings::sandbox::flatpak_id().is_some() {
@@ -200,7 +199,7 @@ impl SettingsWindow {
             app_title_bar: false,
             text_scale: None,
             shortcuts: Arc::new(Mutex::new(Shortcuts::Asking)),
-            shown: None,
+            last_page_shown: None,
             refused: Arc::new(Mutex::new(None)),
             notice: None,
             speech_note: None,
@@ -245,41 +244,60 @@ impl eframe::App for SettingsWindow {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         let focused = ctx.input(|input| input.focused);
-        if focused && !self.focused {
-            // The desktop's light/dark switch may have flipped while we were in the background.
-            theme::follow_desktop(ctx);
-            self.kde_header = theme::kde_header();
-            self.follow_text_scale(ctx, theme::desktop_text_scale());
-        }
         let regained = focused && !self.focused;
+        if regained {
+            self.catch_up_with_desktop(ctx);
+        }
         self.focused = focused;
-        // The tray's state names the chip in the sidebar, so it is asked on any first page.
-        if self.shown.is_none()
-            || (self.page == Page::Shortcuts && (regained || self.shown != Some(Page::Shortcuts)))
-        {
-            self.ask_shortcuts(ctx, Duration::ZERO);
-        }
-        if self.shown != Some(Page::Cleanup) && self.page == Page::Cleanup {
-            self.refresh_model(ctx, Tool::Cleanup);
-        }
-        if self.shown != Some(Page::Speech) && self.page == Page::Speech {
-            self.refresh_model(ctx, Tool::Canary);
-            self.refresh_model(ctx, Tool::Whisper);
-        }
-        if self.page == Page::Sessions && (regained || self.shown != Some(Page::Sessions)) {
-            self.refresh_model_ready(ctx);
-        }
-        self.shown = Some(self.page);
+        self.refresh_the_page_shown(ctx, regained);
         if let Some(reason) = self.refused.lock().unwrap().take() {
-            // The tray put the file back; show what is really in use.
+            // The tray put the file back.
             self.speech = Speech::load();
             self.notice = Some(reason);
         }
-        let (saved_settings, saved_speech) = self.show(ui);
+        let saved = self.show(ui);
         if self.app_title_bar {
             vino_ui::window::edges(ui);
         }
+        self.save_changed(ctx, saved);
+    }
+}
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Saved {
+    settings: bool,
+    speech: bool,
+}
+
+impl SettingsWindow {
+    // Theme, header and text scale may have changed while the window was in the background.
+    fn catch_up_with_desktop(&mut self, ctx: &egui::Context) {
+        theme::follow_desktop(ctx);
+        self.kde_header = theme::kde_header();
+        self.follow_text_scale(ctx, theme::desktop_text_scale());
+    }
+
+    fn refresh_the_page_shown(&mut self, ctx: &egui::Context, regained: bool) {
+        let (current, last) = (self.page, self.last_page_shown);
+        let arrived = |page| current == page && last != Some(page);
+        // Any first page asks the tray: its state names the chip in the sidebar.
+        if last.is_none() || arrived(Page::Shortcuts) || (regained && current == Page::Shortcuts) {
+            self.ask_shortcuts(ctx, Duration::ZERO);
+        }
+        if arrived(Page::Cleanup) {
+            self.refresh_model(ctx, Tool::Cleanup);
+        }
+        if arrived(Page::Speech) {
+            self.refresh_model(ctx, Tool::Canary);
+            self.refresh_model(ctx, Tool::Whisper);
+        }
+        if arrived(Page::Sessions) || (regained && current == Page::Sessions) {
+            self.refresh_model_ready(ctx);
+        }
+        self.last_page_shown = Some(self.page);
+    }
+
+    fn save_changed(&mut self, ctx: &egui::Context, saved: Saved) {
         if self.cleanup_dirty {
             self.cleanup_dirty = false;
             self.cleanup.save();
@@ -288,11 +306,11 @@ impl eframe::App for SettingsWindow {
             self.summaries_dirty = false;
             self.summaries.save();
         }
-        if saved_settings {
+        if saved.settings {
             self.settings.save();
             forward::reload_tray(|_| {});
         }
-        if saved_speech {
+        if saved.speech {
             self.speech.save();
             self.notice = None;
             let refused = Arc::clone(&self.refused);
@@ -306,16 +324,15 @@ impl eframe::App for SettingsWindow {
 }
 
 impl SettingsWindow {
-    // Draws and says which files changed; `ui` does the saving, so tests can drive this alone.
-    fn show(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
+    // Draws and says which files changed; `ui` saves them, so tests can drive this alone.
+    fn show(&mut self, ui: &mut egui::Ui) -> Saved {
         let ctx = &ui.ctx().clone();
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), self.focused);
         let window = ctx.content_rect().width();
         let wide = window >= widgets::SIDEBAR_FROM;
-        let mut saved_settings = false;
-        let mut saved_speech = false;
+        let mut saved = Saved::default();
         let tray = match &*self.shortcuts.lock().unwrap() {
             Shortcuts::Stopped => Some((ChipKind::Warn, "Tray not running")),
             Shortcuts::Bound { .. } | Shortcuts::Unavailable => {
@@ -332,7 +349,6 @@ impl SettingsWindow {
                 .frame(widgets::sidebar_frame(p))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    // On the nav items' icon column, which vino-ui centres the window bar's row on.
                     let brand = ui
                         .scope(|ui| {
                             ui.style_mut().interaction.selectable_labels = false;
@@ -346,7 +362,7 @@ impl SettingsWindow {
                         .response
                         .rect;
                     if self.app_title_bar {
-                        // After the brand, so its name drags the window.
+                        // Down to the brand's bottom, so its name drags the window.
                         let clip = ui.clip_rect();
                         vino_ui::window::drag(
                             ui,
@@ -412,7 +428,7 @@ impl SettingsWindow {
                             vino_ui::window::controls(ui);
                         }
                     });
-                    // Wrapped: at the desktop's largest text the tabs don't fit on one line.
+                    // (pinned by `tests::large_text_keeps_every_control_inside_the_window`)
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(18.0, 0.0);
                         a11y::tab_list(ui, "Pages");
@@ -427,7 +443,6 @@ impl SettingsWindow {
                 });
         }
 
-        // A wide window's page title sits in a bar of its own, which the window is dragged by.
         let bar = wide && self.app_title_bar;
         let page = self.page;
         let title = |ui: &mut egui::Ui| {
@@ -455,7 +470,7 @@ impl SettingsWindow {
                         },
                         right: 0,
                         top: match (wide, bar) {
-                            // The same 15 from title to content as in the scroll area.
+                            // Plus the bar's own padding: 15 from title to content, as below.
                             (_, true) => 2,
                             (true, false) => 20,
                             (false, false) => 12,
@@ -470,16 +485,16 @@ impl SettingsWindow {
                     }
                     match self.page {
                         Page::Shortcuts => self.shortcuts(ui),
-                        Page::Captions => saved_settings = self.captions(ui),
-                        Page::Speech => saved_speech = self.speech(ui),
+                        Page::Captions => saved.settings = self.captions(ui),
+                        Page::Speech => saved.speech = self.speech(ui),
                         Page::Cleanup => self.cleanup(ui),
                         Page::Sessions => self.sessions(ui),
                         Page::About => vino_ui::about::page_with_updates(ui, &mut self.updater),
                     }
                 });
             });
-        saved_settings |= std::mem::take(&mut self.settings_dirty);
-        (saved_settings, saved_speech)
+        saved.settings |= std::mem::take(&mut self.settings_dirty);
+        saved
     }
 }
 
@@ -497,7 +512,8 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
                 .with_min_inner_size([340.0, 320.0]),
             app_title_bar,
         ),
-        // vsync off: a swap waits on a frame callback KWin holds back, and pings go unanswered (docs/tray.md).
+        // A swap with vsync waits on a frame callback KWin holds back, and pings go unanswered
+        // (docs/tray.md).
         glow_options: eframe::egui_glow::GlowConfiguration {
             vsync: false,
             ..Default::default()
@@ -511,7 +527,7 @@ pub fn run(app_id: &str, page: Option<&str>) -> ExitCode {
             theme::install(&cc.egui_ctx);
             let mut window = SettingsWindow::new(page);
             window.app_title_bar = app_title_bar;
-            // Before the first frame: a window opened in the background would draw its first frames small.
+            // Before the first frame, or a window opened in the background draws small.
             window.follow_text_scale(&cc.egui_ctx, theme::desktop_text_scale());
             Ok(Box::new(window))
         }),

@@ -38,11 +38,11 @@ pub(super) fn number<N: egui::emath::Numeric>(
     range: std::ops::RangeInclusive<N>,
     unit: &str,
 ) -> bool {
-    // Right to left: the unit after the box.
+    // Laid out right to left, so the unit sits after the box.
     widgets::small(ui, unit);
     let response = ui.add(egui::DragValue::new(value).range(range));
     named(response)
-        // DragValue's own hover cursor is a horizontal resize arrow, which reads as a splitter here.
+        // DragValue's resize arrow reads as a splitter here.
         .on_hover_cursor(egui::CursorIcon::Text)
         .changed()
 }

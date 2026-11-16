@@ -119,7 +119,6 @@ impl SessionsWindow {
                 ui.set_width(ui.available_width());
                 let working = listing.current.as_ref() == Some(&entry.path);
                 let waiting = working || listing.queued.contains(&entry.path);
-                // The title leads once there is one; until then the date stands in for it.
                 let title = entry.title.clone().filter(|_| entry.error.is_none());
                 let name = title.clone().unwrap_or_else(|| entry.when());
                 let mut facts = Vec::new();
@@ -185,7 +184,6 @@ impl SessionsWindow {
             });
     }
 
-    // Right to left: the More menu, Summary or Summarise, Transcript, then the status chip.
     pub(super) fn card_actions(
         &mut self,
         ui: &mut egui::Ui,

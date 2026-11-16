@@ -99,7 +99,7 @@ impl SettingsWindow {
     }
 
     pub(super) fn set_app_menu(&mut self, show: bool) {
-        // with_file_name, not the exe itself: after an upgrade that reads "<path> (deleted)".
+        // Not the exe itself, which reads "<path> (deleted)" after an upgrade.
         let gui = std::env::current_exe()
             .map(|exe| exe.with_file_name("vinowhisper-gui"))
             .unwrap_or_else(|_| PathBuf::from("vinowhisper-gui"));
@@ -114,7 +114,7 @@ impl SettingsWindow {
     }
 }
 
-// Plasma and GNOME watch the directory anyway; the cache is for the rest. Off the UI thread.
+// Plasma and GNOME watch the directory; the cache is for the rest.
 pub(super) fn refresh_app_menu(dir: PathBuf) {
     std::thread::spawn(move || {
         let _ = std::process::Command::new("update-desktop-database")

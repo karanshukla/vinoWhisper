@@ -53,7 +53,7 @@ class SessionWriter:
 def _open_private(path: Path, mode: str) -> IO:
     mode_flag = os.O_APPEND if "a" in mode else os.O_TRUNC
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | mode_flag | os.O_CLOEXEC, 0o600)
-    # The mode above only applies on creation; an overwritten recording keeps its old one.
+    # (pinned by `test_session.py::test_an_overwritten_recording_loses_its_old_permissions`)
     os.fchmod(fd, 0o600)
     if "b" in mode:
         return os.fdopen(fd, mode)
@@ -161,7 +161,7 @@ class TranscriptWriter:
             return
         file = self._file or self._open()
         if self._tracker is not None:
-            # Only while words arrive, so what is noted is what was being captioned.
+            # (pinned by `test_session.py::test_what_was_playing_is_sampled_as_words_arrive_and_attested`)
             self._tracker.poke()
         for word in words:
             if self._breaker.word(word):
@@ -186,7 +186,7 @@ class TranscriptWriter:
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = target
         self._file = _open_private(target, "a")
-        # Held until close, so recovery can tell a live session from a crashed one.
+        # (pinned by `test_session.py::test_a_live_transcript_is_locked_until_it_closes`)
         fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.fstat(self._file.fileno()).st_size:
             self._file.write("\n")

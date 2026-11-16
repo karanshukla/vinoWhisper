@@ -48,16 +48,20 @@ def test_read_more_than_written_returns_what_there_is():
 
 def test_keeps_the_newest_samples_when_it_wraps():
     buffer = RingBuffer(5)
-    buffer.write(ramp(8))  # 0..7, so 3..7 survive
+    buffer.write(ramp(8))
     assert list(buffer.read_last(5)) == [3, 4, 5, 6, 7]
-    # total_written is monotonic — the caption loop measures new audio with it.
+
+
+def test_total_written_keeps_counting_through_a_wrap():
+    buffer = RingBuffer(5)
+    buffer.write(ramp(8))
     assert buffer.total_written == 8
 
 
 def test_read_spanning_the_wrap_point_stays_in_order():
     buffer = RingBuffer(5)
     buffer.write(ramp(3))
-    buffer.write(ramp(4, start=3))  # writes 3,4,5,6 across the boundary
+    buffer.write(ramp(4, start=3))
     assert list(buffer.read_last(5)) == [2, 3, 4, 5, 6]
 
 
@@ -66,7 +70,11 @@ def test_chunk_larger_than_capacity_keeps_the_tail_and_the_count():
     buffer.write(ramp(10))
     assert list(buffer.read_last(4)) == [6, 7, 8, 9]
     assert buffer.total_written == 10
-    # The write index must still be consistent afterwards.
+
+
+def test_the_write_index_is_consistent_after_a_chunk_larger_than_capacity():
+    buffer = RingBuffer(4)
+    buffer.write(ramp(10))
     buffer.write(ramp(2, start=10))
     assert list(buffer.read_last(4)) == [8, 9, 10, 11]
 
@@ -112,9 +120,6 @@ def test_normalize_leaves_digital_silence_alone():
     assert np.array_equal(same, silence)
 
 
-# --- Against signal, at the sizes and in the arrival pattern of a real run ---
-
-
 def test_the_ring_buffer_survives_the_real_chunk_arrival_pattern():
     """The production case, which the ramp tests above never reach: a
     MAX_WINDOW_S buffer filled 100ms at a time until it has wrapped several
@@ -126,7 +131,7 @@ def test_the_ring_buffer_survives_the_real_chunk_arrival_pattern():
     """
     capacity = int(config.MAX_WINDOW_S * config.SAMPLE_RATE_HZ)
     buffer = RingBuffer(capacity)
-    source = pcm.sine(440.0, config.MAX_WINDOW_S * 3)  # wraps twice over
+    source = pcm.sine(440.0, config.MAX_WINDOW_S * 3)
 
     written = 0
     for chunk in pcm.chunks(source):
@@ -139,20 +144,27 @@ def test_the_ring_buffer_survives_the_real_chunk_arrival_pattern():
     assert np.array_equal(window, source[-window.size :])
 
 
-def test_a_full_capacity_read_after_wrapping_is_still_in_order():
-    capacity = pcm.samples_for(1.0)
-    buffer = RingBuffer(capacity)
-    # 2.5 wraps, and 1600 does not divide the capacity, so the chunk boundary
-    # and the wrap point never line up — which is the case that actually
-    # exercises the split write.
+def _wrapped_buffer() -> tuple[RingBuffer, np.ndarray]:
+    buffer = RingBuffer(pcm.samples_for(1.0))
+    # 2.5 wraps in chunks that don't divide the capacity, so the split write runs.
     source = pcm.sine(300.0, 2.5)
     for chunk in pcm.chunks(source):
         buffer.write(chunk)
+    return buffer, source
 
+
+def test_a_full_capacity_read_after_wrapping_is_still_in_order():
+    buffer, source = _wrapped_buffer()
+    capacity = pcm.samples_for(1.0)
     held = buffer.read_last(capacity)
     assert held.size == capacity
     assert np.array_equal(held, source[-capacity:])
-    # A wrapped read is a fresh copy, never a view into the live buffer.
+
+
+def test_a_wrapped_read_is_a_copy_not_a_view_into_the_live_buffer():
+    buffer, source = _wrapped_buffer()
+    capacity = pcm.samples_for(1.0)
+    held = buffer.read_last(capacity)
     buffer.write(pcm.silence(0.1))
     assert np.array_equal(held, source[-capacity:])
 
@@ -197,15 +209,25 @@ def test_normalize_clips_a_transient_rather_than_refusing_the_boost():
     is to keep the boost and let the click clip, since Whisper needs the quiet
     part audible and does not need the click at all.
     """
+    _, boosted, gain = _boost_speech_with_a_click()
+    assert gain > 1.0
+    assert boosted.dtype == np.float32
+
+
+def _boost_speech_with_a_click() -> tuple[np.ndarray, np.ndarray, float]:
     speech = pcm.sine(300.0, 1.0, amplitude=0.005)
     click = pcm.delay_by(pcm.sine(4000.0, 0.001, amplitude=0.9), 0.5)
     boosted, gain = normalize(pcm.mix(speech, click), config.TARGET_RMS, config.MAX_GAIN)
+    return speech, boosted, gain
 
-    assert gain > 1.0
-    assert boosted.dtype == np.float32
-    # Clipped, so the peak is exactly the rail rather than 0.9 * gain.
+
+def test_a_clipped_boost_peaks_at_the_rail_not_at_the_gain():
+    _, boosted, _ = _boost_speech_with_a_click()
     assert np.abs(boosted).max() == pytest.approx(1.0)
-    # ...and everywhere it did not clip, the gain was simply applied.
+
+
+def test_where_the_boost_did_not_clip_the_gain_is_applied_as_is():
+    speech, boosted, gain = _boost_speech_with_a_click()
     quiet = slice(0, pcm.samples_for(0.4))
     assert boosted[quiet] == pytest.approx(speech[quiet] * gain, abs=1e-6)
 

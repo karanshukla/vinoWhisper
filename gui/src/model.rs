@@ -11,7 +11,7 @@ pub struct Status {
     pub present: bool,
     pub bytes: u64,
     pub cache_bytes: u64,
-    // Whisper only: the download its exports were built from.
+    // Whisper's source download, which its exports were built from.
     pub source_bytes: u64,
 }
 
@@ -99,7 +99,7 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-/// The models on disk; Whisper has no fetch (vinowhisper-setup exports it) and adds `delete-source`.
+/// Whisper has no fetch (vinowhisper-setup exports it) and adds `delete-source`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Cleanup,

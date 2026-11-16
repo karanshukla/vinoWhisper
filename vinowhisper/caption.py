@@ -87,8 +87,8 @@ class SpeechGate:
             while self._chunks and self._held - self._chunks[0][0] >= self._capacity:
                 self._held -= self._chunks.popleft()[0]
 
-    # None when the window holds too little speech to decode; otherwise the window with
-    # everything away from speech scaled to near silence, so Whisper never hears it.
+    # (pinned by `test_speech_gate.py::test_a_window_with_no_speech_is_not_decoded`,
+    # `test_speech_gate.py::test_sound_away_from_speech_is_scaled_to_near_silence_and_speech_is_kept`)
     def apply(self, window: np.ndarray) -> np.ndarray | None:
         if self._detect is None:
             return window
@@ -106,7 +106,7 @@ class SpeechGate:
         if mask.size >= window.size:
             mask = mask[mask.size - window.size :]
         else:
-            # Older than the detector's history: keep it, as before the gate existed.
+            # (pinned by `test_speech_gate.py::test_audio_older_than_the_detectors_history_is_kept`)
             mask = np.concatenate([np.ones(window.size - mask.size, dtype=bool), mask])
         gated = window.astype(np.float32, copy=True)
         gated[~mask] *= _NOT_SPEECH_SCALE
@@ -457,7 +457,7 @@ def _list_targets() -> int:
             "application's stream. Install PipeWire for per-application capture.",
             file=sys.stderr,
         )
-    # media.name is whatever the playing app chose, e.g. a browser tab's title.
+    # (pinned by `test_caption.py::test_list_targets_does_not_print_control_characters_a_stream_names`)
     streams = [{key: strip_controls(value) for key, value in stream.items()} for stream in streams]
     width = max(len(stream["app"]) for stream in streams)
     for stream in streams:
@@ -473,8 +473,7 @@ def _list_targets() -> int:
 
 
 def main() -> int:
-    # SIGINT is how the tray stops us, and a parent started in the background passes it on
-    # ignored, which Python keeps; then the tray's SIGKILL loses the transcript's bundling.
+    # (pinned by `test_caption.py::test_characterization_an_inherited_ignored_sigint_is_undone`)
     signal.signal(signal.SIGINT, signal.default_int_handler)
     args = _parse_args()
     try:
@@ -503,7 +502,7 @@ def main() -> int:
     writer = session.SessionWriter(args.record) if args.record else None
     transcript = None
     if args.transcript:
-        # The mic hears the room, not a player, so only system audio is worth naming.
+        # (pinned by `test_caption.py::test_a_mic_session_does_not_track_what_is_playing`)
         tracker = playing.Tracker(args.target) if args.source == "output" else None
         transcript = session.TranscriptWriter(args.transcript, args.source, tracker=tracker)
     try:

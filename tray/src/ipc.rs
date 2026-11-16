@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(2);
+pub const TIMEOUT: Duration = Duration::from_secs(2);
 const SOCKET_NAME: &str = "vinowhisper-tray.sock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +65,6 @@ impl Request {
     }
 }
 
-// Ok carries what the request answers (empty for most), Err why it was refused.
 pub type Reply = Result<String, String>;
 
 #[derive(Debug)]
@@ -86,7 +85,8 @@ pub fn socket_path() -> io::Result<PathBuf> {
     }
 }
 
-// /tmp is shared, so any other user could have made this name first.
+// /tmp is shared, so another user could have made this name first.
+// (pinned by `tests::a_fallback_directory_others_can_enter_is_refused`, `tests::a_symlink_in_place_of_the_fallback_directory_is_refused`)
 fn private_dir(dir: &Path) -> io::Result<&Path> {
     match fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
@@ -111,10 +111,9 @@ fn private_dir(dir: &Path) -> io::Result<&Path> {
 }
 
 fn same_user(stream: &UnixStream) -> bool {
-    // In the Flatpak every command is a sandbox with a pid namespace of its own, so the
-    // peer's pid reads as 0, which rustix's UCred cannot hold: the lookup comes back as
-    // an error and every command would be turned away. The socket there is in the
-    // app's own 0700 runtime directory, which only this user's sandboxes of it can reach.
+    // Each Flatpak command has its own pid namespace, so the peer's pid reads as 0, which
+    // rustix's UCred can't hold: the lookup errors. There the socket is in the app's own
+    // 0700 runtime directory, which only this user's sandboxes of it can reach.
     if crate::settings::sandbox::flatpak_id().is_some() {
         return true;
     }
@@ -126,7 +125,6 @@ pub fn send(request: Request) -> Result<String, SendError> {
     send_to(&socket_path().map_err(SendError::Io)?, request)
 }
 
-// Which process answers: an installer replacing the binary restarts it.
 pub fn running_pid() -> Result<rustix::process::Pid, SendError> {
     let stream = connect(&socket_path().map_err(SendError::Io)?)?;
     let pid = rustix::net::sockopt::socket_peercred(&stream)
@@ -179,7 +177,7 @@ fn exchange(mut stream: UnixStream, request: Request) -> Result<String, SendErro
     ))))
 }
 
-// One line each way, so a payload or a reason may not break the line.
+// (pinned by `tests::a_line_break_in_a_reply_cannot_end_the_line`)
 fn reply_line(reply: &Reply) -> String {
     let one_line = |text: &str| text.replace(['\n', '\r'], " ");
     match reply {
@@ -210,7 +208,7 @@ fn listen_at(
     let listener = match UnixListener::bind(&path) {
         Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
-            // Maybe a stale socket from a killed instance: only a live one answers.
+            // (pinned by `tests::a_socket_left_by_a_killed_instance_is_reclaimed`, `tests::a_second_instance_is_refused`)
             if UnixStream::connect(&path).is_ok() {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
@@ -257,32 +255,36 @@ mod tests {
         path
     }
 
-    #[test]
-    fn a_request_reaches_the_running_instance() {
-        let path = scratch_socket("reach");
+    fn recording_listener(name: &str) -> (PathBuf, Listener, mpsc::Receiver<Request>) {
+        let path = scratch_socket(name);
         let (tx, rx) = mpsc::channel();
-        let _listener = listen_at(path.clone(), move |request| {
+        let listener = listen_at(path.clone(), move |request| {
             tx.send(request).unwrap();
             Ok(String::new())
         })
         .unwrap();
+        (path, listener, rx)
+    }
 
+    #[test]
+    fn a_request_reaches_the_running_instance() {
+        let (path, _listener, received) = recording_listener("reach");
         send_to(&path, Request::Toggle).unwrap();
-        assert_eq!(rx.recv_timeout(TIMEOUT).unwrap(), Request::Toggle);
+        assert_eq!(received.recv_timeout(TIMEOUT).unwrap(), Request::Toggle);
     }
 
     #[test]
     fn a_ping_is_answered_without_doing_anything() {
-        let path = scratch_socket("ping");
-        let (tx, rx) = mpsc::channel();
-        let _listener = listen_at(path.clone(), move |request| {
-            tx.send(request).unwrap();
-            Ok(String::new())
-        })
-        .unwrap();
-
+        let (path, _listener, received) = recording_listener("ping");
         send_to(&path, Request::Ping).unwrap();
-        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        assert!(received.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn a_line_break_in_a_reply_cannot_end_the_line() {
+        assert_eq!(reply_line(&Ok("a\nb\rc".into())), "ok a b c");
+        assert_eq!(reply_line(&Err("no\nway".into())), "refused no way");
+        assert_eq!(reply_line(&Ok(String::new())), "ok");
     }
 
     #[test]
@@ -316,7 +318,8 @@ mod tests {
     #[test]
     fn a_socket_left_by_a_killed_instance_is_reclaimed() {
         let path = scratch_socket("stale");
-        drop(UnixListener::bind(&path).unwrap()); // leaves the file behind
+        let killed_instance = UnixListener::bind(&path).unwrap();
+        drop(killed_instance);
         assert!(path.exists());
         assert!(listen_at(path.clone(), |_| Ok(String::new())).is_ok());
     }

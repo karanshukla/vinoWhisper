@@ -7,7 +7,11 @@ use std::time::Duration;
 
 use rustix::process::{Pid, Signal, kill_process_group, set_parent_process_death_signal};
 
-use crate::sessions::Part;
+use crate::sessions::{Part, exit_within};
+
+const LAST_LINE_GRACE: Duration = Duration::from_millis(50);
+// A reader that ignores SIGTERM gets SIGKILL after this.
+const SIGTERM_GRACE: Duration = Duration::from_secs(2);
 
 pub fn find_on_path(name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -19,10 +23,10 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
         })
 }
 
-// `vinospeak --file BUNDLE --part summary|transcript` (karanshukla/vinoSpeak#42); dropping it stops it.
+// `vinospeak --file BUNDLE --part summary|transcript`; dropping it stops it.
 pub struct Reading {
     pub path: PathBuf,
-    // None once it has exited and been reaped.
+    // `None` once reaped.
     child: Option<Child>,
     last_line: Arc<Mutex<String>>,
     stopped: bool,
@@ -40,8 +44,8 @@ impl Reading {
             .stderr(Stdio::piped())
             // Its own group, so Stop also ends whatever it plays through.
             .process_group(0);
-        // SAFETY: prctl only, which is async-signal-safe. Like the tray's caption child, it
-        // must not outlive the window, even one that crashed; started from the UI thread.
+        // SAFETY: prctl only, which is async-signal-safe. It must not outlive the window, even
+        // one that crashed; the signal follows the UI thread, which started it.
         unsafe {
             command.pre_exec(|| {
                 set_parent_process_death_signal(Some(Signal::TERM)).map_err(std::io::Error::from)
@@ -69,7 +73,6 @@ impl Reading {
         })
     }
 
-    // None while it reads; once it has exited, why it failed, if it did.
     pub fn poll(&mut self) -> Option<Result<(), String>> {
         let status = match self.child.as_mut()?.try_wait() {
             Ok(None) => return None,
@@ -84,7 +87,7 @@ impl Reading {
             return Some(Ok(()));
         }
         // The pipe can still hold the last line for a moment after the exit.
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(LAST_LINE_GRACE);
         let line = self.last_line.lock().unwrap().clone();
         Some(Err(reason(&line, status.code())))
     }
@@ -103,13 +106,9 @@ impl Drop for Reading {
         let Some(mut child) = self.child.take() else {
             return;
         };
-        // Reaped off the UI thread; a reader that ignores SIGTERM gets SIGKILL after 2 s.
         std::thread::spawn(move || {
-            for _ in 0..20 {
-                if !matches!(child.try_wait(), Ok(None)) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(100));
+            if !matches!(exit_within(&mut child, SIGTERM_GRACE), Ok(None)) {
+                return;
             }
             let _ = kill_process_group(Pid::from_child(&child), Signal::KILL);
             let _ = child.wait();
@@ -118,7 +117,7 @@ impl Drop for Reading {
 }
 
 pub fn reason(line: &str, code: Option<i32>) -> String {
-    // An older vinoSpeak's argparse refuses the arguments by name.
+    // (pinned by `tests::an_old_vinospeak_is_asked_to_update_and_anything_else_says_its_own_words`)
     if line.contains("unrecognized arguments") && line.contains("--part") {
         return "this vinoSpeak can't read sessions yet. Update vinoSpeak to read them.".to_owned();
     }

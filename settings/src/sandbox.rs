@@ -18,8 +18,8 @@ pub fn flatpak_id() -> Option<&'static str> {
     .as_deref()
 }
 
-// The file marks a sandbox: FLATPAK_ID alone can be left in the environment of something
-// started from one.
+// FLATPAK_ID alone can be left in the environment of something started from a sandbox (pinned
+// by `tests::the_app_id_comes_from_the_info_file_only_inside_a_sandbox`).
 fn read_id(info: &Path, env: Option<String>) -> Option<String> {
     let text = std::fs::read_to_string(info).ok()?;
     if let Some(id) = env.filter(|id| !id.is_empty()) {
@@ -37,8 +37,8 @@ pub fn info_value(section: &str, key: &str) -> Option<String> {
     )
 }
 
-// A GKeyFile, read with the configparser crate: `=` only, keys as written, `#` comments
-// on their own lines, and a `;` or `#` inside a value is part of it.
+// A GKeyFile: `=` only, keys as written, `#` comments on their own lines, and a `;` or `#`
+// inside a value is part of it (pinned by `tests::flatpak_lists_keep_their_semicolons_and_hashes`).
 fn ini_value(text: &str, section: &str, key: &str) -> Option<String> {
     let mut options = Ini::new_cs().defaults();
     options.delimiters = vec!['='];
@@ -126,7 +126,14 @@ mod tests {
         );
         assert_eq!(ini_value(info, "Application", "branch"), None);
         assert_eq!(ini_value(info, "Instance", "name"), None);
-        // Flatpak's own lists hold `;` and `:`, which are neither comments nor delimiters.
+        assert_eq!(
+            ini_value("[Instance\nbranch=stable\n", "Instance", "branch"),
+            None
+        );
+    }
+
+    #[test]
+    fn flatpak_lists_keep_their_semicolons_and_hashes() {
         let context = "[Context]\nfilesystems=xdg-run/pipewire-0;home;\n# a comment\n[Instance]\napp-path=/a:b #1/files\n";
         assert_eq!(
             ini_value(context, "Context", "filesystems").as_deref(),
@@ -135,10 +142,6 @@ mod tests {
         assert_eq!(
             ini_value(context, "Instance", "app-path").as_deref(),
             Some("/a:b #1/files")
-        );
-        assert_eq!(
-            ini_value("[Instance\nbranch=stable\n", "Instance", "branch"),
-            None
         );
     }
 

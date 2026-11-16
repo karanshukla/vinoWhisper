@@ -30,7 +30,6 @@ impl SettingsWindow {
         let canary_state = self.canary_model.lock().unwrap().clone();
         changed |= self.settle_canary_delete(&canary_state);
         let model = self.speech.model;
-        // The download's own status once known; until then, what is on disk.
         let canary = match &canary_state.status {
             Some(Ok(status)) => status.present,
             _ => self.canary,
@@ -114,7 +113,7 @@ impl SettingsWindow {
                     });
                 });
             let foreign = multilingual && self.speech.language != Language::En;
-            // Canary's auto only ever translates (it has no detection to transcribe with).
+            // (pinned by `window::tests::canary_offers_its_own_languages_and_detection_to_translate`)
             let locked = model == SpeechModel::Canary && self.speech.language == Language::Auto;
             Row::new("Translation")
                 .help(if locked {

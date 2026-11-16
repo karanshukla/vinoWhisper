@@ -3,15 +3,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 OS_RELEASE = Path("/etc/os-release")
-# In a Flatpak /etc/os-release is the runtime's; the host's, whose kernel driver and
-# groups the advice is about, is here.
+# In a Flatpak /etc/os-release is the runtime's; the advice is about the host.
 HOST_OS_RELEASE = Path("/run/host/os-release")
 ROOT = Path("/")
 
-# Image-based systems, where /usr is read-only and packages go into the next boot.
 IMAGE_OSTREE = "ostree"
 IMAGE_TRANSACTIONAL = "transactional"
-# /usr is read-only and the tool that writes it is unknown (SteamOS, Vanilla OS 2).
+# (pinned by `test_distro.py::test_a_read_only_usr_without_a_known_tool_is_image_based`)
 IMAGE_READ_ONLY = "read-only"
 
 AUDIO_PIPEWIRE = "pipewire-tools"
@@ -19,12 +17,12 @@ AUDIO_PULSE = "pulse-tools"
 NPU_DRIVER = "npu-driver"
 NPU_COMPILER = "npu-compiler"
 GPU_RUNTIME = "gpu-runtime"
-# Optional: vinowhisper-transcribe decodes files with it. Only Fedora's name is checked.
+# Only Fedora's package name has been checked.
 MEDIA_DECODER = "media-decoder"
 
 NPU_RELEASES_URL = "https://github.com/intel/linux-npu-driver/releases"
 
-# The fix on every distro, with no root and no package manager (docs/hardware.md).
+# (pinned by `test_distro.py::test_the_compiler_fix_is_ovfetch_on_every_distro`)
 NPU_COMPILER_COMMANDS = ("vinowhisper-setup --ovfetch", "ovfetch npu install")
 
 NPU_COMPILER_STEPS = (
@@ -44,7 +42,7 @@ NPU_COMPILER_STEPS = (
     "package manager: note it somewhere, because nothing will upgrade it.",
 )
 
-# /usr/lib64 is read-only on an image-based system; /usr/local and /etc are not.
+# (pinned by `test_distro.py::test_the_npu_compiler_steps_avoid_read_only_usr`)
 NPU_COMPILER_STEPS_IMAGE = (
     "No distro packages the NPU compiler. Intel ships it only inside "
     "intel-driver-compiler-npu, in the release archive below. The two commands "
@@ -300,7 +298,7 @@ def _read_only(path: Path) -> bool:
 def _image(root: Path) -> str:
     if (root / "run/ostree-booted").exists():
         return IMAGE_OSTREE
-    # Aeon and MicroOS: a read-only root snapshot that transactional-update writes the next one of.
+    # (pinned by `test_distro.py::test_aeon_is_detected_only_when_usr_is_read_only`)
     if not _read_only(root / "usr"):
         return ""
     tool = any((root / d / "transactional-update").exists() for d in ("usr/sbin", "usr/bin"))
@@ -336,7 +334,7 @@ def detect(path: Path | None = None, root: Path = ROOT) -> Distro:
     )
 
 
-# The tool that writes the next deployment, per (image kind, family); anything else gets notes.
+# (pinned by `test_distro.py::test_an_image_without_a_known_layering_tool_gets_notes_not_a_command`)
 _IMAGE_INSTALL = {
     (IMAGE_OSTREE, "fedora"): "sudo rpm-ostree install --idempotent",
     (IMAGE_TRANSACTIONAL, "suse"): "sudo transactional-update --non-interactive pkg install",
@@ -355,7 +353,6 @@ def remediation(capability: str, distro: Distro | None = None) -> Remediation:
 
     if family is None:
         if capability == NPU_COMPILER:
-            # Not a package anywhere, so the distro does not matter.
             return Remediation(
                 capability=capability,
                 commands=NPU_COMPILER_COMMANDS,

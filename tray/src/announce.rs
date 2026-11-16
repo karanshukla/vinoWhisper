@@ -1,4 +1,4 @@
-// Never the dictated words, only the message (docs/tray.md, "Screen readers").
+// Never the dictated words (pinned by `dictation::tests::failures_and_warnings_are_announced_once_and_never_the_words`).
 
 use std::collections::HashMap;
 

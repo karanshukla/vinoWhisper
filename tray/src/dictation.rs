@@ -116,8 +116,7 @@ impl Recent {
 
 pub const SPACING_WINDOW: Duration = Duration::from_secs(30);
 
-// Whether a dictation follows another closely enough to need a space between them (#120).
-// The tray cannot see what has focus, so this is a guess from timing alone.
+// A guess from timing alone: the tray cannot see what has focus.
 #[derive(Debug, Default)]
 pub struct Spacing {
     last: Option<(Instant, char)>,
@@ -126,7 +125,7 @@ pub struct Spacing {
 }
 
 impl Spacing {
-    // The key press, not the paste: a long dictation still follows the one before it.
+    // (pinned by `tests::the_window_runs_from_the_paste_to_the_next_key_press`)
     pub fn started(&mut self, now: Instant) {
         self.follows = self.last.is_some_and(|(at, end)| {
             !end.is_whitespace() && now.saturating_duration_since(at) < SPACING_WINDOW
@@ -143,7 +142,7 @@ impl Spacing {
         }
     }
 
-    // Text that was not typed leaves nothing to follow.
+    // (pinned by `tests::no_space_after_a_failed_paste_or_before_punctuation`)
     pub fn pasted(&mut self, typed: bool, now: Instant) {
         let end = self.typing.take();
         self.last = if typed {
@@ -163,6 +162,12 @@ pub struct Pill {
 }
 
 #[derive(Debug)]
+struct Notice {
+    id: u64,
+    message: String,
+}
+
+#[derive(Debug)]
 pub struct Dictation {
     phase: Phase,
     key_down_at: Option<Instant>,
@@ -170,7 +175,7 @@ pub struct Dictation {
     level: f32,
     device: Option<(String, bool)>,
     epoch: u64,
-    notice: Option<(u64, String)>,
+    notice: Option<Notice>,
     notices: u64,
     cleaning: bool,
     announcement: Option<String>,
@@ -196,7 +201,8 @@ impl Dictation {
         &self.phase
     }
 
-    // For the tray's tooltip. Never the dictated words: those stay on the pill, off D-Bus.
+    // The tray's tooltip goes over D-Bus, so never the words
+    // (pinned by `tests::each_phase_has_its_own_tray_text_and_none_carries_the_words`).
     pub fn status(&self) -> Option<String> {
         let text = match &self.phase {
             Phase::Idle => return None,
@@ -225,7 +231,8 @@ impl Dictation {
         self.epoch
     }
 
-    // Anything a server restart would lose.
+    // Anything a server restart would lose
+    // (pinned by `tests::dictation_is_busy_from_the_key_press_until_the_text_is_pasted`).
     pub fn is_busy(&self) -> bool {
         matches!(
             self.phase,
@@ -233,20 +240,23 @@ impl Dictation {
         )
     }
 
-    // The id is for `clear_notice`, so a stale timer cannot remove a newer notice.
     pub fn notice(&mut self, message: impl Into<String>) -> u64 {
         self.notices += 1;
-        self.notice = Some((self.notices, message.into()));
+        self.notice = Some(Notice {
+            id: self.notices,
+            message: message.into(),
+        });
         self.notices
     }
 
+    // (pinned by `tests::a_stale_timer_does_not_clear_a_newer_notice`)
     pub fn clear_notice(&mut self, id: u64) {
-        if self.notice.as_ref().is_some_and(|(held, _)| *held == id) {
+        if self.notice.as_ref().is_some_and(|notice| notice.id == id) {
             self.notice = None;
         }
     }
 
-    // Failures and text that was not typed, never the dictated words (docs/tray.md).
+    // (pinned by `tests::failures_and_warnings_are_announced_once_and_never_the_words`)
     pub fn take_announcement(&mut self) -> Option<String> {
         self.announcement.take()
     }
@@ -377,8 +387,8 @@ impl Dictation {
             Dictate::Notice { message } => {
                 self.announcement = Some(message.clone());
                 self.notice(message);
-                // A new epoch, so the pill lingers long enough to read it even if the
-                // paste already finished and armed the short timer.
+                // A new epoch outlives the short timer a finished paste armed
+                // (pinned by `tests::a_notice_after_the_text_holds_the_pill_until_it_is_dismissed`).
                 self.epoch += 1;
             }
             Dictate::Cancelled => self.set(Phase::Idle),
@@ -443,11 +453,11 @@ impl Dictation {
 
     pub fn pill(&self) -> Option<Pill> {
         let (tone, text, level) = match &self.phase {
-            // A notice (Copied, say) still shows with no dictation in progress.
+            // (pinned by `tests::a_notice_shows_with_no_dictation_in_progress`)
             Phase::Idle => {
-                return self.notice.as_ref().map(|(_, message)| Pill {
+                return self.notice.as_ref().map(|notice| Pill {
                     tone: Tone::Warn,
-                    text: message.clone(),
+                    text: notice.message.clone(),
                     level: None,
                     status: true,
                 });
@@ -477,9 +487,9 @@ impl Dictation {
                 }
         );
         match &self.notice {
-            Some((_, message)) => Some(Pill {
+            Some(notice) => Some(Pill {
                 tone: Tone::Warn,
-                text: message.clone(),
+                text: notice.message.clone(),
                 level,
                 status: true,
             }),

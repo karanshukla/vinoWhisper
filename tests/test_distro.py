@@ -90,12 +90,6 @@ def test_debian_has_no_npu_package_and_says_so():
     assert any("intel-level-zero-npu" in note for note in remedy.notes)
 
 
-# --- Image-based systems ---------------------------------------------------
-#
-# Fedora Atomic (Silverblue, Kinoite, Bazzite) and openSUSE Aeon keep /usr
-# read-only, so `dnf install` or `zypper install` fails outright there.
-
-
 def _image_root(tmp_path, *markers):
     for marker in markers:
         path = tmp_path / marker
@@ -144,16 +138,21 @@ def test_aeon_is_detected_only_when_usr_is_read_only(monkeypatch, fake_os_releas
     assert command == "sudo transactional-update --non-interactive pkg install pipewire-tools"
 
 
+ENDLESS = distro.Distro(
+    id="endless", name="Endless OS", version="", family="debian", image="ostree"
+)
+
+
 def test_an_image_without_a_known_layering_tool_gets_notes_not_a_command():
-    info = distro.Distro(
-        id="endless", name="Endless OS", version="", family="debian", image="ostree"
-    )
-    remedy = distro.remediation(distro.AUDIO_PIPEWIRE, info)
+    remedy = distro.remediation(distro.AUDIO_PIPEWIRE, ENDLESS)
     assert remedy.commands == ()
     assert any("read-only" in note and "pipewire-bin" in note for note in remedy.notes)
-    # Endless has no layering tool, so the note must not send people looking for one.
+    assert not distro.install_needs_reboot(ENDLESS)
+
+
+def test_an_image_without_a_layering_tool_is_not_told_to_layer():
+    remedy = distro.remediation(distro.AUDIO_PIPEWIRE, ENDLESS)
     assert not any("layer" in note for note in remedy.notes)
-    assert not distro.install_needs_reboot(info)
 
 
 def test_a_read_only_usr_without_a_known_tool_is_image_based(

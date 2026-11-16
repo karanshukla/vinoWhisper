@@ -63,13 +63,21 @@ def _read(path: Path) -> str:
     return _odt_text(path) if path.suffix == ".odt" else path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("fmt", session_export.FORMATS)
-@pytest.mark.parametrize("part", session_export.PARTS)
-def test_each_part_and_format_keeps_the_stamps_and_the_marker(sessions, out, capsys, part, fmt):
+def _exported(capsys, sessions, out, *flags) -> Path:
     path, _ = sessions
-    status, stdout, _ = _export(capsys, path, "--part", part, "--format", fmt, "-o", out)
+    status, stdout, _ = _export(capsys, path, *flags, "-o", out)
     assert status == 0
-    written = Path(stdout.strip())
+    return Path(stdout.strip())
+
+
+EVERY_PART_AND_FORMAT = pytest.mark.parametrize(
+    ("part", "fmt"), [(p, f) for p in session_export.PARTS for f in session_export.FORMATS]
+)
+
+
+@EVERY_PART_AND_FORMAT
+def test_each_part_and_format_keeps_the_stamps_and_the_marker(sessions, out, capsys, part, fmt):
+    written = _exported(capsys, sessions, out, "--part", part, "--format", fmt)
     assert written.parent == out and written.suffix == f".{fmt}"
     text = _read(written)
     assert TITLE in text
@@ -79,9 +87,17 @@ def test_each_part_and_format_keeps_the_stamps_and_the_marker(sessions, out, cap
     assert ("Captions run locally [00:00]" in text) is has_summary
     assert ("[01:10] Café, naïve, “quoted”" in text) is has_transcript
     assert ("and an ellipsis…" in text) is has_transcript
-    # Minutes keep counting past an hour, in the summary's stamps and the transcript's.
+
+
+@EVERY_PART_AND_FORMAT
+def test_minutes_keep_counting_past_an_hour(sessions, out, capsys, part, fmt):
+    text = _read(_exported(capsys, sessions, out, "--part", part, "--format", fmt))
     assert "[61:05]" in text
-    # The transcript's header line is what the facts above it already say.
+
+
+@EVERY_PART_AND_FORMAT
+def test_the_transcript_header_line_is_left_out(sessions, out, capsys, part, fmt):
+    text = _read(_exported(capsys, sessions, out, "--part", part, "--format", fmt))
     assert "vinoWhisper transcript, " not in text
 
 
@@ -102,10 +118,13 @@ def test_markdown_carries_the_attestation_as_frontmatter(sessions, out, capsys):
         "vinowhisper_session": NAME,
     }
     assert body.lstrip().startswith(f"# {TITLE}\n\n## Summary\n")
-    # The summary's own "# title" became the document's, not a second heading.
-    assert body.count(f"# {TITLE}") == 1
     assert "\n## Transcript\n" in body
     assert f"_{FOOTER}_" in body
+
+
+def test_the_summary_title_becomes_the_documents_not_a_second_heading(sessions, out, capsys):
+    text = _exported(capsys, sessions, out).read_text(encoding="utf-8")
+    assert text.count(f"# {TITLE}") == 1
 
 
 def test_plain_text_has_a_header_block_and_no_markup(sessions, out, capsys):
@@ -136,13 +155,15 @@ def test_the_odt_is_a_well_formed_opendocument(sessions, out, capsys):
         for name in ("content.xml", "styles.xml", "meta.xml"):
             ElementTree.fromstring(archive.read(name))
         meta = archive.read("meta.xml").decode()
-    # The magic `file` and file managers read: "mimetype" at 30, its value at 38.
-    raw = written.read_bytes()
-    assert raw[30:38] == b"mimetype" and raw[38:77] == b"application/vnd.oasis.opendocument.text"
     assert f'meta:name="vinowhisper_session">{NAME}<' in meta
     content = zipfile.ZipFile(written).read("content.xml").decode()
     assert 'text:list text:style-name="Bullets"' in content
     assert content.count("<text:list-item>") == 2
+
+
+def test_the_odt_mimetype_sits_where_file_and_file_managers_read_it(sessions, out, capsys):
+    raw = _exported(capsys, sessions, out, "--format", "odt").read_bytes()
+    assert raw[30:38] == b"mimetype" and raw[38:77] == b"application/vnd.oasis.opendocument.text"
 
 
 def test_the_same_export_twice_is_the_same_bytes(sessions, out, capsys):
@@ -209,7 +230,11 @@ def test_the_file_name_follows_the_part_and_the_format(sessions, out, capsys):
     assert name(path, "transcript", "odt") == f"2026-10-27 {TITLE} (transcript).odt"
     assert name(path, "both", "md") == f"2026-10-27 {TITLE} (summary and transcript).md"
     assert name(without, "transcript", "txt") == "2026-10-27 Transcript.txt"
-    # A path is printed as given, and nothing is written either way.
+    assert list(out.iterdir()) == []
+
+
+def test_print_path_prints_a_given_path_as_given_and_writes_nothing(sessions, out, capsys):
+    path, _ = sessions
     assert _export(capsys, path, "-o", out / "x.md", "--print-path")[1] == f"{out / 'x.md'}\n"
     assert list(out.iterdir()) == []
 
@@ -270,13 +295,18 @@ def test_export_changes_nothing_in_the_bundle_or_the_state(sessions, out, capsys
     assert not config.SESSIONS_STATE_FILE.exists()
 
 
-def test_the_default_place_is_the_documents_folder(sessions, tmp_path, monkeypatch, capsys):
-    path, _ = sessions
+@pytest.fixture
+def home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".config").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv("XDG_DOCUMENTS_DIR", raising=False)
+    return home
+
+
+def test_the_default_place_is_the_documents_folder(sessions, home, capsys):
+    path, _ = sessions
     (home / ".config/user-dirs.dirs").write_text(
         '# written by xdg-user-dirs-update\nXDG_DOCUMENTS_DIR="$HOME/Dokumente"\n',
         encoding="utf-8",
@@ -284,11 +314,17 @@ def test_the_default_place_is_the_documents_folder(sessions, tmp_path, monkeypat
     _, stdout, _ = _export(capsys, path, "--part", "summary")
     assert Path(stdout.strip()) == home / "Dokumente/vinoWhisper" / f"2026-10-27 {TITLE}.md"
 
-    # Disabled (pointed at $HOME) or never set up: ~/Documents.
+
+def test_a_documents_dir_pointed_at_home_means_home_documents(home):
     (home / ".config/user-dirs.dirs").write_text('XDG_DOCUMENTS_DIR="$HOME/"\n', encoding="utf-8")
     assert session_export.documents_dir() == home / "Documents"
-    (home / ".config/user-dirs.dirs").unlink()
+
+
+def test_no_user_dirs_file_means_home_documents(home):
     assert session_export.documents_dir() == home / "Documents"
+
+
+def test_xdg_documents_dir_in_the_environment_is_the_default_place(home, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DOCUMENTS_DIR", str(tmp_path / "docs"))
     assert session_export.default_dir() == tmp_path / "docs/vinoWhisper"
 
@@ -332,17 +368,23 @@ def test_reuse_keeps_an_earlier_export_and_says_whether_it_was_edited(sessions, 
     assert kept.read_text(encoding="utf-8").endswith("My own notes.\n")
     assert [p.name for p in out.iterdir()] == [kept.name]
 
-    odt = reuse("odt")
-    assert reuse("odt")["state"] == "unchanged"
-    # A word processor saving it rewrites content.xml and keeps the custom properties.
-    saved = Path(odt["path"])
+
+def test_reuse_sees_a_word_processor_save_of_the_odt_as_edited(sessions, out, capsys):
+    path, _ = sessions
+
+    def reuse():
+        argv = (path, "--part", "summary", "--format", "odt", "-o", out, "--reuse", "--json")
+        return json.loads(_export(capsys, *argv)[1])
+
+    saved = Path(reuse()["path"])
+    assert reuse()["state"] == "unchanged"
     with zipfile.ZipFile(saved) as archive:
         parts = {info.filename: archive.read(info) for info in archive.infolist()}
     parts["content.xml"] = parts["content.xml"].replace(b"Captions run", b"Captions ran")
     with zipfile.ZipFile(saved, "w") as archive:
         for name, data in parts.items():
             archive.writestr(name, data)
-    assert reuse("odt")["state"] == "edited"
+    assert reuse()["state"] == "edited"
 
 
 def test_reuse_does_not_take_another_sessions_file_for_its_own(sessions, out, capsys):

@@ -176,10 +176,10 @@ def test_characterization_push_commits_the_later_decodes_punctuation():
     wrong; it will just quietly print slightly worse punctuation forever.
     """
     stitcher = Stitcher()
-    stitcher.push("the best pitcher in baseball.")  # first decode: full stop
-    printed = stitcher.push("the best pitcher in baseball,")  # second: comma
+    stitcher.push("the best pitcher in baseball.")
+    printed = stitcher.push("the best pitcher in baseball,")
 
-    assert printed[-1] == "baseball,"  # the later decode's, not the earlier's
+    assert printed[-1] == "baseball,"
     assert stitcher._confirmed[-1] == "baseball,"
 
 
@@ -230,7 +230,7 @@ def test_punctuation_drift_between_repeats_defeats_the_character_pass():
     (2026-08-07, 2026-09-01).
     """
     looped = "do things. do things, do things do things! do things"
-    assert collapse_repeats(looped) == looped  # unchanged — nothing to see
+    assert collapse_repeats(looped) == looped
     assert words(looped) == ["do", "things.", "do", "things,", "do", "things"]
 
 
@@ -292,8 +292,6 @@ def test_a_drifting_loop_never_reaches_the_confirmed_transcript():
         "and then you know. you know, You know you know you know it stopped",
         "and then you know. you know, You know you know you know it stopped",
     )
-    # Three reps kept, each with the punctuation it arrived with, and the real
-    # words on the far side of the loop still reach the screen.
     kept = "and then you know. you know, You know it stopped"
     assert printed == kept.split()
 

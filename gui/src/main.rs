@@ -22,8 +22,6 @@ Arguments meant for the tray (toggle, --hidden, dictate-*, quit, --install) are
 passed on to vinowhisper-tray, so launchers written before the split keep working.
 ";
 
-// Changing this orphans every shortcut already bound.
-
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match forward::decide(&args) {

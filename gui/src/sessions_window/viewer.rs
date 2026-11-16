@@ -98,7 +98,6 @@ impl SessionsWindow {
                     );
                 }
             }
-            // Both act on the tab being read, so they sit with the tabs.
             let text = match &state.viewer.text {
                 Some(Ok(text)) => Some(text.clone()),
                 _ => None,
@@ -169,7 +168,6 @@ impl SessionsWindow {
         }
     }
 
-    // Returns the first piece drawn, for a heading to be marked on.
     pub(super) fn stamped(
         &self,
         ui: &mut egui::Ui,
@@ -233,7 +231,7 @@ impl SessionsWindow {
         for line in text.lines() {
             match sessions::summary_line(line) {
                 SummaryLine::Blank => ui.add_space(4.0),
-                // The title is already the viewer's heading.
+                // (pinned by `sessions_window::tests::a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it`)
                 SummaryLine::Heading(heading_text)
                     if first_heading && Some(heading_text.as_str()) == title =>
                 {
@@ -254,7 +252,7 @@ impl SessionsWindow {
                         });
                     });
                 }
-                SummaryLine::Note(note) => {
+                SummaryLine::Footer(note) => {
                     ui.add_space(6.0);
                     widgets::small(ui, note);
                 }
@@ -278,9 +276,9 @@ impl SessionsWindow {
         let wanted = target
             .at_s
             .and_then(|at| sessions::paragraph_at(&paragraphs, at));
-        for (index, (at, paragraph)) in paragraphs.iter().enumerate() {
-            // The transcript's own header line is what the heading above already says.
-            if index == 0 && at.is_none() {
+        for (index, paragraph) in paragraphs.iter().enumerate() {
+            let is_header = index == 0 && paragraph.start_s.is_none();
+            if is_header {
                 continue;
             }
             let marked = Some(index) == wanted;
@@ -292,26 +290,25 @@ impl SessionsWindow {
                 line_height: Some(24.0),
                 ..Default::default()
             };
-            let (stamp, words) = match at {
-                Some(_) => paragraph
-                    .split_once("] ")
-                    .map_or(("", paragraph.as_str()), |(s, w)| (s, w)),
-                None => ("", paragraph.as_str()),
+            let stamped = paragraph
+                .start_s
+                .and_then(|_| paragraph.text.split_once("] "));
+            let words = match stamped {
+                Some((stamp, words)) => {
+                    job.append(
+                        &format!("{stamp}] "),
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::monospace(12.5),
+                            color: p.muted,
+                            ..body.clone()
+                        },
+                    );
+                    words
+                }
+                None => paragraph.text.as_str(),
             };
-            if !stamp.is_empty() {
-                job.append(
-                    &format!("{stamp}] "),
-                    0.0,
-                    egui::TextFormat {
-                        font_id: egui::FontId::monospace(12.5),
-                        color: p.muted,
-                        ..body.clone()
-                    },
-                );
-                job.append(words, 0.0, body);
-            } else {
-                job.append(words, 0.0, body);
-            }
+            job.append(words, 0.0, body);
             let shown = egui::Frame::NONE
                 .fill(if marked { p.tint } else { Color32::TRANSPARENT })
                 .corner_radius(8.0)
@@ -326,9 +323,9 @@ impl SessionsWindow {
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(job).wrap());
                 });
-            if marked && !state.viewer.scrolled {
+            if marked && !state.viewer.jumped_to_stamp {
                 shown.response.scroll_to_me(Some(Align::TOP));
-                self.state.lock().unwrap().viewer.scrolled = true;
+                self.state.lock().unwrap().viewer.jumped_to_stamp = true;
             }
         }
     }

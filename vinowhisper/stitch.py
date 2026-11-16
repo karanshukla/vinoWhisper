@@ -31,7 +31,7 @@ _CONTROL_CATEGORIES = frozenset({"Cc", "Cf"})
 
 
 def strip_controls(text: str) -> str:
-    # Model text reaches a terminal and a paste; a newline still separates words.
+    # (pinned by `test_stitch.py::test_strip_controls_keeps_text_and_drops_what_a_terminal_would_act_on`)
     return "".join(
         " " if char.isspace() else char
         for char in text
@@ -40,7 +40,7 @@ def strip_controls(text: str) -> str:
 
 
 def _norm(word: str) -> str:
-    # A punctuation-only token falls back to itself so it never matches everything.
+    # (pinned by `test_stitch.py::test_characterization_a_pure_punctuation_token_does_not_normalize_to_empty`)
     return word.strip(_COMPARE_STRIP).lower() or word.lower()
 
 
@@ -146,7 +146,7 @@ def _cut(confirmed: list[str], curr: list[str]) -> int:
     def covered(end: int) -> int:
         return sum(min(b.b + b.size, end) - b.b for b in matching if b.b < end)
 
-    # Filter by size before taking the furthest reach; the reverse lets one stray word reprint everything.
+    # (pinned by `test_stitch.py::test_a_single_spurious_word_match_does_not_reprint_everything`)
     blocks = [
         b
         for b in matching
@@ -157,7 +157,7 @@ def _cut(confirmed: list[str], curr: list[str]) -> int:
 
     match = max(blocks, key=lambda b: b.b + b.size)
     end = match.b + match.size
-    # Confirmed words past the match are on screen already; their re-decode must not print again.
+    # (pinned by `test_stitch.py::test_a_re_decoded_confirmed_word_does_not_print_twice`)
     return end + _redecode_len(anchor[match.a + match.size :], curr[end:])
 
 
@@ -175,7 +175,6 @@ def _realign(pending: list[str], curr: list[str]) -> tuple[int, int]:
 
 
 def _agreeing_prefix(earlier: list[str], candidate: list[str]) -> int:
-    # Different lengths by design: this cycle's words against an earlier one's.
     length = 0
     for old_word, new_word in zip(earlier, candidate, strict=False):
         if _norm(old_word) != _norm(new_word):
@@ -195,15 +194,15 @@ class Stitcher:
         return list(self._pending)
 
     def push(self, transcript: str) -> list[str]:
-        # Cleaned before anchoring, so _confirmed matches what the next cycle's curr holds.
+        # (pinned by `test_stitch.py::test_word_level_collapse_runs_before_stitching`)
         curr = collapse_word_repeats(collapse_repeats(transcript).split())
-        # A loop the collapses could not fold is dropped whole: two in a row would agree and commit.
+        # (pinned by `test_canary.py::test_characterization_a_looping_decode_is_dropped_whole`)
         if not curr or is_loop(" ".join(curr)):
             return []
 
         cut = _cut(self._confirmed, curr)
         if cut == 0 and self._confirmed and self._pending:
-            # The confirmed tail left the window; the pending words are the only anchor left.
+            # (pinned by `test_stitch.py::test_a_lost_anchor_realigns_on_the_pending_words_instead_of_stalling`)
             cut, drop = _realign(self._pending, curr)
             del self._pending[:drop]
             self._earlier = [tail[drop:] for tail in self._earlier]

@@ -29,10 +29,11 @@ pub fn decide(args: &[String]) -> Action {
             page: Some(page.clone()),
         },
         [flag, open] if flag == "--open" => sessions(Some(open)),
-        // vinoSearch, and notifications posted before the sessions window, name the page too.
+        // vinoSearch and older notifications name the page too (pinned by
+        // `tests::open_names_a_session_with_or_without_the_page`).
         [a, _, b, open] if a == "--page" && b == "--open" => sessions(Some(open)),
         [a, open, b, _] if a == "--open" && b == "--page" => sessions(Some(open)),
-        // A file manager opening a bundle (`Exec=vinowhisper-gui %f`).
+        // `Exec=vinowhisper-gui %f` (pinned by `tests::a_bundle_from_the_file_manager_opens_it`)
         [path] if path.ends_with(".vwsession") && !path.starts_with('-') => sessions(Some(path)),
         [flag, ..] if flag == "-h" || flag == "--help" => Action::Help,
         _ => Action::Tray,
@@ -40,16 +41,20 @@ pub fn decide(args: &[String]) -> Action {
 }
 
 /// Next to this binary first (the install puts them together), then `PATH`.
-pub fn tray_command() -> PathBuf {
+pub fn beside_us_or_on_path(name: &str) -> PathBuf {
     std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("vinowhisper-tray")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
         .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from("vinowhisper-tray"))
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn tray_command() -> PathBuf {
+    beside_us_or_on_path("vinowhisper-tray")
 }
 
 // An upgrade replaces the binary under an open window, and Linux then reports the old one as
-// "<path> (deleted)", which cannot be spawned; the new binary is at the plain path.
+// "<path> (deleted)" (pinned by `tests::a_window_outliving_an_upgrade_opens_the_new_binary`).
 fn installed_path(exe: PathBuf) -> PathBuf {
     match exe
         .to_str()
@@ -88,7 +93,7 @@ pub fn open_settings(page: &str) {
     spawn_self(&["--page", page]);
 }
 
-/// Tells a running tray to re-read the settings, off the UI thread; `refused` hears its reason for a no.
+/// Off the UI thread; `refused` hears the tray's reason for a no.
 pub fn reload_tray(refused: impl FnOnce(String) + Send + 'static) {
     let spawned = Command::new(tray_command())
         .arg("reload")
@@ -169,7 +174,6 @@ fn parse_shortcuts(answer: &str) -> Shortcuts {
     }
 }
 
-/// Fire and forget: the desktop's dialog takes it from here.
 pub fn run_tray(args: &[&str]) {
     match Command::new(tray_command())
         .args(args)
@@ -189,7 +193,6 @@ pub fn run_tray(args: &[&str]) {
 
 pub fn exec_tray(args: &[String]) -> ExitCode {
     let command = tray_command();
-    // exec only returns on failure
     let err = Command::new(&command).args(args).exec();
     eprintln!(
         "[vinowhisper-gui] could not run {}: {err}",

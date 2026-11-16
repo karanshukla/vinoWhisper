@@ -18,10 +18,9 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use crate::app::{Command, trace};
 use crate::settings;
 
-// A stale portal session can hang a call, so every one is bounded.
-const CALL: Duration = Duration::from_secs(3);
-// Start is where the permission dialog appears the first time: the user has to read it.
-const DIALOG: Duration = Duration::from_secs(90);
+const CALL_TIMEOUT: Duration = Duration::from_secs(3);
+// Long enough for the user to read the first start's permission dialog.
+const PERMISSION_DIALOG_TIMEOUT: Duration = Duration::from_secs(90);
 
 const MIME_TYPES: [&str; 5] = [
     "text/plain;charset=utf-8",
@@ -102,16 +101,20 @@ type Transfers = Pin<Box<dyn Stream<Item = (String, u32)> + Send>>;
 struct Open {
     portal: RemoteDesktop,
     session: Session<RemoteDesktop>,
-    // None where the desktop's portal has no clipboard; typing still works.
-    clipboard: Option<(Clipboard, Transfers)>,
-    // Kept until the next copy or the session closes: the desktop reads it as soon as it is
-    // offered (the secret hint, then the text), so a read is not a paste.
+    clipboard: Option<PortalClipboard>,
+    // Kept until the next copy or the session closes: the desktop reads the offer at once
+    // (the secret hint, then the text), so a read is not a paste.
     offer: Option<String>,
+}
+
+struct PortalClipboard {
+    proxy: Clipboard,
+    transfers: Transfers,
 }
 
 impl Open {
     async fn close(self) {
-        let _ = bounded(CALL, "closing the session", self.session.close()).await;
+        let _ = bounded(CALL_TIMEOUT, "closing the session", self.session.close()).await;
     }
 }
 
@@ -177,7 +180,7 @@ async fn run(requests: async_channel::Receiver<Request>, tx: Sender<Command>, id
                 let result = state.copy(text).await.map_err(|failure| failure.message());
                 let _ = tx.send(Command::Copied(result));
             }
-            Event::Idle => {
+            Event::Idle | Event::TransfersEnded => {
                 if let Some(open) = state.open.take() {
                     open.close().await;
                 }
@@ -185,12 +188,6 @@ async fn run(requests: async_channel::Receiver<Request>, tx: Sender<Command>, id
             Event::Transfer(mime, serial) => {
                 if let Some(open) = &mut state.open {
                     serve(open, &mime, serial).await;
-                }
-            }
-            // The session ended under us, on the desktop's side.
-            Event::TransfersEnded => {
-                if let Some(open) = state.open.take() {
-                    open.close().await;
                 }
             }
         }
@@ -217,7 +214,7 @@ async fn next_event(
     };
     let transfer = async {
         match open.as_mut().and_then(|open| open.clipboard.as_mut()) {
-            Some((_, transfers)) => match transfers.next().await {
+            Some(clipboard) => match clipboard.transfers.next().await {
                 Some((mime, serial)) => Event::Transfer(mime, serial),
                 None => Event::TransfersEnded,
             },
@@ -254,7 +251,6 @@ impl State {
         Ok(self.open.as_mut().expect("opened above"))
     }
 
-    // Text that could not be typed goes on the clipboard, where the session still allows it.
     async fn type_or_copy(&mut self, text: &str) -> Result<(), String> {
         let failure = match self.type_text(text).await {
             Ok(()) => return Ok(()),
@@ -270,48 +266,55 @@ impl State {
         }
     }
 
-    // A kept session can have been closed by the desktop meanwhile: one new one is tried, and
-    // only before the first key, so nothing is typed twice.
     async fn type_text(&mut self, text: &str) -> Result<(), Failure> {
         let keysyms: Vec<i32> = text.chars().filter_map(keysym).collect();
-        let Some(&first) = keysyms.first() else {
+        let Some((&first, rest)) = keysyms.split_first() else {
             return Ok(());
         };
-        let reused = self.open.is_some();
-        let open = self.ensure_open().await?;
-        if let Err(failure) = press(open, first).await {
-            if let Some(stale) = self.open.take() {
-                stale.close().await;
-            }
-            if !reused {
-                return Err(failure);
-            }
-            press(self.ensure_open().await?, first).await?;
-        }
+        self.press_first_key(first).await?;
         let open = self.open.as_ref().expect("open after the first key");
-        for &sym in &keysyms[1..] {
+        for &sym in rest {
             if let Err(failure) = press(open, sym).await {
-                if let Some(broken) = self.open.take() {
-                    broken.close().await;
-                }
+                self.close_open().await;
                 return Err(failure);
             }
         }
         Ok(())
     }
 
+    // The desktop may have closed a kept session meanwhile. Retry once in a new one, and only
+    // for the first key, so nothing is typed twice.
+    async fn press_first_key(&mut self, sym: i32) -> Result<(), Failure> {
+        let reused = self.open.is_some();
+        let open = self.ensure_open().await?;
+        let Err(failure) = press(open, sym).await else {
+            return Ok(());
+        };
+        self.close_open().await;
+        if !reused {
+            return Err(failure);
+        }
+        press(self.ensure_open().await?, sym).await
+    }
+
+    async fn close_open(&mut self) {
+        if let Some(open) = self.open.take() {
+            open.close().await;
+        }
+    }
+
     async fn copy(&mut self, text: String) -> Result<(), Failure> {
         let open = self.ensure_open().await?;
-        let Some((clipboard, _)) = &open.clipboard else {
+        let Some(clipboard) = &open.clipboard else {
             return Err(Failure::Failed(
                 "this desktop's remote-desktop portal has no clipboard".into(),
             ));
         };
         let mimes: Vec<&str> = MIME_TYPES.into_iter().chain([PASSWORD_HINT]).collect();
         bounded(
-            CALL,
+            CALL_TIMEOUT,
             "setting the clipboard",
-            clipboard.set_selection(
+            clipboard.proxy.set_selection(
                 &open.session,
                 SetSelectionOptions::default().set_mime_types(&mimes),
             ),
@@ -325,7 +328,7 @@ impl State {
 async fn press(open: &Open, sym: i32) -> Result<(), Failure> {
     for state in [KeyState::Pressed, KeyState::Released] {
         bounded(
-            CALL,
+            CALL_TIMEOUT,
             "typing",
             open.portal
                 .notify_keyboard_keysym(&open.session, sym, state, Default::default()),
@@ -336,7 +339,10 @@ async fn press(open: &Open, sym: i32) -> Result<(), Failure> {
 }
 
 async fn serve(open: &Open, mime: &str, serial: u32) {
-    let Some((clipboard, _)) = &open.clipboard else {
+    let Some(PortalClipboard {
+        proxy: clipboard, ..
+    }) = &open.clipboard
+    else {
         return;
     };
     let bytes = match &open.offer {
@@ -345,7 +351,7 @@ async fn serve(open: &Open, mime: &str, serial: u32) {
         None => Vec::new(),
     };
     let written = match bounded(
-        CALL,
+        CALL_TIMEOUT,
         "handing over the text",
         clipboard.selection_write(&open.session, serial),
     )
@@ -362,7 +368,7 @@ async fn serve(open: &Open, mime: &str, serial: u32) {
         }
     };
     let _ = bounded(
-        CALL,
+        CALL_TIMEOUT,
         "finishing the hand-over",
         clipboard.selection_write_done(&open.session, serial, written),
     )
@@ -370,9 +376,9 @@ async fn serve(open: &Open, mime: &str, serial: u32) {
 }
 
 async fn start() -> Result<Open, Failure> {
-    let portal = bounded(CALL, "connecting", RemoteDesktop::new()).await?;
+    let portal = bounded(CALL_TIMEOUT, "connecting", RemoteDesktop::new()).await?;
     let session = bounded(
-        CALL,
+        CALL_TIMEOUT,
         "creating a session",
         portal.create_session(Default::default()),
     )
@@ -395,11 +401,11 @@ async fn start() -> Result<Open, Failure> {
         .set_persist_mode(PersistMode::ExplicitlyRevoked)
         .set_restore_token(token.as_deref().map(str::trim));
     let started = async {
-        bounded(CALL, "selecting the keyboard", async {
+        bounded(CALL_TIMEOUT, "selecting the keyboard", async {
             portal.select_devices(&session, options).await?.response()
         })
         .await?;
-        bounded(DIALOG, "starting", async {
+        bounded(PERMISSION_DIALOG_TIMEOUT, "starting", async {
             portal
                 .start(&session, None, StartOptions::default())
                 .await?
@@ -411,7 +417,7 @@ async fn start() -> Result<Open, Failure> {
     let started = match started {
         Ok(started) => started,
         Err(failure) => {
-            let _ = bounded(CALL, "closing the session", session.close()).await;
+            let _ = bounded(CALL_TIMEOUT, "closing the session", session.close()).await;
             return Err(failure);
         }
     };
@@ -420,7 +426,7 @@ async fn start() -> Result<Open, Failure> {
         save_token(&path, next);
     }
     if !started.devices().contains(DeviceType::Keyboard) {
-        let _ = bounded(CALL, "closing the session", session.close()).await;
+        let _ = bounded(CALL_TIMEOUT, "closing the session", session.close()).await;
         return Err(Failure::Denied);
     }
     trace(format_args!(
@@ -438,18 +444,21 @@ async fn start() -> Result<Open, Failure> {
     })
 }
 
-async fn request_clipboard(
-    session: &Session<RemoteDesktop>,
-) -> Result<(Clipboard, Transfers), Failure> {
-    let clipboard = bounded(CALL, "connecting to the clipboard", Clipboard::new()).await?;
+async fn request_clipboard(session: &Session<RemoteDesktop>) -> Result<PortalClipboard, Failure> {
+    let clipboard = bounded(
+        CALL_TIMEOUT,
+        "connecting to the clipboard",
+        Clipboard::new(),
+    )
+    .await?;
     bounded(
-        CALL,
+        CALL_TIMEOUT,
         "asking for the clipboard",
         clipboard.request(session, RequestClipboardOptions::default()),
     )
     .await?;
     // Straight from the proxy: ashpd's own stream borrows the Clipboard it came from.
-    let signals = bounded(CALL, "listening for pastes", async {
+    let signals = bounded(CALL_TIMEOUT, "listening for pastes", async {
         clipboard
             .receive_signal("SelectionTransfer")
             .await
@@ -461,20 +470,31 @@ async fn request_clipboard(
             message.body().deserialize().ok()?;
         Some((mime, serial))
     }));
-    Ok((clipboard, transfers))
+    Ok(PortalClipboard {
+        proxy: clipboard,
+        transfers,
+    })
 }
 
-// Keysyms, not keycodes, so the desktop's own layout decides which key makes each character.
+const SPACE_KEYSYM: i32 = 0x20;
+const UNICODE_KEYSYM_BASE: u32 = 0x0100_0000;
+
+// Keysyms, not keycodes, so the desktop's own layout picks the key for each character.
+// (pinned by `tests::latin_1_is_its_own_keysym_and_the_rest_is_offset`)
 fn keysym(c: char) -> Option<i32> {
     let code = c as u32;
     match c {
-        // Never Return or Tab: a pasted line break was safe in a terminal, a typed one runs it.
-        '\n' | '\t' => Some(0x20),
+        // Never Return or Tab: a typed line break runs a terminal's command line.
+        // (pinned by `tests::line_breaks_and_tabs_are_spaces_and_other_controls_are_dropped`)
+        '\n' | '\t' => Some(SPACE_KEYSYM),
         _ if c.is_control() => None,
-        // Latin-1 keysyms are the code points; everything else is 0x01000000 + the code point.
-        _ if (0x20..0x7f).contains(&code) || (0xa0..0x100).contains(&code) => Some(code as i32),
-        _ => Some((0x0100_0000 + code) as i32),
+        _ if is_printable_latin_1(code) => Some(code as i32),
+        _ => Some((UNICODE_KEYSYM_BASE + code) as i32),
     }
+}
+
+fn is_printable_latin_1(code: u32) -> bool {
+    (0x20..0x7f).contains(&code) || (0xa0..0x100).contains(&code)
 }
 
 async fn bounded<T>(

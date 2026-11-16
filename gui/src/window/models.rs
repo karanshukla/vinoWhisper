@@ -1,13 +1,14 @@
 use super::*;
 
 impl SettingsWindow {
-    // Unknown until its status arrives: assume it is there, as setup leaves it.
+    // Present until its status says otherwise, as setup leaves it.
     pub(super) fn whisper_present(&self) -> bool {
         let state = self.whisper_model.lock().unwrap();
         !matches!(&state.status, Some(Ok(status)) if !status.present)
     }
 
-    // The server cannot load a deleted model, so back to Whisper, and the page says so.
+    // (pinned by `window::tests::deleting_the_canary_in_use_goes_back_to_whisper`,
+    // `window::tests::deleting_canary_with_no_whisper_export_says_everything_stays_off`)
     pub(super) fn forget_canary(&mut self) -> bool {
         if self.speech.model != SpeechModel::Canary {
             return false;
@@ -27,7 +28,8 @@ impl SettingsWindow {
         true
     }
 
-    // Whether the speech model changed: a delete that failed left Canary in use.
+    // Whether the speech model changed (pinned by
+    // `window::tests::a_canary_delete_that_failed_leaves_canary_the_speech_model`).
     pub(super) fn settle_canary_delete(&mut self, state: &ModelState) -> bool {
         if !self.canary_delete_pending || state.busy {
             return false;
@@ -41,13 +43,13 @@ impl SettingsWindow {
             return;
         }
         self.whisper_delete_pending = false;
-        // A delete that failed left it on disk: the row shows why, and nothing else changed.
+        // (pinned by `window::tests::a_whisper_delete_that_failed_changes_nothing_on_the_page`)
         if matches!(&state.status, Some(Ok(status)) if !status.present) {
             self.forget_whisper();
         }
     }
 
-    // Deleting Whisper: nothing of it is left to pick, in any language.
+    // (pinned by `window::tests::forgetting_whisper_in_use_leaves_a_note`)
     pub(super) fn forget_whisper(&mut self) {
         self.multilingual = false;
         if self.speech.model == SpeechModel::Whisper {
@@ -236,7 +238,7 @@ impl SettingsWindow {
         }
     }
 
-    // Whisper has no download: vinowhisper-setup exports it. So two deletes and no fetch.
+    // No fetch: vinowhisper-setup exports Whisper.
     pub(super) fn whisper_rows(&mut self, ui: &mut egui::Ui, status: &Status, state: &ModelState) {
         let p = theme::palette(ui.ctx());
         let in_use = self.speech.model == SpeechModel::Whisper;

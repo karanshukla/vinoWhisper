@@ -66,11 +66,12 @@ const BOX: Shape = Shape {
     r: 12.0,
 };
 
-// The box is drawn on the landing page's 64-unit grid, which leaves a 4-unit
-// margin either side for its card layout. An installed icon doesn't want that
-// margin: Plasma's task manager drew it visibly smaller than Dolphin's (#96).
-// Crop to 2 units clear of the box, so only the antialiased edge has room.
-const VIEW_BOX: (f32, f32, f32) = (2.0, 2.0, 60.0);
+// The box sits on the landing page's 64-unit grid. Plasma's task manager drew the grid's
+// full margin visibly smaller than Dolphin did, so crop to just the antialiased edge.
+const VIEW_CLEARANCE: f32 = 2.0;
+const VIEW_SIDE: f32 = BOX.w + 2.0 * VIEW_CLEARANCE;
+const VIEW_X: f32 = BOX.x - VIEW_CLEARANCE;
+const VIEW_Y: f32 = BOX.y + BOX.h / 2.0 - VIEW_SIDE / 2.0;
 
 const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const EDGE_WIDTH: f32 = 2.0;
@@ -102,8 +103,8 @@ const TRAY_MARKS: [(Shape, Tone); 6] = [
     (Shape::line(11.0, 11.0, 2.0, 1.0), Tone::Pending),
 ];
 
-// The symbolic icon sits straight on the panel, light or dark, so its voice
-// marks use a darker shade of the overlay's green that keeps 3:1 against both.
+// Darker than the overlay's green: the symbolic icon sits on light and dark panels alike
+// (pinned by `tests::the_symbolic_green_shows_on_light_and_dark_panels`).
 const TRAY_GREEN: Rgba = Rgba(40, 150, 80, 255);
 
 fn box_rgba() -> Rgba {
@@ -115,9 +116,9 @@ fn hex(Rgba(r, g, b, _): Rgba) -> String {
 }
 
 pub fn app_svg() -> String {
-    let (x, y, side) = VIEW_BOX;
-    let mut svg =
-        format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{x} {y} {side} {side}\">\n");
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{VIEW_X} {VIEW_Y} {VIEW_SIDE} {VIEW_SIDE}\">\n"
+    );
     let mut line = |element: String| {
         svg.push_str("  ");
         svg.push_str(&element);
@@ -242,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_app_icon_fills_its_view_box_across() {
-        let (x, y, side) = VIEW_BOX;
+        let (x, y, side) = (VIEW_X, VIEW_Y, VIEW_SIDE);
         let (left, right) = (BOX.x - x, x + side - (BOX.x + BOX.w));
         assert!((0.0..=2.0).contains(&left) && (0.0..=2.0).contains(&right));
         assert_eq!(left, right, "centred across");
@@ -271,10 +272,12 @@ mod tests {
         0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
 
+    const BREEZE_LIGHT_PANEL: Rgba = Rgba(239, 240, 241, 255);
+    const BREEZE_DARK_PANEL: Rgba = Rgba(32, 35, 38, 255);
+
     #[test]
     fn the_symbolic_green_shows_on_light_and_dark_panels() {
-        // Breeze Light and Breeze Dark panel backgrounds.
-        for panel in [Rgba(239, 240, 241, 255), Rgba(32, 35, 38, 255)] {
+        for panel in [BREEZE_LIGHT_PANEL, BREEZE_DARK_PANEL] {
             let (a, b) = (luminance(TRAY_GREEN) + 0.05, luminance(panel) + 0.05);
             let contrast = a.max(b) / a.min(b);
             assert!(contrast >= 3.0, "{panel:?}: only {contrast:.2}:1");

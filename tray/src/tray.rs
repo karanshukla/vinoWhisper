@@ -88,7 +88,6 @@ pub fn caption_status(
     }
 }
 
-// The icon never changes, so this is where every state has to show, in words.
 fn tool_tip_text(view: &View) -> String {
     match &view.dictation {
         Some(dictation) => format!("{dictation}\n{}", view.status),
@@ -113,8 +112,12 @@ fn recent_label(text: &str) -> String {
     } else {
         flat
     };
-    // ksni takes "_" as an access-key marker; a doubled one is a literal underscore.
-    shown.replace('_', "__")
+    escape_access_keys(&shown)
+}
+
+// ksni takes "_" as an access-key marker (pinned by `tests::underscores_in_a_label_are_escaped`).
+fn escape_access_keys(label: &str) -> String {
+    label.replace('_', "__")
 }
 
 fn recent_menu(recent: &Recent) -> MenuItem<Tray> {
@@ -369,7 +372,6 @@ mod tests {
         Tray::new(tx, view)
     }
 
-    // Every item a screen reader can land on, submenus and radio options included.
     fn all_labels(items: &[MenuItem<Tray>], out: &mut Vec<String>) {
         for item in items {
             match item {
@@ -496,14 +498,17 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_ends_with_quit_and_lists_no_other_apps() {
+    fn the_menu_ends_with_quit() {
         let menu = tray(view()).menu();
         let [.., MenuItem::Separator, MenuItem::Standard(quit)] = menu.as_slice() else {
             panic!("the menu should end with a separator, then Quit");
         };
         assert_eq!(quit.label, "Quit");
-        // The settings window's About page links to vinopilot.ca and the
-        // other vinoPilot apps; the tray doesn't.
+    }
+
+    #[test]
+    fn the_menu_lists_no_other_vinopilot_apps() {
+        let menu = tray(view()).menu();
         let mut all = Vec::new();
         all_labels(&menu, &mut all);
         assert!(
@@ -533,7 +538,6 @@ mod tests {
 
     #[test]
     fn menu_labels_carry_no_stray_access_key_underscores() {
-        // ksni treats "_" as an access-key marker and hides it.
         let names = Source::ALL.map(source_name);
         for name in names {
             assert!(!name.contains('_'), "{name}");

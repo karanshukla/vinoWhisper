@@ -183,7 +183,7 @@ class _Segmenter:
         if chunk.size == 0:
             return None
         level = audio.rms(chunk)
-        # A near-silent chunk (a dropout) must not become the floor: docs/tray.md, "Dictation".
+        # (pinned by `test_dictate.py::test_a_dropout_does_not_become_the_noise_floor`)
         settling = self._total < config.NOISE_FLOOR_SETTLE_S * config.SAMPLE_RATE_HZ
         if not settling and level >= config.SILENCE_RMS_THRESHOLD / config.NOISE_FLOOR_MARGIN:
             self._floor = min(self._floor, level)
@@ -322,7 +322,7 @@ class _Decoder:
         return clean(" ".join(self.texts))
 
     def joined(self) -> str:
-        # On the joined text, not per piece, so a phrase split across two pieces still matches.
+        # (pinned by `test_dictate.py::test_a_replacement_phrase_split_across_two_pieces_still_matches`)
         return self.apply_replacements(self.spoken())
 
     def apply_replacements(self, text: str) -> str:
@@ -337,7 +337,7 @@ class _Decoder:
         self._pending.put((samples, None, 0, time.monotonic()))
 
     def preview(self, samples: np.ndarray, end: int) -> None:
-        # Only when the decoder is idle, so a preview never delays a real piece by more than one.
+        # (pinned by `test_dictate.py::test_a_preview_is_not_queued_behind_another_decode`)
         if self._live and self._pending.empty() and not self._busy:
             self._pending.put((samples, len(self.texts), end, time.monotonic()))
 
@@ -364,7 +364,7 @@ class _Decoder:
             try:
                 self._decode(samples, tag, end)
             except Exception as exc:
-                # A dead worker would quietly drop every later piece from the typed text.
+                # (pinned by `test_dictate.py::test_a_decode_that_raises_reports_an_error_instead_of_typing_part_of_the_text`)
                 if tag is None and self.error is None:
                     self.error = exc
             finally:
@@ -470,7 +470,6 @@ class Dictation:
     def _start(self) -> None:
         if self._active is not None:
             return
-        # The model loads on the server's first request; overlap that with the speech.
         warmup = self._warmup = self._warm()
         self._generation += 1
         self._captured = 0
@@ -526,7 +525,7 @@ class Dictation:
 
     def _preview(self, segmenter: _Segmenter, decoder: _Decoder, size: int) -> None:
         self._since_preview += size
-        # The counter keeps running through a pause, so speech resuming previews at once.
+        # (pinned by `test_dictate.py::test_a_pause_is_not_previewed_and_speech_resuming_previews_at_once`)
         if not preview_due(self._since_preview, segmenter.quiet_s):
             return
         self._since_preview = 0
@@ -544,7 +543,7 @@ class Dictation:
                 return
             self._captured += samples.size
             segment = segmenter.add(samples)
-            # Room noise only reads as quiet once the floor is known, so score the opening then.
+            # (pinned by `test_dictate.py::test_the_opening_is_scored_only_once_the_noise_floor_is_known`)
             self._silence.hold(samples.size, level)
             if segmenter.settled:
                 self._silence.score(segmenter.threshold)
@@ -698,7 +697,8 @@ class Dictation:
         return True
 
     def _pass_on_notice(self) -> None:
-        # Its own record, after Dictated, so an older tray skips it and still types.
+        # After Dictated, so an older tray that skips it still types (pinned by
+        # `test_dictate.py::test_a_cleanup_that_turns_itself_off_says_so_after_the_text`).
         notice = self._cleaner.take_notice()
         if notice is not None:
             print(f"[vinowhisper] {notice}", file=sys.stderr)
@@ -711,7 +711,6 @@ class Dictation:
         if not self._cleaner.wants(spoken):
             _log_cleanup_skipped(spoken, decoder.texts)
             return decoder.apply_replacements(spoken), False
-        # The model takes a second or two, so the overlay says why the text is late.
         self._emit({"event": "Cleaning"})
         outcome = self._cleaner(spoken)
         _log_cleanup(spoken, decoder.texts, outcome)
@@ -767,11 +766,10 @@ class _FileCleaner:
         breaker: cleanup.Breaker | None = None,
         warm: Callable[[], None] | None = None,
     ) -> None:
-        # Looked up at each call when not given, so cleanup.local can be swapped out.
         self._load = load
         self._transport = transport
         self._warm = warm
-        # The breaker outlives each settings read: changed settings are what untrip it.
+        # (pinned by `test_dictate.py::test_a_missing_model_stops_cleanup_until_it_is_downloaded`)
         self._breaker = breaker or cleanup.Breaker()
         self._notice: str | None = None
         self._settings: cleanup.Settings | None = None
@@ -788,7 +786,6 @@ class _FileCleaner:
                 self._ready.set()
             settings = self._settings
             if settings is not None and settings.model_ready and self._breaker.allows(settings):
-                # Loads the model while the user is still talking; a cold load is ~25s.
                 try:
                     (self._warm or _warm_cleanup)()
                 except Exception as exc:
@@ -846,7 +843,7 @@ _KEPT_PIECES = 10
 
 
 def _keep_audio(raw: np.ndarray, decoded: np.ndarray, full: np.ndarray) -> None:
-    # A recording of the user's voice: 0700 / 0600, and only the newest few are kept.
+    # (pinned by `test_dictate.py::test_kept_audio_is_private_and_only_the_newest_are_kept`)
     target = os.environ.get("VINOWHISPER_DICTATE_AUDIO_DIR")
     if not target:
         return

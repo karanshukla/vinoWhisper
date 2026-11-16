@@ -29,7 +29,7 @@ pub fn pause_playing(players: &mut impl Players, held: &mut Vec<String>) {
 
 pub fn resume_paused(players: &mut impl Players, held: &mut Vec<String>) {
     for name in held.drain(..) {
-        // Anything else and the user (or the player) moved on during the dictation.
+        // (pinned by `tests::a_player_the_user_touched_meanwhile_is_left_alone`)
         if players.status(&name).as_deref() == Some("Paused") {
             players.call(&name, "Play");
         }
@@ -245,8 +245,11 @@ mod tests {
 
         bus.calls.clear();
         resume_paused(&mut bus, &mut held);
-        // mpv was paused before the dictation and stays that way.
-        assert_eq!(bus.called(), [("vlc", "Play")]);
+        assert_eq!(
+            bus.called(),
+            [("vlc", "Play")],
+            "mpv was paused before the dictation"
+        );
         assert!(held.is_empty());
     }
 

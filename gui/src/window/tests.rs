@@ -3,12 +3,17 @@ use eframe::egui::accesskit::{Live, Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 
-// No file is read or written and nothing is spawned: `show` is the window minus its
-// side effects, and the tests never press the buttons that run the tray or vinowhisper-cleanup.
+// `show` reads, writes and spawns nothing, and no test presses a button that runs the tray or
+// vinowhisper-cleanup.
+// The vocabulary is the last row on the Speech page.
+const TALL_ENOUGH_FOR_THE_LAST_ROW: f32 = 1000.0;
+// At `WIDE`.
+const FIRST_ZOOM_THAT_FOLDS_THE_SIDEBAR: f32 = 1.5;
+
 struct Under {
     window: SettingsWindow,
     styled: bool,
-    saved: (bool, bool),
+    saved: Saved,
 }
 
 fn harness(page: Page, width: f32) -> Harness<'static, Under> {
@@ -44,14 +49,14 @@ fn harness(page: Page, width: f32) -> Harness<'static, Under> {
                 ctx.request_repaint();
                 return;
             }
-            let (settings, speech) = under.window.show(ui);
-            under.saved.0 |= settings;
-            under.saved.1 |= speech;
+            let saved = under.window.show(ui);
+            under.saved.settings |= saved.settings;
+            under.saved.speech |= saved.speech;
         },
         Under {
             window,
             styled: false,
-            saved: (false, false),
+            saved: Saved::default(),
         },
     )
 }
@@ -174,7 +179,7 @@ fn a_segmented_control_can_be_changed_and_says_what_it_is_set_to() {
         .click();
     harness.run();
     assert_eq!(harness.state().window.settings.position, Position::Top);
-    assert!(harness.state().saved.0);
+    assert!(harness.state().saved.settings);
     let top = harness.get_by_role_and_label(Role::RadioButton, "Top");
     assert_eq!(top.accesskit_node().toggled(), Some(Toggled::True));
 }
@@ -204,7 +209,7 @@ fn a_switch_reports_and_flips_its_state() {
     harness.key_press(egui::Key::Space);
     harness.run();
     assert!(harness.state().window.settings.save_transcripts);
-    assert!(harness.state().saved.0);
+    assert!(harness.state().saved.settings);
     let after = harness
         .get_by_role_and_label(Role::Switch, "Save transcripts")
         .accesskit_node()
@@ -246,8 +251,7 @@ fn spacing_between_dictations_is_a_switch_that_is_off_until_asked_for() {
 
 fn vocabulary_harness(name: &str) -> Harness<'static, Under> {
     let mut harness = harness(Page::Speech, WIDE);
-    // The vocabulary is the last row on the page: tall enough that it is not scrolled away.
-    harness.set_size(egui::vec2(WIDE, 1000.0));
+    harness.set_size(egui::vec2(WIDE, TALL_ENOUGH_FOR_THE_LAST_ROW));
     let path = harness.state().window.apps_data.join(name);
     let _ = std::fs::remove_file(&path);
     harness.state_mut().window.vocabulary_path = path;
@@ -435,7 +439,7 @@ fn a_downloaded_canary_can_be_picked() {
         .click();
     harness.run();
     assert_eq!(harness.state().window.speech.model, SpeechModel::Canary);
-    assert!(harness.state().saved.1, "the switch is saved");
+    assert!(harness.state().saved.speech, "the switch is saved");
 }
 
 #[test]
@@ -849,9 +853,8 @@ fn a_failed_fetch_says_why() {
     harness.get_by_label("The last attempt failed: sha256 mismatch");
 }
 
-// AccessKit had the disabled flag right all along; accesskit_atspi_common before 0.21
-// dropped it for buttons and told Orca every one was usable (#100, AccessKit#788). The
-// tree above can't see that, so hold the lock at the fixed release.
+// accesskit_atspi_common before 0.21 dropped the disabled flag for buttons, so Orca called
+// every one usable (AccessKit#788). The tree above can't see that, so hold the lock at 0.21+.
 #[test]
 fn the_atspi_bridge_is_one_that_exposes_disabled_buttons() {
     let lock = include_str!("../../Cargo.lock");
@@ -986,8 +989,7 @@ fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
 
 #[test]
 fn large_text_keeps_every_control_inside_the_window() {
-    // 1.5 is the step where 820 wide first folds the sidebar; 3.0 is the clamp.
-    for zoom in [1.5, *theme::TEXT_SCALE.end()] {
+    for zoom in [FIRST_ZOOM_THAT_FOLDS_THE_SIDEBAR, *theme::TEXT_SCALE.end()] {
         for page in Page::ALL {
             let mut harness = harness(page, WIDE);
             harness.state_mut().window.cleanup.enabled = true;

@@ -207,17 +207,7 @@ fn main() -> ExitCode {
         println!("{{\"state\":\"stopped\"}}");
         return ExitCode::SUCCESS;
     }
-    if matches!(
-        request,
-        Request::Hide
-            | Request::Quit
-            | Request::Reload
-            | Request::ConfigureShortcut
-            | Request::Dictate
-            | Request::DictatePress
-            | Request::DictateRelease
-            | Request::SummariesReady
-    ) {
+    if !starts_an_instance(request) {
         eprintln!("vinowhisper-tray is not running");
         return ExitCode::SUCCESS;
     }
@@ -233,6 +223,22 @@ fn main() -> ExitCode {
             eprintln!("vinowhisper-tray: {message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+// (pinned by `tests::only_show_toggle_and_ping_start_a_tray`, `tests::a_request_for_a_running_tray_does_not_start_one`)
+fn starts_an_instance(request: Request) -> bool {
+    match request {
+        Request::Show | Request::Toggle | Request::Ping => true,
+        Request::Shortcuts
+        | Request::Hide
+        | Request::Quit
+        | Request::Reload
+        | Request::ConfigureShortcut
+        | Request::Dictate
+        | Request::DictatePress
+        | Request::DictateRelease
+        | Request::SummariesReady => false,
     }
 }
 
@@ -272,8 +278,8 @@ fn run_restart_sandboxed() -> ExitCode {
         }
     };
     let started = restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok());
-    // flatpak-spawn stays as long as the tray it started, and this command's sandbox with
-    // it. The tray does not need it: killed, not asked, since it passes a signal on.
+    // flatpak-spawn lives as long as the tray it started, and keeps this sandbox alive. Kill
+    // it rather than signal it: it would pass the signal on to the tray.
     let _ = helper.kill();
     let _ = helper.wait();
     if !started {
@@ -303,8 +309,7 @@ fn run_restart() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Over ssh, or from a service: quitting would leave nothing that can start it again.
-    if std::env::var_os("WAYLAND_DISPLAY").is_none_or(|display| display.is_empty()) {
+    if !has_wayland_session() {
         eprintln!(
             "vinowhisper-tray: no Wayland session here, so the running tray was left alone; \
              quit it from its menu and start it again to use this version"
@@ -352,7 +357,11 @@ fn run_restart() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-// What the running instance was started with, minus the command: the new one starts in the tray.
+fn has_wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
+}
+
+// (pinned by `tests::a_restart_keeps_the_source_and_caption_but_not_the_visibility`)
 fn relaunch_args(old: &[String]) -> Vec<String> {
     let mut args = vec!["--hidden".to_owned()];
     let Ok(old) = Args::parse(old.iter().cloned()) else {
@@ -403,6 +412,30 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, String> {
         Args::parse(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn only_show_toggle_and_ping_start_a_tray() {
+        for request in [Request::Show, Request::Toggle, Request::Ping] {
+            assert!(starts_an_instance(request), "{request:?}");
+        }
+    }
+
+    #[test]
+    fn a_request_for_a_running_tray_does_not_start_one() {
+        for request in [
+            Request::Shortcuts,
+            Request::Hide,
+            Request::Quit,
+            Request::Reload,
+            Request::ConfigureShortcut,
+            Request::Dictate,
+            Request::DictatePress,
+            Request::DictateRelease,
+            Request::SummariesReady,
+        ] {
+            assert!(!starts_an_instance(request), "{request:?}");
+        }
     }
 
     #[test]

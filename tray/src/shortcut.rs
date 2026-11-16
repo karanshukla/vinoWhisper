@@ -30,7 +30,7 @@ pub enum State {
     Unavailable(String),
 }
 
-// For `vinowhisper-tray shortcuts`, which the settings window reads.
+// (pinned by `tests::the_settings_window_reads_what_was_bound`)
 pub fn to_json(state: &State) -> String {
     let value = match state {
         State::Pending => serde_json::json!({ "state": "pending" }),

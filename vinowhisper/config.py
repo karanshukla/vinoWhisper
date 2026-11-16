@@ -23,25 +23,20 @@ def _state_home() -> Path:
 MODEL_ID = "openai/whisper-small.en"
 MODEL_ROOT = _data_home() / "vinowhisper/models"
 TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
-# {"auto": bool}, written by the settings window's Sessions page (settings::Summaries).
 SUMMARIES_FILE = _config_home() / "vinowhisper/summaries.json"
-# The summariser's own bookkeeping: failures, declined summaries, and where backfill starts.
 SESSIONS_STATE_FILE = _state_home() / "vinowhisper/sessions.json"
-# Finished summaries the tray has not announced yet; relative to runtime_dir().
 SUMMARIES_READY_RELPATH = "vinowhisper/summaries-ready.json"
-# What the summariser is on right now, for the Sessions page; gone when it is idle.
 SUMMARISING_RELPATH = "vinowhisper/summarising.json"
 
 MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov"
 STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small.en-ov-stateful"
 
 
-# Opt-in with `--language`: the English-only model is the one benchmarked and pinned.
 MULTILINGUAL_MODEL_ID = "openai/whisper-small"
 MULTILINGUAL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov"
 MULTILINGUAL_STATEFUL_MODEL_DIR = MODEL_ROOT / "whisper-small-ov-stateful"
 
-# scripts/export_whisper.py's step export (#176). fp16: INT8 drifts (docs/models.md).
+# fp16: INT8 drifts (docs/models.md).
 STEP_MODEL_DIR = MODEL_ROOT / "whisper-small.en-step-ov-fp16"
 MULTILINGUAL_STEP_MODEL_DIR = MODEL_ROOT / "whisper-small-step-ov-fp16"
 
@@ -51,7 +46,7 @@ def step_model_dir(multilingual: bool = False) -> Path:
 
 
 AUTO_LANGUAGE = "auto"
-# Whisper knows ~99; these are the ones anyone has run here (docs/models.md).
+# Whisper knows ~99; only these have been run (docs/models.md).
 LANGUAGES = ("en", "fr", "de", "es")
 TASKS = ("transcribe", "translate")
 DEFAULT_LANGUAGE = "en"
@@ -65,13 +60,12 @@ CANARY_MODEL_ID = "nvidia/canary-1b-v2"
 # INT8 weights for the NPU; the CPU plugin cannot compile those (2026-11-06), so fp16 there.
 CANARY_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov"
 CANARY_FP16_MODEL_DIR = MODEL_ROOT / "canary-1b-v2-ov-fp16"
-# Auto means translate: the prompt names CANARY_AUTO_SOURCE (docs/models.md).
 CANARY_LANGUAGES = (
     "en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
     "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
 )  # fmt: skip
 
-
+# (pinned by `test_canary.py::test_auto_translate_names_a_fixed_non_english_source`)
 CANARY_AUTO_SOURCE = "fr"
 
 
@@ -95,25 +89,20 @@ def check_language(language: str, task: str, model: str = DEFAULT_MODEL) -> None
             "into English (--task translate), or name the spoken language"
         )
     if task == "translate" and language == "en":
-        # Whisper translates into English, so there is nothing to do for English audio.
         raise ValueError("translate turns speech into English; give the spoken language or auto")
 
 
-# Shared with vinowhisper-tray, whose tray writes it. The server reads it when it starts, so
-# a switch stops the server. A flag on the server overrides it.
+# Read once when the server starts, so the tray stops the server to switch it.
 LANGUAGE_FILE = _config_home() / "vinowhisper/language.json"
 
 REPLACEMENTS_FILE = _config_home() / "vinowhisper/replacements.json"
 
-# One term per line, given to Whisper's decoder as a prompt for dictation (issue #161).
 VOCABULARY_FILE = _config_home() / "vinowhisper/vocabulary.txt"
 VOCABULARY_MAX_TOKENS = 120
 
-# Written by the settings window; the API key is never in it (see cleanup.SECRET_ATTRIBUTES).
 CLEANUP_FILE = _config_home() / "vinowhisper/cleanup.json"
 CLEANUP_MODEL_ID = "arankays/SmolLM3-3B-int4-cw-ov"
 CLEANUP_MODEL_DIR = MODEL_ROOT / "SmolLM3-3B-int4-cw-ov"
-# Compiled NPU blobs: a first load compiles for ~25s, a cached one takes a few.
 CLEANUP_CACHE_DIR = _cache_home() / "vinowhisper/cleanup-cache"
 
 
@@ -124,9 +113,9 @@ def load_language(path: Path | None = None) -> tuple[str, str, str]:
         raw = json.loads((path or LANGUAGE_FILE).read_text(encoding="utf-8"))
         model = str(raw.get("model", DEFAULT_MODEL))
     except (OSError, ValueError, AttributeError):
-        # A missing, hand-broken or contradictory file is English, never a dead server.
+        # (pinned by `test_languages.py::test_a_missing_or_bad_language_file_means_english_not_a_dead_server`)
         return DEFAULT_LANGUAGE, DEFAULT_TASK, DEFAULT_MODEL
-    # An unknown model (a newer version's) is Whisper; the language survives if Whisper has it.
+    # (pinned by `test_canary.py::test_a_bad_choice_falls_back_without_losing_the_model`)
     model = model if model in MODELS else DEFAULT_MODEL
     try:
         language = str(raw.get("language", DEFAULT_LANGUAGE))
@@ -143,7 +132,7 @@ def save_language(
     from . import atomic
 
     check_language(language, task, model)
-    # resolve(): through a symlink, so a dotfiles-managed link stays a link.
+    # (pinned by `test_languages.py::test_saving_the_language_through_a_symlink_keeps_the_link`)
     target = (path or LANGUAGE_FILE).resolve()
     body = {"language": language, "task": task, "model": model}
     atomic.write_json(target, body, temp_suffix=f".{os.getpid()}.partial")
@@ -152,21 +141,20 @@ def save_language(
 def resolve_language(
     language: str | None, task: str | None, model: str | None = None
 ) -> tuple[str, str, str]:
-    # test_flags_beat_the_file: a flag on one half replaces the file's whole choice.
+    # (pinned by `test_languages.py::test_flags_beat_the_file`)
     saved_language, saved_task, saved_model = load_language()
     model = model or saved_model
     if language is None and task is None:
         if saved_language not in languages(model):
-            # `--model` onto a saved language the other model lacks: its default instead.
+            # (pinned by `test_canary.py::test_a_model_flag_drops_a_saved_language_it_lacks`)
             return DEFAULT_LANGUAGE, DEFAULT_TASK, model
         return saved_language, saved_task, model
     language = language or saved_language
-    # `--language en` must not be undone by a saved translate, which English cannot do.
     return language, task or (saved_task if language == saved_language else DEFAULT_TASK), model
 
 
 def is_multilingual(language: str, task: str = DEFAULT_TASK) -> bool:
-    # English alone keeps the English-only model: smaller vocabulary, better English.
+    # (pinned by `test_languages.py::test_english_keeps_the_english_only_model`)
     return language != "en" or task == "translate"
 
 
@@ -192,16 +180,11 @@ def model_dir(device_kind: str, multilingual: bool = False, model: str = DEFAULT
 AUTO_DEVICE = "auto"
 DEFAULT_DEVICE = AUTO_DEVICE
 
-# Beside the overlay's gui.json; see failures.py.
 FAILED_DEVICES_FILE = _config_home() / "vinowhisper/failed-devices.json"
 
-# {"device": "NPU"|"GPU"|"CPU"|"auto"}, written by vinowhisper-setup --device. A flag on the
-# server overrides it.
 SERVER_FILE = _config_home() / "vinowhisper/server.json"
-# What the server prints, when a client started it (launch.py).
 SERVER_LOG = _state_home() / "vinowhisper/server.log"
 
-# Relative to runtime_dir().
 SERVER_SOCKET_RELPATH = "vinowhisper/server.sock"
 
 
@@ -224,13 +207,13 @@ def save_device(device: str, path: Path | None = None) -> None:
 
 
 def runtime_dir() -> Path | None:
-    # None, never a /tmp fallback: anywhere shared would let another user squat the path.
+    # No /tmp fallback: another user could squat a shared path
+    # (pinned by `test_client.py::test_no_runtime_dir_is_a_connection_error_not_a_tmp_fallback`).
     raw = os.environ.get("XDG_RUNTIME_DIR", "")
     if not os.path.isabs(raw):
         return None
     app = sandbox.flatpak_id()
-    # The rest of a sandbox's runtime dir is its own: only this part is shared by the
-    # tray, the server and each command, which Flatpak runs in a sandbox apiece.
+    # (pinned by `test_flatpak.py::test_the_runtime_dir_is_the_part_every_sandbox_of_the_app_shares`)
     return Path(raw) / "app" / app if app else Path(raw)
 
 
@@ -253,7 +236,6 @@ DEFAULT_SOURCE = "output"
 # Hard ceiling: WhisperPipeline's streamer only handles audio under 30s.
 MAX_WINDOW_S = 29.5
 
-# Dictation cuts a long utterance at pauses and decodes the pieces while the key is held.
 DICTATION_MAX_S = 300.0
 SEGMENT_MIN_S = 5.0
 SEGMENT_PAUSE_S = 0.3
@@ -262,28 +244,24 @@ PREVIEW_EVERY_S = 1.5
 PREVIEW_MIN_S = 1.0
 PREVIEW_QUIET_S = 0.3
 
-# Quiet kept around the speech in a piece. The rest is cut: Whisper writes sentences for noise.
+# Quiet kept around a piece's speech; Whisper writes sentences for noise.
 TRIM_PAD_S = 0.3
 
-# Room noise: loudest stretch within STATIONARY_RATIO of the quietest and under STATIONARY_MAX_RMS.
-# Else a piece needs SPEECH_MIN_CHUNKS of 100ms at SPEECH_FRACTION of the loudest (docs/tray.md).
+# A dictation piece's room-noise and speech thresholds: docs/tray.md.
 STATIONARY_RATIO = 2.8
 STATIONARY_MAX_RMS = 0.04
 SPEECH_FRACTION = 0.6
 SPEECH_MIN_CHUNKS = 2
 
-# vinowhisper-transcribe cuts a file at the quietest pause between these two lengths.
-FILE_PIECE_MIN_S = 15.0
-# How long a file's piece waits for captions or a dictation already decoding.
-BACKGROUND_YIELD_S = 5.0
-# While captions or dictation are in use, a file is cut shorter: no piece then costs
-# them more than one caption window's decode.
-FILE_PIECE_BUSY_MIN_S = 6.0
-FILE_PIECE_BUSY_MAX_S = 12.0
-# Captions or a dictation within this long count as in use.
-LIVE_RECENT_S = 10.0
-
 WINDOW_S = 12.0
+
+FILE_PIECE_MIN_S = 15.0
+# How long a file's piece waits for a caption or dictation decode already running.
+BACKGROUND_YIELD_S = 5.0
+# While captions or dictation are in use, no file piece costs them more than one window's decode.
+FILE_PIECE_BUSY_MIN_S = 6.0
+FILE_PIECE_BUSY_MAX_S = WINDOW_S
+LIVE_RECENT_S = 10.0
 
 MIN_WINDOW_S = 1.5
 
@@ -299,7 +277,7 @@ MAX_TOKENS_MARGIN = 16
 MULTILINGUAL_TOKEN_FACTOR = 1.25
 
 
-# Whisper's decoder context; the 29.5s multilingual cap would otherwise ask for more.
+# Whisper's decoder context, which the multilingual cap on a 29.5s window would exceed.
 WHISPER_MAX_TOKENS = 448
 
 
@@ -309,7 +287,6 @@ def max_new_tokens(duration_s: float, multilingual: bool = False) -> int:
 
 
 SILENCE_RMS_THRESHOLD = 0.002
-# Less speech than this in a caption window, by the speech detector, and it is not decoded.
 CAPTION_MIN_SPEECH_S = 0.3
 
 NOISE_FLOOR_MARGIN = 2.0
@@ -330,8 +307,7 @@ REQUEST_TIMEOUT_S = 60.0
 IDLE_TIMEOUT_S = 5 * 60
 # Captions keep the server up for hours; the cleanup model should not ride along.
 CLEANUP_IDLE_UNLOAD_S = 5 * 60
-# The server's own deadline when a request names none or a longer one: no request holds
-# the model, and every dictation behind it, for longer.
+# (pinned by `test_server.py::test_no_request_can_hold_the_model_past_the_servers_ceiling`)
 CLEANUP_MAX_BUDGET_S = 10.0
 IDLE_CHECK_INTERVAL_S = 30.0
 
@@ -340,7 +316,7 @@ CANARY_EXPORT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts/export_
 CANARY_EXPORT_URL = (
     "https://raw.githubusercontent.com/karanshukla/vinoWhisper/main/scripts/export_canary.py"
 )
-# In the Flatpak, where the app's own Python is read-only: a venv for optimum and torch.
+# A venv for optimum and torch in the Flatpak, whose own Python is read-only.
 EXPORT_ENV_DIR = _data_home() / "vinowhisper/export-env"
 CONVERT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "convert_model.sh"
 # optimum writes a full-size intermediate to $TMPDIR, and /tmp is often tmpfs (RAM).
@@ -349,7 +325,7 @@ EXPORT_TMP_ROOT = _cache_home() / "vinowhisper/export-tmp"
 
 def export_command(variant: str, multilingual: bool = False, model: str = DEFAULT_MODEL) -> str:
     if model == CANARY_MODEL:
-        # PEP 723 script with its own transformers, clear of the [export] extra's <5.4 pin.
+        # A PEP 723 script with its own transformers, clear of the [export] extra's <5.4 pin.
         if CANARY_EXPORT_SCRIPT.is_file():
             return "uv run scripts/export_canary.py"
         return f"uv run {CANARY_EXPORT_URL}"

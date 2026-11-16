@@ -10,7 +10,7 @@ def info_value(section: str, key: str, info: Path | None = None) -> str | None:
     # Imported here: only the Flatpak reads the file, and every command imports this module.
     import configparser
 
-    # A GKeyFile: `=` only, keys as written, and `;` is a list separator, not a comment.
+    # (pinned by `test_flatpak.py::test_a_value_keeps_its_semicolons_colons_and_hashes`)
     parser = configparser.RawConfigParser(
         delimiters=("=",), comment_prefixes=("#",), strict=False, interpolation=None
     )
@@ -23,8 +23,7 @@ def info_value(section: str, key: str, info: Path | None = None) -> str | None:
 
 
 def flatpak_id(info: Path | None = None) -> str | None:
-    # The file marks a sandbox: FLATPAK_ID alone can be left in the environment of
-    # something started from one.
+    # (pinned by `test_flatpak.py::test_outside_a_sandbox_there_is_no_app_id`)
     info = info or INFO
     if not info.is_file():
         return None

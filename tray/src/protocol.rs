@@ -67,7 +67,7 @@ pub enum Dictate {
     },
 }
 
-// Unknown records are skipped, not fatal: a newer Python side may add some.
+// A newer Python side may add records (pinned by `tests::unknown_records_and_stray_output_are_skipped`).
 pub fn parse<T: for<'de> Deserialize<'de>>(line: &str) -> Option<T> {
     serde_json::from_str(line.trim()).ok()
 }

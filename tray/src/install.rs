@@ -57,6 +57,7 @@ fn launcher_in(data: &Path) -> PathBuf {
     data.join(format!("applications/{APP_ID}.desktop"))
 }
 
+// Named after the window's app id, which is how the task manager finds its icon.
 fn settings_entry_in(data: &Path) -> PathBuf {
     data.join(format!(
         "applications/{}.desktop",
@@ -70,8 +71,12 @@ fn mime_package_in(data: &Path) -> PathBuf {
     data.join(format!("mime/packages/{APP_ID}-session.xml"))
 }
 
-// The bundle's own type (#123): its icon in file managers, and opening one goes to Sessions.
-// The magic is the zip's first entry, "mimetype", stored at offset 30 with its value at 38.
+const ZIP_LOCAL_HEADER_LEN: usize = 30;
+const MIMETYPE_ENTRY: &str = "mimetype";
+const MIMETYPE_VALUE_AT: usize = ZIP_LOCAL_HEADER_LEN + MIMETYPE_ENTRY.len();
+
+// A bundle's first zip entry is a stored "mimetype" file, as in ODF
+// (pinned by `tests::a_session_bundle_is_recognised_by_its_mimetype_entry`).
 fn mime_package() -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -83,8 +88,8 @@ fn mime_package() -> String {
     <generic-icon name="text-x-generic"/>
     <glob pattern="*.vwsession"/>
     <magic priority="70">
-      <match type="string" offset="30" value="mimetype">
-        <match type="string" offset="38" value="{SESSION_MIME}"/>
+      <match type="string" offset="{ZIP_LOCAL_HEADER_LEN}" value="{MIMETYPE_ENTRY}">
+        <match type="string" offset="{MIMETYPE_VALUE_AT}" value="{SESSION_MIME}"/>
       </match>
     </magic>
   </mime-type>
@@ -183,9 +188,8 @@ pub fn uninstall() -> io::Result<Vec<PathBuf>> {
     uninstall_from(&Dirs::from_env())
 }
 
-// In the Flatpak the launcher, icons and file type are the bundle's own, and starting at
-// login is the Background portal's: it writes and removes the entry on the host. Blocks
-// until the desktop answers.
+// In the Flatpak, the Background portal writes and removes the host's login entry.
+// Blocks until the desktop answers.
 fn portal_autostart(enabled: bool) -> io::Result<()> {
     use ashpd::desktop::background::Background;
     let granted = async_io::block_on(async {
@@ -206,8 +210,7 @@ fn portal_autostart(enabled: bool) -> io::Result<()> {
     Ok(())
 }
 
-// What the Flatpak leaves outside itself: the login entry, and the sessions window's
-// app menu entry when Settings added one. `flatpak uninstall` removes the rest.
+// `flatpak uninstall` removes everything but these two host entries.
 fn uninstall_from_host() -> io::Result<Vec<PathBuf>> {
     let autostart = settings::sandbox::host_autostart_entry(APP_ID);
     let had_autostart = autostart.exists();
@@ -249,22 +252,12 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
         return Ok(None);
     }
     for (path, svg) in dirs.icons() {
-        if std::fs::read_to_string(&path).ok().as_deref() != Some(svg.as_str()) {
-            write(&path, &svg)?;
-        }
+        write_if_changed(&path, &svg)?;
     }
     let settings_entry = settings_desktop_entry(&settings_command(exe));
-    let mut changed = false;
-    if std::fs::read_to_string(dirs.settings_entry()).ok() != Some(settings_entry.clone()) {
-        write(&dirs.settings_entry(), &settings_entry)?;
-        changed = true;
-    }
-    let mime = mime_package_in(&dirs.data);
-    if std::fs::read_to_string(&mime).ok() != Some(mime_package()) {
-        write(&mime, &mime_package())?;
-        changed = true;
-    }
-    if changed {
+    let entry_changed = write_if_changed(&dirs.settings_entry(), &settings_entry)?;
+    let mime_changed = write_if_changed(&mime_package_in(&dirs.data), &mime_package())?;
+    if entry_changed || mime_changed {
         refresh_databases(&dirs.data);
     }
     migrate_legacy_command(&dirs.launcher())?;
@@ -275,7 +268,8 @@ fn ensure_launcher_in(dirs: &Dirs, exe: &Path) -> io::Result<Option<PathBuf>> {
     write(&dirs.launcher(), &desktop_entry(exe, None, false)).map(Some)
 }
 
-// Before 1.0 this binary was vinowhisper-gui; vinowhisper-gui is now the settings window.
+// Before 1.0 this binary was vinowhisper-gui, now the settings window's name
+// (pinned by `tests::a_launcher_and_login_entry_from_before_the_rename_follow_the_binary`).
 fn migrate_legacy_command(path: &Path) -> io::Result<()> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Ok(());
@@ -386,6 +380,13 @@ fn uninstall_from(dirs: &Dirs) -> io::Result<Vec<PathBuf>> {
     Ok(removed)
 }
 
+fn write_if_changed(path: &Path, contents: &str) -> io::Result<bool> {
+    if std::fs::read_to_string(path).ok().as_deref() == Some(contents) {
+        return Ok(false);
+    }
+    write(path, contents).map(|_| true)
+}
+
 fn write(path: &Path, contents: &str) -> io::Result<PathBuf> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -429,7 +430,6 @@ Exec={exec} toggle
     )
 }
 
-// Named after the window's app id, which is how the task manager finds its icon.
 fn settings_desktop_entry(exe: &Path) -> String {
     format!(
         "[Desktop Entry]
@@ -715,5 +715,23 @@ mod tests {
         assert!(xml.contains(r#"offset="38" value="application/vnd.vinowhisper.session+zip""#));
         uninstall_from(&dirs).unwrap();
         assert!(!mime_package_in(&dirs.data).exists());
+    }
+
+    #[test]
+    fn a_session_bundle_is_recognised_by_its_mimetype_entry() {
+        let xml = mime_package();
+        assert!(xml.contains(r#"<match type="string" offset="30" value="mimetype">"#));
+        assert!(xml.contains(r#"offset="38" value="application/vnd.vinowhisper.session+zip""#));
+    }
+
+    #[test]
+    fn an_unchanged_file_is_not_rewritten() {
+        let dirs = scratch("unchanged");
+        let path = dirs.data.join("entry.desktop");
+        assert!(write_if_changed(&path, "one").unwrap());
+        assert!(!write_if_changed(&path, "one").unwrap());
+        assert!(write_if_changed(&path, "two").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
+        let _ = std::fs::remove_dir_all(dirs.data.parent().unwrap());
     }
 }
