@@ -113,7 +113,7 @@ impl SettingsWindow {
                     });
                 });
             let foreign = multilingual && self.speech.language != Language::En;
-            // (pinned by `tests::canary_offers_its_own_languages_and_detection_to_translate`)
+            // (pinned by `window::tests::canary_offers_its_own_languages_and_detection_to_translate`)
             let locked = model == SpeechModel::Canary && self.speech.language == Language::Auto;
             Row::new("Translation")
                 .help(if locked {

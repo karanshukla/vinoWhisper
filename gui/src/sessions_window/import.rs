@@ -42,8 +42,8 @@ impl SessionsWindow {
             locked.import_warnings = import.warnings;
             locked.imported = match result {
                 Ok(Some(path)) => Some(Ok(path)),
-                // (pinned by `tests::a_failed_import_says_why_and_a_closed_dialog_says_nothing`,
-                // `tests::cancel_marks_the_import_and_its_ending_is_not_reported_as_a_failure`)
+                // (pinned by `sessions_window::tests::a_failed_import_says_why_and_a_closed_dialog_says_nothing`,
+                // `sessions_window::tests::cancel_marks_the_import_and_its_ending_is_not_reported_as_a_failure`)
                 Ok(None) => None,
                 Err(_) if cancelled => None,
                 Err(why) => Some(Err(why)),

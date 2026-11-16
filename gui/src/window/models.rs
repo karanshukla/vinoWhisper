@@ -7,8 +7,8 @@ impl SettingsWindow {
         !matches!(&state.status, Some(Ok(status)) if !status.present)
     }
 
-    // (pinned by `tests::deleting_the_canary_in_use_goes_back_to_whisper`,
-    // `tests::deleting_canary_with_no_whisper_export_says_everything_stays_off`)
+    // (pinned by `window::tests::deleting_the_canary_in_use_goes_back_to_whisper`,
+    // `window::tests::deleting_canary_with_no_whisper_export_says_everything_stays_off`)
     pub(super) fn forget_canary(&mut self) -> bool {
         if self.speech.model != SpeechModel::Canary {
             return false;
@@ -29,7 +29,7 @@ impl SettingsWindow {
     }
 
     // Whether the speech model changed (pinned by
-    // `tests::a_canary_delete_that_failed_leaves_canary_the_speech_model`).
+    // `window::tests::a_canary_delete_that_failed_leaves_canary_the_speech_model`).
     pub(super) fn settle_canary_delete(&mut self, state: &ModelState) -> bool {
         if !self.canary_delete_pending || state.busy {
             return false;
@@ -43,13 +43,13 @@ impl SettingsWindow {
             return;
         }
         self.whisper_delete_pending = false;
-        // (pinned by `tests::a_whisper_delete_that_failed_changes_nothing_on_the_page`)
+        // (pinned by `window::tests::a_whisper_delete_that_failed_changes_nothing_on_the_page`)
         if matches!(&state.status, Some(Ok(status)) if !status.present) {
             self.forget_whisper();
         }
     }
 
-    // (pinned by `tests::forgetting_whisper_in_use_leaves_a_note`)
+    // (pinned by `window::tests::forgetting_whisper_in_use_leaves_a_note`)
     pub(super) fn forget_whisper(&mut self) {
         self.multilingual = false;
         if self.speech.model == SpeechModel::Whisper {

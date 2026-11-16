@@ -231,7 +231,7 @@ impl SessionsWindow {
         for line in text.lines() {
             match sessions::summary_line(line) {
                 SummaryLine::Blank => ui.add_space(4.0),
-                // (pinned by `tests::a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it`)
+                // (pinned by `sessions_window::tests::a_summary_opens_with_its_stamps_as_links_and_says_a_model_wrote_it`)
                 SummaryLine::Heading(heading_text)
                     if first_heading && Some(heading_text.as_str()) == title =>
                 {

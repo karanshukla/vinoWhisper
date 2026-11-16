@@ -721,14 +721,23 @@ pub fn state_home() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn scratch(name: &str) -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "vinowhisper-settings-test-{}-{name}",
-            std::process::id()
+            "vinowhisper-settings-test-{}-{}-{name}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
         dir.join("gui.json")
+    }
+
+    #[test]
+    fn two_scratch_dirs_with_one_name_do_not_share_a_path() {
+        assert_ne!(scratch("same"), scratch("same"));
     }
 
     #[test]
