@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import os
+import socket
 import sys
 import threading
 import time
@@ -71,17 +72,11 @@ def _touch_activity() -> None:
 @app.route("/transcribe", methods=["POST"])
 def transcribe() -> Response:
     raw = request.get_data()
-    if not raw or len(raw) % audio.BYTES_PER_SAMPLE:
-        return _error(f"body must be a non-empty multiple of {audio.BYTES_PER_SAMPLE} bytes")
-
+    refusal = audio_refusal(raw)
+    if refusal is not None:
+        return _error(refusal)
     # copy=True: frombuffer over bytes is read-only.
     samples = np.frombuffer(raw, dtype="<f4").astype(np.float32, copy=True)
-    duration_s = samples.size / config.SAMPLE_RATE_HZ
-    if duration_s > config.MAX_WINDOW_S:
-        return _error(
-            f"{duration_s:.1f}s of audio exceeds the {config.MAX_WINDOW_S}s short-form "
-            "limit the streamer callback supports"
-        )
 
     background = request.headers.get(PRIORITY_HEADER) == BACKGROUND
     biased = request.headers.get(VOCABULARY_HEADER) == "1"
@@ -117,16 +112,10 @@ def quit_server() -> Response:
 
 @app.route("/cleanup", methods=["POST"])
 def clean() -> Response:
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
+    asked = cleanup_request(request.get_json(silent=True))
+    if asked is None:
         return _error("body must be JSON with a non-empty 'text'")
-    text = body.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return _error("body must be JSON with a non-empty 'text'")
-    budget = body.get("budget_s")
-    budget_s = config.CLEANUP_MAX_BUDGET_S
-    if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:
-        budget_s = min(float(budget), budget_s)
+    text, budget_s = asked
     _mark_activity(+1)
     _mark_npu_use(+1)
     try:
@@ -161,20 +150,53 @@ def warm() -> Response:
 
 @app.route("/summaries", methods=["POST"])
 def summaries() -> Response:
-    body = request.get_json(silent=True)
-    paths: list[Path] = []
-    if isinstance(body, dict) and isinstance(body.get("paths"), list):
-        for raw in body["paths"]:
-            if not isinstance(raw, str):
-                return _error("'paths' must be a list of strings")
-            path = _saved_session(raw)
-            if path is None:
-                return _error(f"{raw} is not a saved session in {config.TRANSCRIPT_DIR}")
-            paths.append(path)
+    paths = _named_sessions(request.get_json(silent=True))
+    if isinstance(paths, str):
+        return _error(paths)
     summariser.kick(paths)
     response = jsonify(summariser.describe())
     response.status_code = 202
     return response
+
+
+def audio_refusal(raw: bytes) -> str | None:
+    if not raw or len(raw) % audio.BYTES_PER_SAMPLE:
+        return f"body must be a non-empty multiple of {audio.BYTES_PER_SAMPLE} bytes"
+    duration_s = len(raw) // audio.BYTES_PER_SAMPLE / config.SAMPLE_RATE_HZ
+    if duration_s > config.MAX_WINDOW_S:
+        return (
+            f"{duration_s:.1f}s of audio exceeds the {config.MAX_WINDOW_S}s short-form "
+            "limit the streamer callback supports"
+        )
+    return None
+
+
+def cleanup_request(body: object) -> tuple[str, float] | None:
+    if not isinstance(body, dict):
+        return None
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return text, cleanup_budget_s(body.get("budget_s"))
+
+
+def cleanup_budget_s(asked: object) -> float:
+    if isinstance(asked, int | float) and not isinstance(asked, bool) and asked > 0:
+        return min(float(asked), config.CLEANUP_MAX_BUDGET_S)
+    return config.CLEANUP_MAX_BUDGET_S
+
+
+def _named_sessions(body: object) -> list[Path] | str:
+    paths: list[Path] = []
+    if isinstance(body, dict) and isinstance(body.get("paths"), list):
+        for raw in body["paths"]:
+            if not isinstance(raw, str):
+                return "'paths' must be a list of strings"
+            path = _saved_session(raw)
+            if path is None:
+                return f"{raw} is not a saved session in {config.TRANSCRIPT_DIR}"
+            paths.append(path)
+    return paths
 
 
 # Only bundles in the transcripts folder: the server never opens a path a request names.
@@ -270,8 +292,7 @@ def _resume_summaries() -> None:
 
 
 def _harden() -> None:
-    # What the systemd unit's UMask=0077 and NoNewPrivileges=yes were. Its seccomp filters
-    # went with it (SECURITY.md).
+    # The old unit's UMask=0077 and NoNewPrivileges=yes; its seccomp filters are gone (SECURITY.md).
     os.umask(0o077)
     import ctypes
 
@@ -279,7 +300,7 @@ def _harden() -> None:
         ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0)  # PR_SET_NO_NEW_PRIVS
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="vinoWhisper transcription server.")
     parser.add_argument(
         "--device",
@@ -324,6 +345,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "earlier versions installed, which nothing needs now.",
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    return parser
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _parser()
     args = parser.parse_args(argv)
     if args.device is None:
         args.device = config.load_device()
@@ -337,6 +363,54 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _say(message: str) -> None:
+    print(f"[vinowhisper-server] {message}", file=sys.stderr, flush=True)
+
+
+def _use_models(args: argparse.Namespace) -> None:
+    global transcriber, cleaner, summariser
+    kind = CanaryTranscriber if args.model == config.CANARY_MODEL else WhisperTranscriber
+    transcriber = kind(device=args.device, language=args.language, task=args.task)
+    cleaner = llm.CleanupModel(device=args.device)
+    summariser = summary.Summariser(cleaner, npu_busy)
+
+
+def _load_speech_model(model: str) -> bool:
+    try:
+        selection = transcriber.select_device()
+    except devices.DeviceError as exc:
+        _say(str(exc))
+        return False
+    _say(f"loading {model} on {selection.device}")
+    for warning in selection.warnings:
+        _say(f"WARNING: {warning}")
+    try:
+        transcriber.load()
+    except (FileNotFoundError, RuntimeError) as exc:
+        _say(str(exc))
+        if transcriber.failure is not None:
+            _say(
+                f"{transcriber.failure.device} is marked failed in "
+                f"{config.FAILED_DEVICES_FILE}, so `--device auto` skips it from now on; "
+                f"{failures.CLEAR_HINT}."
+            )
+        return False
+    return True
+
+
+def _serve(sock: socket.socket) -> None:
+    threading.Thread(
+        target=_idle_watchdog,
+        args=(config.IDLE_TIMEOUT_S,),
+        name="idle-watchdog",
+        daemon=True,
+    ).start()
+    # make_server, not run_simple (which has no fd=); threaded so /health answers mid-decode.
+    server = make_server(f"unix://{sock.getsockname()}", 0, app, threaded=True, fd=sock.fileno())
+    # The poll only serves shutdown(), which nothing calls; a short one wakes an idle server.
+    server.serve_forever(poll_interval=3600)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.stop:
@@ -348,56 +422,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sock = listen.listening_socket()
     except (listen.SocketError, OSError) as exc:
-        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+        _say(str(exc))
         return 1
-
-    global transcriber, cleaner, summariser
-    kind = CanaryTranscriber if args.model == config.CANARY_MODEL else WhisperTranscriber
-    transcriber = kind(device=args.device, language=args.language, task=args.task)
-    cleaner = llm.CleanupModel(device=args.device)
-    summariser = summary.Summariser(cleaner, npu_busy)
-
-    try:
-        selection = transcriber.select_device()
-    except devices.DeviceError as exc:
-        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
+    _use_models(args)
+    if not _load_speech_model(args.model):
         return 1
-
-    print(
-        f"[vinowhisper-server] loading {args.model} on {selection.device}",
-        file=sys.stderr,
-        flush=True,
-    )
-    for warning in selection.warnings:
-        print(f"[vinowhisper-server] WARNING: {warning}", file=sys.stderr, flush=True)
-
-    try:
-        transcriber.load()
-    except (FileNotFoundError, RuntimeError) as exc:
-        print(f"[vinowhisper-server] {exc}", file=sys.stderr, flush=True)
-        if transcriber.failure is not None:
-            print(
-                f"[vinowhisper-server] {transcriber.failure.device} is marked failed in "
-                f"{config.FAILED_DEVICES_FILE}, so `--device auto` skips it from now on; "
-                f"{failures.CLEAR_HINT}.",
-                file=sys.stderr,
-                flush=True,
-            )
-        return 1
-
     _resume_summaries()
-
-    threading.Thread(
-        target=_idle_watchdog,
-        args=(config.IDLE_TIMEOUT_S,),
-        name="idle-watchdog",
-        daemon=True,
-    ).start()
-
-    # make_server, not run_simple (which has no fd=); threaded so /health answers mid-decode.
-    server = make_server(f"unix://{sock.getsockname()}", 0, app, threaded=True, fd=sock.fileno())
-    # The poll only serves shutdown(), which nothing calls; a short one wakes an idle server.
-    server.serve_forever(poll_interval=3600)
+    _serve(sock)
     return 0
 
 

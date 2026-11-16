@@ -473,3 +473,36 @@ def test_the_device_comes_from_the_saved_file_unless_given(monkeypatch):
     config.save_device("GPU")
     assert server._parse_args([]).device == "GPU"
     assert server._parse_args(["--device", "CPU"]).device == "CPU"
+
+
+def test_audio_is_refused_past_the_longest_window_and_not_at_it():
+    longest = int(server.config.MAX_WINDOW_S * server.config.SAMPLE_RATE_HZ)
+    sample = b"\x00" * server.audio.BYTES_PER_SAMPLE
+    assert server.audio_refusal(sample * longest) is None
+    assert "exceeds" in server.audio_refusal(sample * (longest + 1))
+
+
+@pytest.mark.parametrize("raw", [b"", b"\x00", b"\x00" * 5])
+def test_audio_that_is_empty_or_not_whole_samples_is_refused(raw):
+    assert "multiple of" in server.audio_refusal(raw)
+
+
+@pytest.mark.parametrize("body", [None, [], "text", {}, {"text": 3}, {"text": "  "}])
+def test_a_cleanup_request_without_text_is_no_request(body):
+    assert server.cleanup_request(body) is None
+
+
+def test_a_cleanup_request_keeps_its_text_and_takes_the_servers_ceiling_by_default():
+    ceiling = server.config.CLEANUP_MAX_BUDGET_S
+    assert server.cleanup_request({"text": " um hi "}) == (" um hi ", ceiling)
+
+
+def test_a_cleanup_budget_is_capped_at_the_ceiling_and_kept_under_it():
+    ceiling = server.config.CLEANUP_MAX_BUDGET_S
+    assert server.cleanup_budget_s(ceiling + 1) == ceiling
+    assert server.cleanup_budget_s(ceiling / 2) == ceiling / 2
+
+
+@pytest.mark.parametrize("asked", [None, 0, -1, True, "3"])
+def test_a_budget_that_is_not_a_positive_number_is_the_ceiling(asked):
+    assert server.cleanup_budget_s(asked) == server.config.CLEANUP_MAX_BUDGET_S
