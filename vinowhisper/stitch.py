@@ -21,8 +21,7 @@ _MIN_REALIGN_WORDS = 2
 
 _LOOKBACK_DECODES = 2
 
-# Over this a decode is a loop, not speech: Canary's measured 2.4-2.9, real text at most
-# 1.66 for either model (docs/models.md, 2026-11-06).
+# Over this a decode is a loop, not speech (measured in docs/models.md, 2026-11-06).
 _MAX_COMPRESSION_RATIO = 2.0
 
 _COMPARE_STRIP = ".,!?;:\"'“”‘’()[]—–-…"
@@ -198,8 +197,7 @@ class Stitcher:
     def push(self, transcript: str) -> list[str]:
         # Cleaned before anchoring, so _confirmed matches what the next cycle's curr holds.
         curr = collapse_word_repeats(collapse_repeats(transcript).split())
-        # A loop the collapses could not fold is dropped whole: two such decodes in a row
-        # agree with each other and would commit.
+        # A loop the collapses could not fold is dropped whole: two in a row would agree and commit.
         if not curr or is_loop(" ".join(curr)):
             return []
 
