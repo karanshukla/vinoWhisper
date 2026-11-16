@@ -391,3 +391,29 @@ def test_the_export_plan_names_the_pinned_revision_and_the_command_before_anythi
     assert "openai/whisper-small.en@e8727524f962 " in plan[1]
     assert plan[-1].endswith("optimum-cli export openvino")
     assert "TMPDIR=" in plan[-1]
+
+
+def test_the_download_progress_speaks_only_when_a_new_tenth_is_reached():
+    assert wizard.progress_percent(5, 100, -1) == 5
+    assert wizard.progress_percent(7, 100, 5) is None
+    assert wizard.progress_percent(10, 100, 5) == 10
+
+
+def test_the_download_progress_always_reports_the_last_byte():
+    assert wizard.progress_percent(100, 100, 99) == 100
+    assert wizard.progress_percent(0, 0, 0) == 0
+
+
+def test_an_ovfetch_earlier_on_path_is_named_and_a_cargo_one_gets_the_uninstall_hint():
+    installed = wizard.BIN_DIR / "ovfetch"
+    cargo = wizard.ovfetch_shadow_note(installed, "/home/u/.cargo/bin/ovfetch")
+    assert cargo is not None and cargo.endswith("`cargo uninstall ovfetch`")
+    other = wizard.ovfetch_shadow_note(installed, "/usr/bin/ovfetch")
+    assert other is not None and f"put {wizard.BIN_DIR} ahead of it on PATH" in other
+    assert "the older /usr/bin/ovfetch comes first on PATH" in other
+
+
+def test_no_shadow_note_when_ovfetch_is_absent_from_path_or_is_the_installed_one():
+    installed = wizard.BIN_DIR / "ovfetch"
+    assert wizard.ovfetch_shadow_note(installed, None) is None
+    assert wizard.ovfetch_shadow_note(installed, str(installed)) is None

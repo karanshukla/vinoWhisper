@@ -318,8 +318,8 @@ class Wizard:
         shown = [-1]
 
         def progress(done: int, total: int) -> None:
-            percent = done * 100 // max(total, 1)
-            if percent // 10 != shown[0] // 10 or done >= total:
+            percent = progress_percent(done, total, shown[0])
+            if percent is not None:
                 shown[0] = percent
                 self.say(f"  {percent}% of {total / 1e9:.2f} GB")
 
@@ -511,13 +511,9 @@ class Wizard:
         except overlay.OverlayError as exc:
             return Outcome(False, str(exc))
         found = shutil.which(ovfetch.BINARY)
-        if found is not None and Path(found) != path:
-            fix = (
-                "`cargo uninstall ovfetch`"
-                if Path(found).parent.name == "bin" and Path(found).parent.parent.name == ".cargo"
-                else f"remove it, or put {BIN_DIR} ahead of it on PATH"
-            )
-            return Outcome(None, f"{path}, but the older {found} comes first on PATH; {fix}")
+        shadowed = ovfetch_shadow_note(path, found)
+        if shadowed is not None:
+            return Outcome(None, shadowed)
         return Outcome(True, str(path))
 
     def _announce_dry_run(self) -> None:
@@ -620,6 +616,23 @@ def export_argv(
         argv.append("--disable-stateful")
     argv.append(str(out))
     return argv
+
+
+def progress_percent(done: int, total: int, last: int) -> int | None:
+    percent = done * 100 // max(total, 1)
+    return percent if percent // 10 != last // 10 or done >= total else None
+
+
+def ovfetch_shadow_note(installed: Path, found: str | None) -> str | None:
+    if found is None or Path(found) == installed:
+        return None
+    parent = Path(found).parent
+    fix = (
+        "`cargo uninstall ovfetch`"
+        if parent.name == "bin" and parent.parent.name == ".cargo"
+        else f"remove it, or put {BIN_DIR} ahead of it on PATH"
+    )
+    return f"{installed}, but the older {found} comes first on PATH; {fix}"
 
 
 def npu_without_a_driver(found: list[devices.Hardware]) -> list[str] | None:
