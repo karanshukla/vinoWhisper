@@ -369,7 +369,7 @@ def test_a_note_that_fails_takes_the_status_its_check_gives_it():
 
 def test_health_names_the_device_and_passes_on_each_warning():
     results = doctor.health_results(
-        {"device": "CPU", "version": doctor.__version__, "warnings": ["not the NPU"]}, "sock"
+        {"device": "CPU", "version": doctor.VERSION, "warnings": ["not the NPU"]}, "sock"
     )
     assert [(r.status, r.label) for r in results] == [
         (doctor.OK, "server"),

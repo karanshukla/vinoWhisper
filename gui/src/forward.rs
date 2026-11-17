@@ -15,6 +15,7 @@ pub enum Action {
         open: Option<String>,
     },
     Help,
+    Version,
     Tray,
 }
 
@@ -36,6 +37,7 @@ pub fn decide(args: &[String]) -> Action {
         // `Exec=vinowhisper-gui %f` (pinned by `tests::a_bundle_from_the_file_manager_opens_it`)
         [path] if path.ends_with(".vwsession") && !path.starts_with('-') => sessions(Some(path)),
         [flag, ..] if flag == "-h" || flag == "--help" => Action::Help,
+        [flag, ..] if flag == "-V" || flag == "--version" => Action::Version,
         _ => Action::Tray,
     }
 }
@@ -268,6 +270,12 @@ mod tests {
                 open: Some("/t/a.vwsession#summary".into())
             }
         );
+    }
+
+    #[test]
+    fn version_is_answered_here_and_not_by_the_tray() {
+        assert_eq!(decide(&args(&["--version"])), Action::Version);
+        assert_eq!(decide(&args(&["-V"])), Action::Version);
     }
 
     #[test]

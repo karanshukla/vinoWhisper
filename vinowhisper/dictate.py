@@ -15,10 +15,11 @@ from typing import Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, cleanup, config, replacements, vocabulary
+from . import audio, cleanup, config, replacements, vocabulary
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder
 from .stitch import collapse_repeats, collapse_word_repeats, strip_controls
+from .version import VERSION
 
 MIN_AUDIO_S = 0.3
 
@@ -941,7 +942,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="One JSON object per event on stdout. Commands, one per line on stdin: "
         "start, hands-free (a tap latched it: stop after silence), stop (and transcribe), cancel.",
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     return parser.parse_args(argv)
 
 

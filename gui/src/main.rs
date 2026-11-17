@@ -15,6 +15,7 @@ vinowhisper-gui: the vinoWhisper settings window
 Usage: vinowhisper-gui [--page shortcuts|captions|speech|cleanup|sessions|about]
        vinowhisper-gui --sessions
        vinowhisper-gui --open <bundle.vwsession>[#transcript[@MM:SS]|#summary]
+       vinowhisper-gui --version
 
 --sessions opens the saved sessions window, and --open opens it on one session.
 
@@ -33,6 +34,10 @@ fn main() -> ExitCode {
         }
         forward::Action::Help => {
             print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        forward::Action::Version => {
+            println!("vinowhisper-gui {}", vinowhisper_settings::version::VERSION);
             ExitCode::SUCCESS
         }
         forward::Action::Tray => forward::exec_tray(&args),

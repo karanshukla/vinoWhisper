@@ -25,11 +25,20 @@ run vinowhisper-gui --help >/dev/null
 
 tray="$(run vinowhisper-tray --version)"
 python="$(run vinowhisper-caption --version)"
-echo "$tray, $python"
+gui="$(run vinowhisper-gui --version)"
+echo "$tray, $gui, $python"
 [ "${tray#vinowhisper-tray }" = "${python#vinowhisper }" ] || {
     echo "the tray and the Python package are different versions" >&2
     exit 1
 }
+[ "${gui#vinowhisper-gui }" = "${python#vinowhisper }" ] || {
+    echo "the settings window and the Python package are different versions" >&2
+    exit 1
+}
+if [ -n "$VERSION" ] && [ "$python" != "vinowhisper $VERSION" ]; then
+    echo "the $VERSION bundle's Python package is $python" >&2
+    exit 1
+fi
 if [ -n "$VERSION" ] && [ "$tray" != "vinowhisper-tray $VERSION" ]; then
     echo "the $VERSION bundle is $tray" >&2
     exit 1

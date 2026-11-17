@@ -170,7 +170,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.version {
-        println!("vinowhisper-tray {}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "vinowhisper-tray {}",
+            vinowhisper_settings::version::VERSION
+        );
         return ExitCode::SUCCESS;
     }
     if args.install || args.autostart || args.uninstall || args.export_desktop.is_some() {

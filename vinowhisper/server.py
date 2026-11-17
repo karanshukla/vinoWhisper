@@ -12,7 +12,7 @@ import numpy as np
 from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.serving import make_server
 
-from . import __version__, audio, bundle, cleanup, config, devices, failures, listen, llm, summary
+from . import audio, bundle, cleanup, config, devices, failures, listen, llm, summary
 from .canary import CanaryTranscriber
 from .client import (
     BACKGROUND,
@@ -22,6 +22,7 @@ from .client import (
     VOCABULARY_HEADER,
 )
 from .transcriber import BaseTranscriber, WhisperTranscriber
+from .version import VERSION
 
 app = Flask(__name__)
 # One longest window of raw float32 PCM, the wire format client.py sends, plus slack.
@@ -93,7 +94,7 @@ def health() -> Response:
     return jsonify(
         {
             "status": "ok",
-            "version": __version__,
+            "version": VERSION,
             **transcriber.describe(),
             "live_active": live_active(),
             "cleanup": cleaner.describe(),
@@ -344,7 +345,7 @@ def _parser() -> argparse.ArgumentParser:
         "starts it again, on the settings as they are then. Also removes the systemd units "
         "earlier versions installed, which nothing needs now.",
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     return parser
 
 
