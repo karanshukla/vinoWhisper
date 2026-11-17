@@ -397,7 +397,7 @@ async fn start() -> Result<Open, Failure> {
     let path = token_path();
     let token = std::fs::read_to_string(&path).ok();
     let options = SelectDevicesOptions::default()
-        .set_devices(Some(DeviceType::Keyboard.into()))
+        .set_devices(DeviceType::KEYBOARD)
         .set_persist_mode(PersistMode::ExplicitlyRevoked)
         .set_restore_token(token.as_deref().map(str::trim));
     let started = async {
@@ -425,13 +425,13 @@ async fn start() -> Result<Open, Failure> {
     if let Some(next) = started.restore_token() {
         save_token(&path, next);
     }
-    if !started.devices().contains(DeviceType::Keyboard) {
+    if !started.devices().contains(DeviceType::KEYBOARD) {
         let _ = bounded(CALL_TIMEOUT, "closing the session", session.close()).await;
         return Err(Failure::Denied);
     }
     trace(format_args!(
         "portal: session started, keyboard {}, clipboard requested {}, enabled {}",
-        started.devices().contains(DeviceType::Keyboard),
+        started.devices().contains(DeviceType::KEYBOARD),
         clipboard.is_some(),
         started.is_clipboard_enabled()
     ));
@@ -466,7 +466,7 @@ async fn request_clipboard(session: &Session<RemoteDesktop>) -> Result<PortalCli
     })
     .await?;
     let transfers: Transfers = Box::pin(signals.filter_map(|message| {
-        let (_, mime, serial): (zbus::zvariant::OwnedObjectPath, String, u32) =
+        let (_, mime, serial): (ashpd::zbus::OwnedObjectPath, String, u32) =
             message.body().deserialize().ok()?;
         Some((mime, serial))
     }));

@@ -335,6 +335,21 @@ def test_cleanup_failures_have_their_own_status(client, cleaner, raises, status)
     assert server._in_flight == 0
 
 
+@pytest.mark.parametrize(
+    "raises",
+    [
+        server.llm.ModelMissing("/secret/path/cleanup_model.json is missing"),
+        TimeoutError("/secret/path timed out"),
+        RuntimeError("/secret/path\nTraceback (most recent call last)"),
+    ],
+)
+def test_cleanup_failures_keep_the_exception_out_of_the_response(client, cleaner, capsys, raises):
+    cleaner.raises = raises
+    response = client.post("/cleanup", json={"text": "um hello"})
+    assert "/secret/path" not in response.get_json()["error"]
+    assert "/secret/path" in capsys.readouterr().err
+
+
 def test_warm_returns_at_once_and_health_reports_the_model(client, cleaner):
     response = client.post("/cleanup/warm")
     assert response.status_code == 202 and cleaner.warmed == 1

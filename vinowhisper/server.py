@@ -111,6 +111,13 @@ def quit_server() -> Response:
     return response
 
 
+# Fixed text only: the exception goes to server.log, never to the client.
+# (pinned by `test_server.py::test_cleanup_failures_keep_the_exception_out_of_the_response`)
+CLEANUP_MODEL_MISSING = "the cleanup model isn't ready; download it in Settings, Cleanup"
+CLEANUP_TIMED_OUT = "cleanup ran past its time limit"
+CLEANUP_FAILED = "cleanup failed; see ~/.local/state/vinowhisper/server.log"
+
+
 @app.route("/cleanup", methods=["POST"])
 def clean() -> Response:
     asked = cleanup_request(request.get_json(silent=True))
@@ -127,11 +134,14 @@ def clean() -> Response:
             budget_s=budget_s,
         )
     except llm.ModelMissing as exc:
-        return _error(str(exc), 409)
+        _say(f"cleanup: {exc}")
+        return _error(CLEANUP_MODEL_MISSING, 409)
     except TimeoutError as exc:
-        return _error(str(exc), 504)
+        _say(f"cleanup: {exc}")
+        return _error(CLEANUP_TIMED_OUT, 504)
     except Exception as exc:
-        return _error(f"cleanup failed: {exc}".splitlines()[0], 503)
+        _say(f"cleanup failed: {exc!r}")
+        return _error(CLEANUP_FAILED, 503)
     finally:
         _mark_activity(-1)
         _mark_npu_use(-1)
