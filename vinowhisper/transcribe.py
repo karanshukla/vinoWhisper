@@ -16,11 +16,12 @@ from typing import IO, Protocol
 import numpy as np
 import requests
 
-from . import __version__, audio, bundle, config, distro, session, summary, vad
+from . import audio, bundle, config, distro, session, summary, vad
 from .client import TranscriptionClient
 from .dictate import clean
 from .integrity import sha256_and_size
 from .paragraphs import PARAGRAPH_SILENCE_S, ParagraphBreaker
+from .version import VERSION
 
 FRAME_SAMPLES = config.SAMPLE_RATE_HZ // 10
 _FRAME_BYTES = FRAME_SAMPLES * audio.BYTES_PER_SAMPLE
@@ -599,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--json", action="store_true", help="progress as JSON lines on stdout, for the GUI"
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     args = parser.parse_args(argv)
 
     emit: Callable[[dict], None] = _json_lines if args.json else _Human(sys.stderr)

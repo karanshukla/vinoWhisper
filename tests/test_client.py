@@ -12,8 +12,9 @@ import numpy as np
 import pytest
 import requests
 
-from vinowhisper import __version__, client, config, doctor
+from vinowhisper import client, config, doctor
 from vinowhisper.client import TranscriptionClient
+from vinowhisper.version import VERSION
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -29,7 +30,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self.send_error(404)
             return
-        body = json.dumps({"status": "ok", "device": "FAKE", "version": __version__}).encode()
+        body = json.dumps({"status": "ok", "device": "FAKE", "version": VERSION}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

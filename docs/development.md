@@ -248,6 +248,18 @@ What is not obvious from reading it:
   it, and Flatpak exports only files named for it, which is why the session
   MIME package is renamed to `<id>.xml` in the manifest.
 
+Release or source: every command's `--version`, the doctor and the About page say the
+number in a release and `dev` in a source build, so a tool that asks (vinoPilot) never
+has to guess from where it was installed. The Rust binaries are stamped at build time:
+`release.yml` and the Flatpak runner set `VINOWHISPER_VERSION` (`settings/src/version.rs`;
+the build fails if it is not the crates' version). The Python package decides at runtime
+(`vinowhisper/version.py`): an install from a local directory, editable or not, from git, or
+a checkout run in place is `dev` (PEP 610 `direct_url.json`); a wheel, from PyPI or a
+release URL or path, is the version. The Flatpak installs the package from a directory, so
+its release build writes `/app/lib/vinowhisper/release-version`, and a local Flatpak build,
+which has no stamp, says `dev`. Overlay pins and `pip install` requirements keep using the
+package's own number (`vinowhisper.__version__`).
+
 `packaging/flatpak/smoke.sh` runs the installed bundle: every command's
 `--help`, one version across the tray and the Python package, OpenVINO finding
 the CPU from the bundled Python, the exported menu entries, and a client

@@ -13,7 +13,6 @@ import numpy as np
 import requests
 
 from . import (
-    __version__,
     audio,
     bundle,
     capture,
@@ -28,6 +27,7 @@ from . import (
 from .client import TranscriptionClient
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
+from .version import VERSION
 
 _SILENCE_NOTICE_AFTER_S = 45.0
 
@@ -438,7 +438,7 @@ def _parse_args() -> argparse.Namespace:
         help="Decode every sound above the silence level, not only what the speech "
         "detector hears as someone talking. Mumbling and noise then get captioned too.",
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     return parser.parse_args()
 
 

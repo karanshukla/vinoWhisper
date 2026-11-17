@@ -49,6 +49,14 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.flatpak.Builder \
             org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
             org.freedesktop.Sdk.Extension.rust-stable//26.08
+      # The manifest builds from source with no stamp, as a local build does; a release
+      # bundle's binaries and Python get the tag's version (cargo fails the build if it is
+      # not the crates' version, the manifest if it is not the package's).
+      - name: Stamp the build as this release
+        if: inputs.tag != ''
+        run: |
+          sed -i "s|^  strip: false$|&\n  env:\n    VINOWHISPER_VERSION: \"${TAG#v}\"|" "packaging/flatpak/$APP.yml"
+          grep -B2 -A2 VINOWHISPER_VERSION "packaging/flatpak/$APP.yml"
       # Branch stable: a build from a checkout is master, and only a stable
       # build offers to install the next release's bundle over itself.
       - name: Build

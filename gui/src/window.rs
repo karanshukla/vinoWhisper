@@ -138,7 +138,10 @@ struct SettingsWindow {
 }
 
 fn updater() -> vino_ui::update::Updater {
-    let updater = vino_ui::update::Updater::new(vino_ui::App::Whisper, env!("CARGO_PKG_VERSION"));
+    let updater = vino_ui::update::Updater::new(
+        vino_ui::App::Whisper,
+        vinowhisper_settings::version::VERSION,
+    );
     if vinowhisper_settings::sandbox::flatpak_id().is_some() {
         return if vinowhisper_settings::sandbox::is_release() {
             updater.with_command(["vinowhisper-flatpak-update"])
