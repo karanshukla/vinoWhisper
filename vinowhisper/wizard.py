@@ -12,7 +12,6 @@ from pathlib import Path
 import requests
 
 from . import (
-    __version__,
     capture,
     config,
     devices,
@@ -25,6 +24,7 @@ from . import (
     style,
 )
 from . import source as model_source
+from .version import VERSION, package_version
 
 BIN_DIR = Path.home() / ".local/bin"
 COMPLETION_DIR = Path.home() / ".local/share/bash-completion/completions"
@@ -491,7 +491,7 @@ class Wizard:
         if current is not None:
             self.say(f"  {current[0]} predates {release.version}, which the doctor reads")
         self.say(f"  Download {release.url}")
-        self.say(f"  sha256   {release.sha256} (pinned in vinowhisper {__version__})")
+        self.say(f"  sha256   {release.sha256} (pinned in vinowhisper {VERSION})")
         self.say("  It adds Intel's per-platform NPU driver data to vinowhisper-doctor.")
         if not self.confirm(f"install it into {BIN_DIR}?"):
             return Outcome(None, f"skipped; `{ovfetch.INSTALL_HINT}` installs it any time")
@@ -513,7 +513,7 @@ class Wizard:
             )
 
     def run_all(self) -> int:
-        style.emit(("vinowhisper-setup", style.TITLE), " ", (__version__, style.MUTED))
+        style.emit(("vinowhisper-setup", style.TITLE), " ", (VERSION, style.MUTED))
         style.emit(("  distro:  ", style.MUTED), str(self.distro))
         style.emit(("  python:  ", style.MUTED), sys.executable)
         self._announce_dry_run()
@@ -564,9 +564,7 @@ class Wizard:
         return 0
 
     def run_ovfetch(self) -> int:
-        style.emit(
-            ("vinowhisper-setup", style.TITLE), " ", (f"{__version__}: ovfetch", style.MUTED)
-        )
+        style.emit(("vinowhisper-setup", style.TITLE), " ", (f"{VERSION}: ovfetch", style.MUTED))
         self._announce_dry_run()
         self.step("NPU platform data", self.install_ovfetch)
         return 1 if self.failed else 0
@@ -575,7 +573,7 @@ class Wizard:
         style.emit(
             ("vinowhisper-setup", style.TITLE),
             " ",
-            (f"{__version__}: the desktop overlay", style.MUTED),
+            (f"{VERSION}: the desktop overlay", style.MUTED),
         )
         self._announce_dry_run()
         self.step("Desktop overlay", self.install_overlay)
@@ -714,7 +712,7 @@ def export_extra_argv() -> list[str]:
     # A checkout is an editable install; pip installing from PyPI would replace it.
     if config.CONVERT_SCRIPT.is_file() and uv:
         return [uv, "sync", "--extra", "export", "--project", str(_repo_root())]
-    requirement = f"vinowhisper[export]=={__version__}"
+    requirement = f"vinowhisper[export]=={package_version()}"
     if not _has_pip() and uv:
         return [
             uv,
@@ -858,7 +856,7 @@ def main(argv: list[str] | None = None) -> int:
         "NPU driver data: its release binary, checked against the sha256 pinned in "
         "this package.",
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     args = parser.parse_args(argv)
     try:
         config.check_language(*config.resolve_language(args.language, args.task, args.model))

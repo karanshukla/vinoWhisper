@@ -128,7 +128,7 @@ def test_in_flight_returns_to_zero_when_the_client_goes_away():
 def test_health_names_the_version_and_the_device(client):
     body = client.get("/health").get_json()
     assert body["status"] == "ok"
-    assert body["version"] == server.__version__
+    assert body["version"] == server.VERSION
     assert body["device"] == "CPU"
 
 

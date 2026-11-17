@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview
       - run: rustup default stable
-      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -96,6 +96,16 @@ jobs:
           { echo '### tray'; echo '```'; cargo llvm-cov report --summary-only; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           # Line floor: 58% measured 2026-10-25, less 3.
           cargo llvm-cov report --summary-only --fail-under-lines 55
+      # A release build, as release.yml makes it: the stamp is the version `--version` prints.
+      - name: Stamped build reports its version
+        run: |
+          export VINOWHISPER_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          cargo build --locked
+          [ "$(target/debug/vinowhisper-tray --version)" = "vinowhisper-tray $VINOWHISPER_VERSION" ]
+      - name: An unstamped build reports dev
+        run: |
+          cargo build --locked
+          [ "$(target/debug/vinowhisper-tray --version)" = "vinowhisper-tray dev" ]
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-tray
@@ -108,7 +118,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview
       - run: rustup default stable
-      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -136,6 +146,18 @@ jobs:
               cargo llvm-cov report --summary-only --fail-under-lines "${crate_floor#*:}"
             )
           done
+      # A release build, as release.yml makes it: the stamp is the version `--version` prints.
+      - name: Stamped build reports its version
+        working-directory: gui
+        run: |
+          export VINOWHISPER_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          cargo build --locked
+          [ "$(target/debug/vinowhisper-gui --version)" = "vinowhisper-gui $VINOWHISPER_VERSION" ]
+      - name: An unstamped build reports dev
+        working-directory: gui
+        run: |
+          cargo build --locked
+          [ "$(target/debug/vinowhisper-gui --version)" = "vinowhisper-gui dev" ]
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-gui

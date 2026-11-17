@@ -79,7 +79,7 @@ def test_a_wheel_install_pins_the_extra_to_this_version(monkeypatch, tmp_path):
     monkeypatch.setattr(wizard, "_has_pip", lambda: True)
     argv = wizard.export_extra_argv()
     assert argv[:4] == [sys.executable, "-m", "pip", "install"]
-    assert argv[-1] == f"vinowhisper[export]=={wizard.__version__}"
+    assert argv[-1] == f"vinowhisper[export]=={wizard.package_version()}"
 
 
 def test_a_wheel_install_takes_cpu_torch(monkeypatch, tmp_path):

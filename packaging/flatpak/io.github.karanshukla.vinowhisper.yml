@@ -241,6 +241,16 @@ modules:
       - >-
         /app/lib/vinowhisper/python/bin/python3 -m pip install --no-cache-dir
         --disable-pip-version-check --no-index --no-deps --no-build-isolation .
+      # The release build (flatpak.yml adds VINOWHISPER_VERSION on the runner) says so for the
+      # Python side, which pip installed from a directory and so reads as a source build
+      # (pinned by `tests/test_version.py::test_a_flatpak_release_build_reports_its_stamp`).
+      - |
+        set -e
+        if [ -n "${VINOWHISPER_VERSION:-}" ]; then
+          package=$(/app/lib/vinowhisper/python/bin/python3 -I -c 'from vinowhisper import __version__; print(__version__)')
+          [ "$package" = "$VINOWHISPER_VERSION" ] || { echo "stamp $VINOWHISPER_VERSION is not the package version $package" >&2; exit 1; }
+          echo "$VINOWHISPER_VERSION" > /app/lib/vinowhisper/release-version
+        fi
       - install -d /app/bin
       - |
         set -e

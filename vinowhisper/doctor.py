@@ -8,7 +8,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import (
-    __version__,
     audio,
     capture,
     config,
@@ -24,6 +23,7 @@ from . import (
     vocabulary,
     whisper_step,
 )
+from .version import VERSION
 
 _PROBE_S = 2.0
 
@@ -62,11 +62,11 @@ def _openvino() -> list[Result]:
     except ImportError as exc:
         return [Result(FAIL, "openvino", f"{exc} — run `uv sync`")]
 
-    results = [Result(OK, "openvino", openvino.__version__)]
+    results = [Result(OK, "openvino", openvino.VERSION)]
     try:
         import openvino_genai
 
-        results.append(Result(OK, "openvino-genai", openvino_genai.__version__))
+        results.append(Result(OK, "openvino-genai", openvino_genai.VERSION))
     except ImportError as exc:
         results.append(Result(FAIL, "openvino-genai", str(exc)))
     return results
@@ -145,7 +145,7 @@ def _openvino_version() -> str | None:
         import openvino
     except ImportError:
         return None
-    return str(openvino.__version__)
+    return str(openvino.VERSION)
 
 
 def _ovfetch() -> list[Result]:
@@ -352,12 +352,12 @@ def _server() -> list[Result]:
 
 def health_results(payload: dict, address: object) -> list[Result]:
     results = [Result(OK, "server", f"{address} on {payload.get('device', '?')}")]
-    if payload.get("version") and payload["version"] != __version__:
+    if payload.get("version") and payload["version"] != VERSION:
         results.append(
             Result(
                 WARN,
                 "server version",
-                f"server is {payload['version']}, client is {__version__} — "
+                f"server is {payload['version']}, client is {VERSION} — "
                 "vinowhisper-server --stop (the next use starts the new one)",
             )
         )
@@ -540,7 +540,7 @@ def _flatpak() -> list[Result]:
 
 def collect(probe: bool = True) -> list[Result]:
     results: list[Result] = [
-        Result(OK, "vinowhisper", __version__),
+        Result(OK, "vinowhisper", VERSION),
         *_flatpak(),
         _python(),
         _distro(),
@@ -595,11 +595,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=f"Skip the {_PROBE_S:.0f}s-per-target live level capture.",
     )
-    parser.add_argument("--version", action="version", version=f"vinowhisper {__version__}")
+    parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     args = parser.parse_args(argv)
 
     if not args.json:
-        style.emit(("vinowhisper-doctor", style.TITLE), " ", (__version__, style.MUTED))
+        style.emit(("vinowhisper-doctor", style.TITLE), " ", (VERSION, style.MUTED))
         style.emit()
         if not args.no_probe:
             style.emit(
@@ -616,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "version": __version__,
+                    "version": VERSION,
                     "python": sys.version,
                     "distro": asdict(distro.detect()),
                     "checks": [asdict(result) for result in results],

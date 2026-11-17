@@ -731,7 +731,7 @@ def _overlay_fakes(
     monkeypatch.setattr(wizard, "BIN_DIR", bin_dir)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
-    monkeypatch.setattr(wizard, "__version__", "1.2.3")
+    monkeypatch.setattr(wizard, "VERSION", "1.2.3")
     present = {binary: path for binary, path in found}
     pins = available or {}
 
