@@ -89,6 +89,5 @@ def test_a_stamp_outside_a_sandbox_is_ignored(tmp_path):
 
 
 def test_this_checkout_reports_dev():
-    """The suite runs from `uv sync`, an editable install."""
+    """CI runs the suite from the tree without installing it."""
     assert version.VERSION == "dev"
-    assert version.package_version() != version.UNKNOWN
