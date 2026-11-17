@@ -10,14 +10,23 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-17
+
 ### 🚀 Features
 
 - **A Flatpak bundle.** Each release will have `vinowhisper-x86_64.flatpak` (and its `.sha256`): the server and every command, the tray and overlay, the settings and sessions windows, a Python 3.13 of its own, OpenVINO 2026.4.1, and Intel's Level Zero loader, NPU driver and compiler and OpenCL GPU driver, the same versions vinoSearch's Flatpak carries. The host needs only the kernel's NPU driver. Inside it the tray, the server and each command run in sandboxes of their own and meet in `$XDG_RUNTIME_DIR/app/io.github.karanshukla.vinowhisper`; start at login goes through the Background portal; `vinowhisper-setup` skips what the bundle carries and puts the export's optimum and torch in a venv under the app's data; and **Update** on the About page installs the next release's bundle after checking its sha256 (`vinowhisper-flatpak-update`). Its settings, models and sessions are its own, under `~/.var/app`. **Built and smoke-tested in a container only: the overlay, tray, shortcuts, dictation, capture and the NPU have not been run inside the sandbox on a desktop.** Details, permissions and what differs in `docs/install.md`.
+- **Dictation types through the desktop's RemoteDesktop portal**, natively and in the Flatpak (KWin 6.8 hides its other input paths from Flatpak apps). One portal session opens at the first dictation and closes after `typing_idle_minutes` (Speech page, "Keep typing access"; default 5, 0 keeps it), so KDE shows one notification, not one per dictation. Recent dictations copy through the same session. **This replaces uinput, the virtual keyboard and paste: sway, niri and COSMIC have no RemoteDesktop portal, so there dictation only fills the clipboard.**
+- **A wide settings window puts a page's groups in two columns**, and the sidebar and page inset grow with the window.
 
 ### 🎨 Changed
 
 - **`--version` says `dev` for a source build.** A release (the wheel from PyPI or a GitHub release, the prebuilt tray and settings binaries, the Flatpak bundle) prints its number; an install from a checkout (`vinowhisper-setup`, `uv sync`, `uv tool install .`) prints `dev` from every command, the doctor and the About page, and is never offered an update. vinoPilot reads this to tell the two apart.
 - **The server no longer runs from systemd units.** Captions, dictation and file imports start `vinowhisper-server` themselves when nothing is listening on its socket, and it still exits after 5 minutes idle, so it works the same with or without systemd. `vinowhisper-server --stop` stops it (the tray's language switch and deleting Whisper use it), and its output is in `~/.local/state/vinowhisper/server.log` instead of the journal. An upgrade through `vinowhisper-upgrade`, or re-running `vinowhisper-setup`, removes `vinowhisper-server.socket` and `.service` from `~/.config/systemd/user`; a `--device` the old unit carried moves to `~/.config/vinowhisper/server.json`, where `vinowhisper-setup --device` now saves it. `vinowhisper-setup --print-units` is gone. The unit's seccomp restrictions went with it; the server keeps the `0077` umask and no-new-privileges. Details in `docs/architecture.md`.
+
+### 🐛 Bug Fixes
+
+- **Typed dictations turn line breaks and tabs into spaces**, so a dictation no longer runs a line in a terminal. Only a `replacements.json` value can still carry one.
+- **The "Copied" pill goes away** when no dictation is left to show, instead of staying on screen.
 
 ### 🛡️ Security
 
