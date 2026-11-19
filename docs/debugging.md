@@ -1,39 +1,29 @@
-# Debugging without the hardware in front of you
+# Debugging
 
-`--record DIR` writes `audio.wav` (16kHz mono, opens in Audacity) plus
-`events.jsonl`, one JSON object per cycle with every number `--debug` prints
-and the raw pre-stitch transcript. Roughly 2MB per minute. The WAV is int16
-because the `wave` module only writes integer PCM, which still leaves about 65
-steps of amplitude at the ~0.002 rms levels worth investigating.
-`events.jsonl` is flushed on every event, so a session cut short by Ctrl+C
-still leaves a usable log.
+vinoWhisper includes recording, offline replay, and environment diagnostic tools so stitcher bugs, window-size tradeoffs, and audio issues can be investigated without reproducing live playback.
 
-That turns "it was laggy while I watched a video" into a fixture:
+## Recording and offline replay
 
-- `vinowhisper-replay DIR --restitch` feeds the recorded transcripts back
-  through the stitcher with no NPU, no server and no audio. The model output
-  is frozen, so any difference in what gets printed is your change and nothing
-  else. It diffs against what the original run printed and points at the first
-  divergence.
-- `vinowhisper-replay DIR --sweep 8,12,16,20` needs the NPU and slices the
-  recorded audio at a fixed hop, so every window size sees the same decodes
-  over the same audio.
+Passing `--record DIR` to `vinowhisper-caption` writes two files (~2 MB per minute):
 
-`tests/fixtures/espeak_12s_session.jsonl` is 77 real NPU decodes of a 12s
-window sliding over espeak-ng reading `espeak_12s_session.txt`, at the live
-loop's pacing (2026-09-12). `test_a_real_session_prints_no_phrase_twice`
-restitches it, so a stitcher change is checked against model output that
-actually drifts, not against fixtures written to drift the way the author
-expected. The method, for a longer recording: a script that reads a 16kHz WAV,
-takes the last 12s up to a position, posts it to the running server, pushes
-the text through a `Stitcher`, writes a `Cycle` event, and advances the
-position by the measured decode time, which is what the loop does.
+- `audio.wav`: 16 kHz mono 16-bit integer PCM (can be opened directly in Audacity). The Python `wave` module writes integer PCM, which still provides roughly 65 amplitude steps around the ~0.002 RMS silence floor.
+- `events.jsonl`: one JSON object per cycle containing all `--debug` metrics and the raw pre-stitch transcript. Each event is flushed immediately, so interrupting a session with `Ctrl+C` leaves a complete log.
 
-`vinowhisper-doctor` checks the environmental things: OpenVINO's device list,
-which device would be selected, whether each model export matches the device
-that needs it, server reachability, the capture backend, default sink, mute
-state, `monitor.channel-volumes`, and a two-second live level probe on the sink
-monitor and on each playing app. Run it once with audio playing normally and
-once with the system muted. If the sink monitor drops to silence while an app
-stream stays audible, that is the mute problem confirmed by measurement, and it
-says so.
+Replay tools turn a recorded session into a reproducible test fixture:
+
+- `vinowhisper-replay DIR --restitch`: feeds recorded transcripts back through the stitcher without an NPU, server, or audio stack. Because model outputs are frozen, any output diff isolates stitcher changes and points to the first divergence.
+- `vinowhisper-replay DIR --sweep 8,12,16,20`: requires the NPU and re-slices the recorded audio at a fixed hop so different window sizes are compared on identical audio.
+
+`tests/fixtures/espeak_12s_session.jsonl` contains 77 real NPU decodes of a 12s sliding window over `espeak-ng` reading `espeak_12s_session.txt` at live loop pacing (recorded 2026-09-12). `test_a_real_session_prints_no_phrase_twice` restitches this fixture to catch regressions against real model drift. To build a longer fixture, slice the trailing 12s from a 16 kHz WAV at the current position, send it to the running server, pass the output through `Stitcher`, write a `Cycle` event, and advance the position by the measured decode time.
+
+## Environment diagnostics (`vinowhisper-doctor`)
+
+`vinowhisper-doctor` checks local runtime prerequisites in one pass:
+
+- OpenVINO device enumeration and selected device
+- Model export compatibility with the selected device and digest verification
+- Transcription server reachability
+- Audio capture backend, default sink, mute state, and `monitor.channel-volumes`
+- A 2-second live level probe on the default sink monitor and each playing application stream
+
+To verify mute behavior on your system, run `vinowhisper-doctor` once while audio is playing normally and once with system audio muted. If the sink monitor drops to silence while an application stream stays audible, the doctor reports that directly.
