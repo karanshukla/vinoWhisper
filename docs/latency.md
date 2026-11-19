@@ -1,282 +1,126 @@
 # Latency
 
-Two halves of one mechanism: cycle time sets the lag, and the commit
-policy that hides the model's indecision is what doubles it.
+Caption latency comes from two coupled factors: the time each decode cycle takes, and the two-cycle agreement rule that prevents unstable words from flashing on screen.
 
-## Cycle time, the one knob that matters
+## Window size and cycle time
 
-The caption loop is synchronous, so the hop between windows is just however
-long the previous cycle took, and the commit policy needs two cycles to agree
-before printing anything. Captions therefore trail the audio by roughly twice
-the cycle time. Cycle time is the only real lever.
+Because the caption loop is synchronous, the hop between consecutive windows equals the previous cycle's decode time. Because LocalAgreement-2 requires two cycles to agree before printing a word, captions trail audio by roughly twice the cycle time.
 
-Whisper's encoder cost is fixed (it pads to 30s no matter what), but decoding
-is autoregressive, one forward pass per token. A window packed with 29.5s of
-dense speech emits roughly 2.5x the tokens of a 12s one and takes
-correspondingly longer. That is why the default window is now 12s rather than
-the full 29.5s short-form limit:
+Whisper's encoder always pads input to 30s (fixed cost), while the decoder runs autoregressively (one pass per output token). A 29.5s window of dense speech emits ~2.5x as many tokens as a 12s window and takes proportionally longer. For that reason, the default window is 12s:
 
-```
-vinowhisper-caption --window 8      # snappier, less context, more wording drift
-vinowhisper-caption --window 20     # steadier wording, noticeably laggier
+```bash
+vinowhisper-caption --window 8      # lower lag, less context, more wording drift
+vinowhisper-caption --window 20     # steadier wording, higher lag
 ```
 
-Measured 2026-09-12 by sliding a 12s window over recorded speech at the
-loop's own pacing, against the live server: 0.66s mean decode on synthetic
-speech (28 words a window), 0.70s mean and 0.85s p90 on a LibriVox reading
-(32 words a window, 806 cycles over ten minutes, no drift in either number
-across the session). So the hop sits at 0.7s and the lag floor at about 1.5s.
+Measured 2026-09-12 against the live NPU server at live-loop pacing (12s window):
 
-The same reading at three window sizes, same day, each a full ten-minute pass
-at the loop's own pacing, scored against the Gutenberg text (n=1, one voice,
-one laptop):
+- Synthetic speech (28 words/window): 0.66s mean decode.
+- LibriVox narration (32 words/window, 806 cycles over 10 minutes): 0.70s mean, 0.85s p90, with no drift over the session (~0.7s hop, ~1.5s lag floor).
 
-| window | cycles | decode mean | p90 | hop | lag floor | wrong or extra words | dropped |
+Full 10-minute LibriVox pass scored against the Gutenberg text (2026-09-12, n=1, single speaker, one Wildcat Lake laptop):
+
+| Window | Cycles | Decode mean | Decode p90 | Hop | Lag floor | Wrong or extra words | Dropped words |
 |---|---|---|---|---|---|---|---|
 | 8s | 1044 | 0.53s | 0.61s | 0.57s | ~1.1s | 102 | ~28 |
 | 12s | 806 | 0.70s | 0.85s | 0.74s | ~1.4s | 93 | ~38 |
 | 16s | 665 | 0.87s | 1.06s | 0.90s | ~1.7s | 93 | ~24 |
 
-Decode time tracks the window because the decoder is autoregressive, but the
-encoder's fixed cost keeps the spread to a third of a second across the whole
-range. Accuracy is flat from 12s up and about 10% worse at 8s, which is the
-edge effect: a shorter window has more cycles where a phrase is cut
-mid-sentence. 12s stays the default; 8s is a fair trade if 0.3s matters more
-than a handful of words an hour, and 16s buys nothing measurable.
+Accuracy plateaus at 12s and drops ~10% at 8s because shorter windows cut more phrases mid-sentence. 12s is the default; 8s trades minor accuracy for ~0.3s lower lag, while 16s adds lag without measurable accuracy gains.
 
-`--debug` prints the numbers to tune against: window length, hop, RMS, gain
-applied, time to first streamed piece, total cycle time, and how many words
-each cycle confirmed versus held pending.
+- Use `--debug` to inspect window length, hop, RMS, applied gain, time to first streamed token, total cycle time, and confirmed vs. pending word counts.
+- Decoding waits until the buffer holds at least 1.5s (`config.MIN_WINDOW_S`) to avoid sub-second hallucinations. On exit, pending words that agreed once are flushed rather than dropped.
+- Use `vinowhisper-replay DIR --sweep` to benchmark window sizes on your own recordings. Its `est. lag` column reports `2 × mean`:
 
-Nothing is transcribed until the buffer holds 1.5s (`config.MIN_WINDOW_S`),
-because Whisper hallucinates freely on sub-second clips. On exit, words that
-agreed once but never got their confirming cycle are printed rather than
-dropped.
+  ```
+  | window | decodes | mean | p90 | first piece | words/decode | est. lag |
+  ```
 
-`vinowhisper-replay --sweep` measures the tradeoff on your own audio instead of
-guessing at it. The est. lag column is `2 x mean`, which is the floor the
-two-cycle commit policy imposes:
+## Why captions drift across windows
 
-```
-| window | decodes | mean | p90 | first piece | words/decode | est. lag |
-```
+Each cycle re-decodes an overlapping audio window with additional right-context, and Whisper's phrasing often shifts until it has enough context. For example, testing on 2026-08-03 produced "Ex-sherzer", "you're told", and "you know Dalton" across three consecutive cycles for the same audio.
 
-## Why the captions reword themselves
+`stitch.py` applies LocalAgreement-2: a word is committed only after two cycles agree on it. This also suppresses single-cycle hallucinations on quiet audio, at the cost of the two-cycle lag floor.
 
-Each cycle re-transcribes a window that mostly overlaps the last one, and
-Whisper does not decode the same audio the same way twice. Real testing on
-2026-08-03 caught it producing "Ex-sherzer", "you're told", and "you know
-Dalton" for the same underlying audio across three consecutive cycles. That is
-not paraphrasing near a boundary, the words genuinely are not the same until
-the model has enough context to settle.
+Priming each decode with the prior transcript via `initial_prompt` is blocked on OpenVINO's NPU pipeline (`RuntimeError: 'initial_prompt' parameter is not supported on NPU device`), so some cross-window wording drift remains.
 
-`stitch.py` handles this with a LocalAgreement-2 commit policy: a word only
-prints once two consecutive cycles agree on it. That also means a hallucinated
-guess on near-silence never reaches the screen, because the next cycle guesses
-something else. The cost is the two-cycle latency described above.
+## How the stitcher finds overlap
 
-The obvious remaining fix, priming each decode with the prior transcript via
-`initial_prompt`, is hard-blocked on this device: `RuntimeError:
-'initial_prompt' parameter is not supported on NPU device`. Some cross-window
-wording drift is an accepted limitation until that changes.
+Each rule in `stitch.py` addresses a failure mode observed in real recordings:
 
-## How the stitcher finds the overlap
+- **Search only the last 40 confirmed words:** Prevents locking onto an earlier repetition of a short phrase. Raised from 15 on 2026-08-03 after slow cycles and repeated phrases caused boundary restatements ("was with the best pitcher in baseball. was with the best pitcher in baseball for the first month.").
+- **Case- and punctuation-insensitive comparison:** Prevents capitalization ("world series" vs. "World Series", 2026-08-03) and punctuation drift (2026-08-07) from breaking anchors and reprinting sentences.
+- **Prefer the furthest valid match, not the longest:** On 2026-08-03, a single inserted word ("acquire Hose Jose Soriano") split a match; picking the longer earlier block reprinted an entire sentence.
+- **Scale minimum match length for short decodes:** A fixed 3-word minimum failed on 1-word transcripts, allowing repeated hallucinations ("you" 26 times on quiet audio) to reprint every cycle.
+- **Skip re-spelled trailing confirmed words (`_REDECODE_RATIO`):** With a 0.7s hop, newly confirmed words sit near the window edge where spelling can still settle (2026-09-12: "Whiskers" / "Whispers" / "Whisper's" caused "Whispers Whisper's encoder"). Confirmed words past the anchor are compared against the head of the new decode as joined strings (so "auto-aggressive. One" matches "auto regressive one") and skipped if similar enough. On the 10-minute LibriVox recording this reduced insertions from 60 to 43 (no reprints left), and on synthetic speech from 8 to 3.
+- **Check every overlap length at the boundary (longest first):** Fixes a 2026-09-01 bug that compared position-by-position from one window back and silently stopped matching after the first minute of a session.
+- **Realign on pending words after a stall:** If music, noise, or a speaker change stalls commits until the confirmed tail leaves the window, realigning on pending words prevents permanent stalls or large drops. Measured 2026-09-12 under forced 4-cycle stalls: dropped words fell from 75/141 to 28/141.
+- **Require minimum anchor coverage (`_MIN_ANCHOR_COVERAGE = 0.4`):** Distinguishes a true overlap from a recurring phrase. Measured 2026-09-21 at 1.75x speech: after a stall, matching "man of large" between "a young man of large fortune" and "a single man of large fortune" dropped 47 valid words. Values from 0.3 to 0.5 gave identical results; 0.6 caused reprints.
+- **Keep two-cycle agreement:** Testing three-cycle agreement on the same recording cut insertions by 15 but dropped 31 more words and doubled pending hold time.
+- **Cap repeat collapse at ~5-word units:** Matches the longest observed loop ("do things that make you", 2026-09-01) while staying conservative so valid repeated phrasing is not deleted.
 
-The overlap between the confirmed words and each new decode is found by
-matching words, and each rule below came from a real failure:
+## Translation drift and lookback agreement
 
-- **It searches the last 40 confirmed words, not the whole transcript**,
-  because speech repeats short phrases and a global match can lock onto an
-  earlier occurrence. It was 15 until 2026-08-03, when testing against
-  YouTube's captions showed restatement at cycle boundaries ("was with the
-  best pitcher in baseball. was with the best pitcher in baseball for the
-  first month.") and cycles slow enough that the true overlap fell outside 15
-  words.
-- **Words compare without case or punctuation.** The same audio came back as
-  "world series last year." and "World Series last year." two cycles apart
-  (2026-08-03); an exact comparison broke the anchor and reprinted the
-  transcript. Drifting punctuation did the same on 2026-08-07.
-- **The match that reaches furthest wins, not the longest**, among those long
-  enough to trust. On 2026-08-03 a hallucinated word ("acquire Hose Jose
-  Soriano") split a match, and the longer block, ending 8 words earlier,
-  reprinted a sentence.
-- **The minimum match shrinks for short decodes.** A flat three words cannot be
-  met by a one-word transcript, which let a repeated hallucination ("you" 26
-  times on quiet audio) reprint every cycle.
-- **Confirmed words that the new decode spells differently are skipped, not
-  reprinted.** With a 0.7s hop the freshest confirmed word is about a second
-  from the window's edge, where Whisper is still making its mind up. Measured
-  2026-09-12: the trailing words flipped between "Whiskers", "Whispers" and
-  "Whisper's" for five cycles, two near-identical windows agreed on
-  "Whispers", it printed, and later decodes settled on "Whisper's". The anchor
-  could not match the settled form against the printed one, so the cut landed
-  a word early and the settled form printed again ("Whispers Whisper's
-  encoder"). Now the confirmed words past the anchor match are compared
-  against the head of the new text as joined strings, and a resemblance
-  (`_REDECODE_RATIO`) skips them. Joined, so "auto-aggressive. One" against
-  "auto regressive one" skips three words for two. On a ten-minute LibriVox
-  reading this took insertions from 60 to 43 and left no reprints, only
-  words the reader or the model added; on synthetic speech, from 8 to 3.
-- **The boundary check compares the confirmed tail against the head of the
-  new text at every overlap length**, longest first. The 2026-09-01 version
-  compared position for position from one window's worth back, which only
-  matched while the whole transcript still fit in one window: it worked for
-  the first minute of a session and silently stopped.
-- **A lost anchor realigns on the pending words instead of stalling.** When
-  a stall runs long enough for the confirmed tail to roll out of the window,
-  the prefix comparison between pending and the new text has nothing to line
-  them up, and the old code stayed stuck until a spurious match, then dropped
-  everything before it. Measured 2026-09-12 by forcing long stalls (four
-  cycles of agreement): 75 of 141 words lost without the realignment, 28
-  with it. Live, the same stalls come from music, noise and speaker changes.
-- **A match must carry most of the text in front of it.** A phrase that
-  recurs is not an overlap. Measured 2026-09-21 at 1.75x speech: after a
-  stall, the only three-word match left was "man of large", in "a young man
-  of large fortune" on screen and "a single man of large fortune" in the new
-  decode, and cutting there threw away 47 words Whisper had decoded correctly
-  five times. A real overlap matches most of the words before its end; a
-  recurrence matches almost none of them. Blocks below
-  `_MIN_ANCHOR_COVERAGE` (0.4) are refused. Every threshold from 0.3 to 0.5
-  gave the same result; 0.6 started reprinting.
-- **Two cycles of agreement stays.** Three was tried on the same recording:
-  15 fewer insertions, 31 more dropped words, and pending words held twice
-  as long. Not worth it.
-- **Repeats collapse in units of at most about five words**, the longest loop
-  seen being "do things that make you" (2026-09-01). It errs short, because a
-  false positive deletes words that can never be restored.
+Measured 2026-10-06 on multilingual `whisper-small` using saved decodes of LibriVox recordings (French, German, Spanish, and English spliced with switches every 10–30s; two recordings of 160s and 155s). Translation lags transcription even though decode time is similar (0.57s vs. 0.61s): on one recording, mean commit gap was 1.9s vs. 1.4s, p90 was 4.0s vs. 2.3s, and 68% of cycles committed nothing. Translated phrasing alternates between variants across windows ("on the ship" / "on the crowd" / "on the ship"), resetting strict consecutive agreement on every flip.
 
-## Translate drift, and agreeing with either of the last two decodes
+`stitch.py` now checks agreement against either of the last two decodes (`_LOOKBACK_DECODES`), still requiring at least two decodes to agree before printing:
 
-Measured 2026-10-06 on the multilingual `whisper-small`, replaying saved decodes of real
-LibriVox speech (French, German, Spanish and English joined, a switch every 10-30s;
-two recordings of 160s and 155s) through the stitcher. Translate lags transcribe: on one
-recording the mean gap between commits was 1.9s against 1.4s, p90 4.0s against 2.3s, and
-68% of cycles committed nothing. Decode time was no different (0.57s against 0.61s), and
-trimming the window did not help it. What differs is wording: translated text flips
-between two forms across overlapping windows ("on the ship", "on the crowd", "on the
-ship"), and agreeing only with the decode just before resets on every flip.
-
-The stitcher now commits a word when the new decode agrees with either of the last two
-(`_LOOKBACK_DECODES`), not only the last. Cycles still need one earlier decode to agree,
-so nothing prints on a single decode. Replaying the same saved decodes:
-
-| recording | task | mean gap | p90 gap | longest stall | words committed |
+| Recording | Task | Mean gap | p90 gap | Longest stall | Words committed |
 |---|---|---|---|---|---|
-| mixed 1 | translate | 1.5s to 1.4s | 2.9s to 2.3s | 13.3s to 12.3s | 469 to 475 |
-| mixed 2 | translate | 1.9s to 1.5s | 4.0s to 2.5s | 7.6s to 7.6s | 366 to 395 |
-| mixed 1 | transcribe | 1.5s to 1.4s | 3.2s to 2.8s | 10.1s to 10.9s | 414 to 422 |
-| mixed 2 | transcribe | 1.4s to 1.3s | 2.3s to 1.7s | 11.0s to 11.0s | 382 to 385 |
-| English-only, 240s, 1x | transcribe | 1.06s to 1.01s | 2.0s to 1.6s | 5.8s to 4.3s | 828 to 828 |
-| English-only, 160s, 1.5x | transcribe | 1.46s to 1.31s | 2.7s to 1.7s | 8.8s to 6.9s | 796 to 798 |
+| Mixed 1 | translate | 1.5s → 1.4s | 2.9s → 2.3s | 13.3s → 12.3s | 469 → 475 |
+| Mixed 2 | translate | 1.9s → 1.5s | 4.0s → 2.5s | 7.6s → 7.6s | 366 → 395 |
+| Mixed 1 | transcribe | 1.5s → 1.4s | 3.2s → 2.8s | 10.1s → 10.9s | 414 → 422 |
+| Mixed 2 | transcribe | 1.4s → 1.3s | 2.3s → 1.7s | 11.0s → 11.0s | 382 → 385 |
+| English-only (240s, 1x) | transcribe | 1.06s → 1.01s | 2.0s → 1.6s | 5.8s → 4.3s | 828 → 828 |
+| English-only (160s, 1.5x) | transcribe | 1.46s → 1.31s | 2.7s → 1.7s | 8.8s → 6.9s | 796 → 798 |
 
-Accuracy against a reference of Whisper decoding each clip with its language forced
-moved by 0.00 to 0.02 either way, within noise, and the share of repeated trigrams stayed
-at 0.00 to 0.02. On the 77-decode espeak fixture the stitcher now matches 126 of 141
-reference words against 123. Two of its extra words are a wrong early flip ("the coding"
-for "decoding") that the looser agreement committed.
-
-It trims the typical gap, most of all with translate, and does not touch the long
-freezes after a language switch (the longest stall is unchanged on 2 of 6 rows and
-slightly worse on one, 10.1s to 10.9s). A third
-earlier decode helped a little more on some rows and was not adopted. Holding back the
-last committed word (Hold-n) did nothing useful. Fuzzy word matching and tolerating one
-differing word were tried first and either gained nothing or committed nonsense
-("go go go go").
-
-The English-only recordings are 240s and 160s of one reader, one run per setting.
+Accuracy relative to forced-language reference decodes stayed within ±0.02, and repeated trigram share stayed at 0.00–0.02. On the 77-decode `espeak` fixture, matched reference words rose from 123/141 to 126/141 (including one wrong early flip, "the coding" for "decoding"). Lookback trims typical commit gaps, especially under translation, without resolving long post-switch stalls. Extending lookback to 3 decodes, Hold-n, fuzzy matching, and tolerating 1 differing word were tested and rejected (the latter two committed loops like "go go go go"). English-only runs are single-speaker, one run per setting.
 
 ## Fast speech
 
-Measured 2026-09-21: the same five minutes of the LibriVox reading,
-time-stretched with ffmpeg's `atempo` (which keeps the pitch), at the loop's
-own pacing against the live server, scored against the Gutenberg text. A
-stretched reading is a stand-in for fast speech, not the real thing: a fast
-talker runs words together, and a stretched recording does not.
+Measured 2026-09-21 on 5 minutes of the LibriVox reading time-stretched with `ffmpeg`'s pitch-preserving `atempo` filter at live-loop pacing (note that time-stretched audio does not replicate how natural fast speakers slur words):
 
-| speed | words/window | decode mean | hop | error rate | dropped (of which Whisper had decoded) |
+| Speed | Words/window | Decode mean | Hop | Error rate | Dropped (decoded by Whisper) |
 |---|---|---|---|---|---|
 | 1x | 32 | 0.67s | 0.70s | 6.9% | 31 (12) |
 | 1.25x | 41 | 0.78s | 0.80s | 6.9% | 22 (7) |
 | 1.5x | 52 | 0.92s | 0.94s | 9.4% | 32 (15) |
 | 1.75x | 55 | 0.95s | 0.97s | 19.0% | 105 (75) |
 
-Three things go wrong as speech gets faster:
+Effects at higher speed:
 
-- **Lag grows with words per window**, because the decoder is
-  autoregressive. Structural, and fixing it would need a smaller window.
-- **Misheard words about double by 1.5x.** That is the model.
-- **At 1.75x the stitcher threw away words Whisper got right.** Whisper often
-  decodes only the last sentence of a window, or a short hallucination ("Oh,
-  sorry!"), and each such decode breaks the two-in-a-row agreement. Commits
-  stall, the confirmed tail rolls out of the window, and the anchor grabbed a
-  recurring phrase (see "A match must carry…" above). The coverage rule took
-  1.75x from 19.0% to 16.3% and left the other three speeds word for word the
-  same.
+- **Higher decode lag:** More words per window means more autoregressive decoder steps; reducing lag requires a smaller `--window`.
+- **Higher model error rate:** Misheard words roughly double by 1.5x.
+- **Stall-induced drops at 1.75x:** Partial decodes or short hallucinations ("Oh, sorry!") break agreement, letting the confirmed tail roll out of the window. Adding the `_MIN_ANCHOR_COVERAGE` rule reduced 1.75x error rate from 19.0% to 16.3% without changing 1x–1.5x output.
 
-**Repetition loops are capped.** Across the four runs, six decodes looped
-("a little bit more than a little bit more…") to the model's 448-token limit,
-stalling captions for 5.7-8.1s at any speed. `config.max_new_tokens` allows
-12 tokens per second of audio plus 16. The densest real window, at 1.75x, was
-8.5 tokens per second. Replaying two of the looping windows on the NPU
-through the server's own call took them from 6.9s and 8.1s to 2.8s, and token
-streaming was unaffected. The multilingual model gets 1.25x that allowance
-(`config.MULTILINGUAL_TOKEN_FACTOR`), because French, German and Spanish take
-more tokens per second than English. That factor is a margin, not a
-measurement: it has only been checked on synthetic speech, which peaked at
-3.5-4.9 tokens per second (2026-10-06).
+**Capping repetition loops:** Across those four runs, six decodes looped ("a little bit more than a little bit more…") to Whisper's 448-token limit, stalling captions for 5.7–8.1s. `config.max_new_tokens` now caps output at `12 tokens/s × audio_s + 16` (the densest 1.75x real window was 8.5 tokens/s). Replaying two looping windows on the NPU dropped their stalls from 6.9s and 8.1s to 2.8s without affecting streaming. Multilingual mode multiplies this cap by `config.MULTILINGUAL_TOKEN_FACTOR` (1.25x), as French, German, and Spanish use more tokens per second than English (checked on synthetic speech peaking at 3.5–4.9 tokens/s, 2026-10-06).
 
-**Tried, and not adopted: whisper_streaming's buffer.**
-[whisper_streaming](https://arxiv.org/abs/2307.14743) has no fixed window.
-Its buffer runs from the last committed sentence end and is cut at
-timestamped sentence ends, so every decode starts on a sentence. Prototyped
-2026-09-21 with segment timestamps (`return_timestamps=True`), filtering by
-time before matching text. Word timestamps are precise on the NPU (the same
-word lands within 20ms across windows at p90), but they need a larger
-compiled decoder and made decoding 2.8x slower. With a 14s trim:
+**Rejected alternative (`whisper_streaming` variable buffer):** Prototyped 2026-09-21 using [whisper_streaming](https://arxiv.org/abs/2307.14743)'s sentence-trimmed buffer with `return_timestamps=True`. Although NPU word timestamps landed within 20 ms at p90, timestamp mode required a larger compiled decoder and ran 2.8x slower. With a 14s trim:
 
-| speed | today | buffer model |
+| Speed | Fixed 12s window | Variable buffer model |
 |---|---|---|
 | 1x | 6.9% | 9.1% |
 | 1.25x | 6.9% | 8.0% |
 | 1.5x | 9.4% | 8.6% |
 | 1.75x | 19.0% | 12.8% |
 
-It fixes fast speech and costs one to two points at normal speed. The likely
-cause is context: the buffer averages 8.5s against a fixed 12s, the same
-shortfall that made the 8s window about 10% worse. Worth another look if
-something shows more context closing that gap.
+Because the variable buffer averaged 8.5s of context (similar to the 8s window penalty), it degraded normal-speed accuracy by 1–2 percentage points and was not adopted.
 
 ## Language switches and the stall breaker
 
-Measured 2026-10-06 on the NPU with the multilingual `whisper-small`, auto language, by
-replaying public-domain LibriVox readings (French, German, Spanish, English, 20s clips
-joined, a switch every 10-30s) through the real stitcher at the loop's own pacing. Two
-recordings, 160s and 155s, one run per setting. Decode time was 0.57-0.65s per 12s window
-for both tasks.
+Measured 2026-10-06 on the NPU with multilingual `whisper-small` (`--language auto`) using two spliced LibriVox recordings (160s and 155s, 20s clips in French, German, Spanish, and English switching every 10–30s; decode time 0.57–0.65s per 12s window).
 
-After a switch, captions freeze for 5-13s (4-5 stalls over 5s per recording), because the
-12s window still holds the old language. Cutting the window to start at each known switch
-(an oracle, not buildable: the NPU pipeline returns no detected language) took the
-transcribe longest stall from 10.1s and 11.0s to 9.4s and 3.4s.
+After a language switch, captions froze for 5–13s (4–5 stalls >5s per recording) while the 12s window still contained the previous language. An oracle that trimmed the window at exact switch boundaries reduced the longest transcribe stalls from 10.1s and 11.0s to 9.4s and 3.4s.
 
-`caption.stall_window_s` is the buildable version. When nothing has committed for 4s
-(`STALL_AFTER_S`) it asks for the last 6s (`STALL_WINDOW_S`) until a commit lands. Silence
-resets the clock, so a pause does not shrink the next window.
+`caption.stall_window_s` implements a practical version: if no word commits for 4s (`STALL_AFTER_S`), the client shrinks requests to the last 6s (`STALL_WINDOW_S`) until a commit lands. Silence resets the stall timer so pauses do not shrink the next window.
 
-| transcribe | longest stall | stalls over 5s | differs from forced-language reference |
+| Transcribe run | Longest stall | Stalls > 5s | Difference vs. forced-language reference |
 |---|---|---|---|
-| recording 1, today | 10.1s | 5 | 0.10 |
-| recording 1, breaker | 5.6s | 3 | 0.12 |
-| recording 2, today | 11.0s | 4 | 0.11 |
-| recording 2, breaker | 5.6s | 3 | 0.09 |
+| Recording 1 (baseline) | 10.1s | 5 | 0.10 |
+| Recording 1 (stall breaker) | 5.6s | 3 | 0.12 |
+| Recording 2 (baseline) | 11.0s | 4 | 0.11 |
+| Recording 2 (stall breaker) | 5.6s | 3 | 0.09 |
 
-It trims the worst freezes and leaves the typical gap alone (mean 1.4s to 1.3s on recording 2).
-The accuracy column compares against Whisper decoding each clip with its language forced,
-so differences of 0.02 are noise. A more aggressive 3s to 5s setting removed every long
-stall on recording 1 but cost accuracy elsewhere.
+Mean commit gap stayed flat (1.4s → 1.3s on recording 2), and accuracy remained within ±0.02 noise. A more aggressive 3s/5s threshold removed all long stalls on recording 1 but hurt accuracy elsewhere.
 
-**It is off when translating.** With translate on the same trick did nothing on one
-recording (stalls 3 to 4) and cost words and accuracy on the other (0.32 to 0.41 with
-the aggressive setting), and the oracle did not fix it either. Translate lags for a
-different reason: translated wording drifts more between overlapping decodes, so fewer
-cycles agree (mean gap 1.9s against 1.4s on recording 2).
+**Disabled during translation:** In `--task translate` mode, the stall breaker did not improve stalls (3 → 4 on one recording) and degraded accuracy on the other (0.32 → 0.41 with the aggressive setting), because translation lag is caused by phrasing drift rather than lingering audio from the previous language.
