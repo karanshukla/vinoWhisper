@@ -144,6 +144,11 @@ def read(path: Path) -> Bundle:
             infos = archive.infolist()
             if not infos or infos[0].filename != MIMETYPE_NAME:
                 raise BundleError(f"{path.name}: the first entry is not {MIMETYPE_NAME}")
+            if (
+                infos[0].compress_type != zipfile.ZIP_STORED
+                or infos[0].file_size > len(MIMETYPE)
+            ):
+                raise BundleError(f"{path.name}: not a vinoWhisper session")
             if len(infos) > _MAX_ENTRIES:
                 raise BundleError(f"{path.name}: too many entries")
             wanted = [info for info in infos if info.filename in LAYOUT]
@@ -151,7 +156,9 @@ def read(path: Path) -> Bundle:
                 info.file_size > _MAX_PART_BYTES for info in wanted
             ):
                 raise BundleError(f"{path.name}: too large")
-            if archive.read(infos[0]) != MIMETYPE:
+            with archive.open(infos[0]) as handle:
+                magic = handle.read(len(MIMETYPE) + 1)
+            if magic != MIMETYPE:
                 raise BundleError(f"{path.name}: not a vinoWhisper session")
             parts = {info.filename: _read_capped(archive, info) for info in wanted}
     except (OSError, zipfile.BadZipFile) as exc:

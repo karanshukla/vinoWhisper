@@ -394,7 +394,9 @@ def _write(path: Path, data: bytes, force: bool) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         # (pinned by `test_session_export.py::test_the_file_is_readable_by_others_and_written_atomically`)
-        os.chmod(temp, 0o644)
+        umask = os.umask(0o077)
+        os.umask(umask)
+        os.chmod(temp, 0o666 & ~umask)
         if force:
             os.replace(temp, path)
             return
@@ -430,7 +432,11 @@ def _from_session(path: Path, read: bundle.Bundle, fmt: str) -> bool:
     try:
         if fmt == "odt":
             with zipfile.ZipFile(path) as archive:
-                meta = archive.read("meta.xml").decode("utf-8", "replace")
+                with archive.open("meta.xml") as handle:
+                    raw = handle.read(1_048_577)
+            if len(raw) > 1_048_576:
+                return False
+            meta = raw.decode("utf-8", "replace")
             return f'meta:name="vinowhisper_session">{_escape(name)}<' in meta
         text = path.read_text(encoding="utf-8", errors="replace")
     except (OSError, KeyError, zipfile.BadZipFile):
