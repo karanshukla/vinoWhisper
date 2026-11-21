@@ -4,6 +4,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -314,6 +315,23 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])"
+    r"|\x9b[0-?]*[ -/]*[@-~]"
+)
+
+
+def _strip_terminal_controls(text: str, *, multiline: bool = False) -> str:
+    # A bundle can come from anywhere, so its text must not drive the terminal.
+    keep = "\n\t" if multiline else ""
+    return "".join(
+        ch
+        if ch in keep or (ord(ch) >= 0x20 and not 0x7F <= ord(ch) <= 0x9F)
+        else (" " if not multiline and ch in "\n\r\t" else "")
+        for ch in _ANSI_ESCAPE_RE.sub("", text)
+    )
+
+
 def _list(args: argparse.Namespace) -> int:
     from . import llm, summary
 
@@ -337,7 +355,8 @@ def _list(args: argparse.Namespace) -> int:
         mark = "summary" if entry.get("summary") else "no summary"
         if entry["path"] == busy:
             mark = "summarising now"
-        print(f"{entry['name']}  {entry.get('title') or ''}  ({mark})")
+        title = _strip_terminal_controls(entry.get("title") or "", multiline=False)
+        print(f"{entry['name']}  {title}  ({mark})")
     if loose:
         print(f"{len(loose)} older transcripts can be bundled: vinowhisper-session backfill")
     return 0
@@ -357,6 +376,8 @@ def _show(args: argparse.Namespace) -> int:
         "summary": read.summary or "",
         "attestation": json.dumps(read.attestation, indent=2, ensure_ascii=False) + "\n",
     }[args.part]
+    if sys.stdout.isatty():
+        text = _strip_terminal_controls(text, multiline=True)
     sys.stdout.write(text)
     return 0
 

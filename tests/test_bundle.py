@@ -209,3 +209,21 @@ def test_entries_outside_the_layout_are_never_read(tmp_path):
     with zipfile.ZipFile(path, "a") as archive:
         archive.writestr("junk.bin", b"x" * 10)
     assert bundle.read(path).transcript == TRANSCRIPT
+
+
+def test_compressed_or_oversized_mimetype_is_rejected(tmp_path):
+    compressed = tmp_path / "compressed_mime.vwsession"
+    with zipfile.ZipFile(compressed, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", bundle.MIMETYPE, zipfile.ZIP_DEFLATED)
+        archive.writestr("transcript.txt", TRANSCRIPT)
+        archive.writestr("attestation.json", "{}")
+    with pytest.raises(bundle.BundleError, match="not a vinoWhisper session"):
+        bundle.read(compressed)
+
+    oversized = tmp_path / "oversized_mime.vwsession"
+    with zipfile.ZipFile(oversized, "w") as archive:
+        archive.writestr("mimetype", bundle.MIMETYPE + b"extra", zipfile.ZIP_STORED)
+        archive.writestr("transcript.txt", TRANSCRIPT)
+        archive.writestr("attestation.json", "{}")
+    with pytest.raises(bundle.BundleError, match="not a vinoWhisper session"):
+        bundle.read(oversized)
