@@ -201,7 +201,8 @@ main() {
         BASE="https://github.com/$REPO/releases/latest/download"
     fi
     WORK="$(mktemp -d)"
-    trap 'rm -rf -- "$WORK"' EXIT
+    # shellcheck disable=SC2064 # expand now
+    trap "rm -rf '$WORK'" EXIT
 
     say "Downloading ${tag:-the latest release} from $BASE"
     curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \

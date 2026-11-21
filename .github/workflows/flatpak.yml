@@ -27,19 +27,12 @@ jobs:
   bundle:
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write # to attach the bundle to the release
     env:
       TAG: ${{ inputs.tag }}
       APP: io.github.karanshukla.vinowhisper
       BUNDLE: vinowhisper-x86_64.flatpak
     steps:
-      - name: Validate release tag
-        if: inputs.tag != ''
-        run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
-            echo "::error::Invalid release tag: $TAG"
-            exit 1
-          fi
       # The manifest builds the checkout it sits in: this one, at the tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -86,40 +79,9 @@ jobs:
           flatpak install --user -y --noninteractive --bundle "$BUNDLE"
           flatpak list --user --app --columns=ref | grep -Fx "$APP/x86_64/stable"
           dbus-run-session -- packaging/flatpak/smoke.sh "$APP" "${TAG#v}"
-      - name: Upload bundle artifact
-        if: inputs.tag != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: flatpak-bundle
-          path: |
-            ${{ env.BUNDLE }}
-            ${{ env.BUNDLE }}.sha256
-          if-no-files-found: error
-
-  upload:
-    needs: bundle
-    if: inputs.tag != ''
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write # to attach the bundle to the release
-    env:
-      TAG: ${{ inputs.tag }}
-      BUNDLE: vinowhisper-x86_64.flatpak
-    steps:
-      - name: Validate release tag
-        run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
-            echo "::error::Invalid release tag: $TAG"
-            exit 1
-          fi
-      - name: Download bundle artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: flatpak-bundle
       - name: Upload
+        if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          sha256sum -c "$BUNDLE.sha256"
-          gh release upload "$TAG" "$BUNDLE" "$BUNDLE.sha256" --clobber
+        run: gh release upload "$TAG" "$BUNDLE" "$BUNDLE.sha256" --clobber

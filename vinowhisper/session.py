@@ -322,17 +322,13 @@ _ANSI_ESCAPE_RE = re.compile(
 
 
 def _strip_terminal_controls(text: str, *, multiline: bool = False) -> str:
-    cleaned = _ANSI_ESCAPE_RE.sub("", text)
-    if multiline:
-        return "".join(
-            ch
-            for ch in cleaned
-            if ch in ("\n", "\t") or (ord(ch) >= 0x20 and not (0x7F <= ord(ch) <= 0x9F))
-        )
+    # A bundle can come from anywhere, so its text must not drive the terminal.
+    keep = "\n\t" if multiline else ""
     return "".join(
-        " " if ch in ("\n", "\r", "\t") else ch
-        for ch in cleaned
-        if ch in ("\n", "\r", "\t") or (ord(ch) >= 0x20 and not (0x7F <= ord(ch) <= 0x9F))
+        ch
+        if ch in keep or (ord(ch) >= 0x20 and not 0x7F <= ord(ch) <= 0x9F)
+        else (" " if not multiline and ch in "\n\r\t" else "")
+        for ch in _ANSI_ESCAPE_RE.sub("", text)
     )
 
 

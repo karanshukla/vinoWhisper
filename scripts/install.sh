@@ -63,9 +63,11 @@ install_uv() {
         return 0
     fi
     command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to check the uv download"
-    INSTALL_UV_TMP="$(mktemp -d)"
-    trap 'rm -rf -- "${INSTALL_UV_TMP:-}"' EXIT
-    local tmp="$INSTALL_UV_TMP"
+    local tmp
+    tmp="$(mktemp -d)"
+    # EXIT, not RETURN: die exits without returning. Expanded now: tmp is local.
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" EXIT
     curl -fLsS --proto '=https' --tlsv1.2 -o "$tmp/uv.tar.gz" "$url" \
         || die "could not download $url"
     printf '%s  %s\n' "$sha" "$tmp/uv.tar.gz" | sha256sum --check --status \

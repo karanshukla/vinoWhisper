@@ -144,10 +144,7 @@ def read(path: Path) -> Bundle:
             infos = archive.infolist()
             if not infos or infos[0].filename != MIMETYPE_NAME:
                 raise BundleError(f"{path.name}: the first entry is not {MIMETYPE_NAME}")
-            if (
-                infos[0].compress_type != zipfile.ZIP_STORED
-                or infos[0].file_size > len(MIMETYPE)
-            ):
+            if infos[0].compress_type != zipfile.ZIP_STORED or infos[0].file_size > len(MIMETYPE):
                 raise BundleError(f"{path.name}: not a vinoWhisper session")
             if len(infos) > _MAX_ENTRIES:
                 raise BundleError(f"{path.name}: too many entries")

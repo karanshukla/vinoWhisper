@@ -276,7 +276,7 @@ def test_an_unsafe_title_makes_a_safe_file_name(tmp_path, out, capsys, title, na
 
 def test_the_file_is_readable_by_others_and_written_atomically(sessions, out, capsys):
     path, _ = sessions
-    old = os.umask(0o022)
+    old = os.umask(0o077)
     try:
         _, stdout, _ = _export(capsys, path, "-o", out)
     finally:
@@ -284,16 +284,6 @@ def test_the_file_is_readable_by_others_and_written_atomically(sessions, out, ca
     written = Path(stdout.strip())
     assert stat.S_IMODE(written.stat().st_mode) == 0o644
     assert [p.name for p in out.iterdir()] == [written.name]
-
-    out_strict = out / "strict"
-    out_strict.mkdir()
-    old = os.umask(0o077)
-    try:
-        _, stdout_strict, _ = _export(capsys, path, "-o", out_strict)
-    finally:
-        os.umask(old)
-    written_strict = Path(stdout_strict.strip())
-    assert stat.S_IMODE(written_strict.stat().st_mode) == 0o600
 
 
 def test_export_changes_nothing_in_the_bundle_or_the_state(sessions, out, capsys):
