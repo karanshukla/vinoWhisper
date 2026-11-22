@@ -22,11 +22,21 @@ pub enum Event {
         total_s: f64,
         #[serde(default)]
         language: String,
+        // "you" or "them" when both sources are captioned, empty for one.
+        #[serde(default)]
+        lane: String,
     },
     Silence {
         elapsed_s: f64,
         #[serde(default)]
         sink_muted: Option<bool>,
+        #[serde(default)]
+        lane: String,
+    },
+    Flushed {
+        lane: String,
+        #[serde(default)]
+        words: Vec<String>,
     },
     Stopped {
         #[serde(default)]
@@ -119,6 +129,7 @@ mod tests {
                 pending: vec!["think".into(), "so".into()],
                 total_s: 1.19,
                 language: String::new(),
+                lane: String::new(),
             })
         );
     }
@@ -130,6 +141,7 @@ mod tests {
             Some(Event::Silence {
                 elapsed_s: 46.0,
                 sink_muted: Some(true),
+                lane: String::new(),
             })
         );
         assert_eq!(

@@ -51,3 +51,26 @@ transcript would live in a widget that is gone on quit and cannot be piped.
   than a widget.
 - **`--plain`, `--debug` and a piped stdout** print plain lines without the
   status bar, so redirecting to a file works.
+
+## Calls: `--source both` (issue #118, added 2026-11-22)
+
+`--source both` captions the microphone and the system audio at once, as two
+lanes: `you` (mic) and `them` (what is playing). Each lane has its own capture,
+speech detector and stitcher, since LocalAgreement-2 works per stream. The
+server runs one transcription at a time (`transcriber.py` holds a lock), so the
+loop does the same: the lane with more unheard audio goes first, and a silent
+lane costs nothing.
+
+- Every `Cycle` and `Silence` event carries a `lane` field (`""` for one
+  source), and `Flushed(lane, words)` carries each lane's held-back words
+  before `Stopped`.
+- The terminal, status bar, overlay and transcript start a labelled paragraph
+  when the speaker changes (`[01:12] you: ...`). The `you` lane going quiet is
+  never reported as "no signal".
+- `--record DIR` writes `audio-you.wav` and `audio-them.wav` next to one
+  `events.jsonl`. `vinowhisper-replay --restitch` redoes each lane;
+  `--sweep` needs `--lane you|them`.
+- Not decided here: the mic hears the speakers, so without headphones their
+  words appear in both lanes. Echo cancellation is #216 (`echo/`).
+- Whether to save transcripts by default in this mode is left to the
+  existing `save_transcripts` setting.

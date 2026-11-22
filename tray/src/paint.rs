@@ -372,6 +372,7 @@ mod tests {
             pending: vec![],
             total_s: 1.0,
             language: String::new(),
+            lane: String::new(),
         });
         painter_without_fonts().paint(&mut canvas, 1.0, TextSize::Medium, &captions);
 

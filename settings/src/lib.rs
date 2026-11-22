@@ -12,15 +12,17 @@ pub enum Source {
     #[default]
     Output,
     Mic,
+    Both,
 }
 
 impl Source {
-    pub const ALL: [Source; 2] = [Source::Output, Source::Mic];
+    pub const ALL: [Source; 3] = [Source::Output, Source::Mic, Source::Both];
 
     pub fn as_arg(self) -> &'static str {
         match self {
             Source::Output => "output",
             Source::Mic => "mic",
+            Source::Both => "both",
         }
     }
 
@@ -1157,6 +1159,7 @@ mod tests {
     fn sources_are_named_the_way_the_caption_cli_takes_them() {
         assert_eq!(Source::parse("output"), Some(Source::Output));
         assert_eq!(Source::parse("mic"), Some(Source::Mic));
+        assert_eq!(Source::parse("both"), Some(Source::Both));
         assert_eq!(Source::parse("speakers"), None);
     }
 

@@ -128,6 +128,7 @@ Fedora's have been used for real.**
 ```
 vinowhisper-caption                       # caption system audio
 vinowhisper-caption --source mic          # caption yourself
+vinowhisper-caption --source both         # a call: you and them as two lanes
 vinowhisper-caption --list-targets        # capture one app instead of the whole sink
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save the session for replay

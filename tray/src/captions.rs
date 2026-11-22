@@ -49,6 +49,7 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Word(String),
+    Lane(String),
     Break,
 }
 
@@ -57,6 +58,7 @@ pub struct Captions {
     tokens: VecDeque<Token>,
     pending: Vec<String>,
     break_pending: bool,
+    lane: String,
     phase: Phase,
     started_at: Instant,
     device: Option<String>,
@@ -82,6 +84,7 @@ impl Captions {
             tokens: VecDeque::new(),
             pending: Vec::new(),
             break_pending: false,
+            lane: String::new(),
             phase: Phase::Starting,
             started_at: Instant::now(),
             device: None,
@@ -155,6 +158,7 @@ impl Captions {
                 pending,
                 total_s,
                 language,
+                lane,
             } => {
                 self.phase = Phase::Live;
                 if !language.is_empty() {
@@ -166,8 +170,11 @@ impl Captions {
                 }
                 self.cycles.push_back(total_s);
                 self.pending = pending;
-                self.add_words(confirmed);
+                self.add_words(confirmed, &lane);
             }
+            // You being quiet on a call is not a fault in the signal
+            // (pinned by `tests::your_own_silence_on_a_call_is_not_no_signal`).
+            Event::Silence { lane, .. } if lane == "you" => {}
             Event::Silence { elapsed_s, .. } => {
                 self.silent_for = Some(elapsed_s);
                 if elapsed_s >= PARAGRAPH_SILENCE_S {
@@ -175,8 +182,9 @@ impl Captions {
                     self.break_pending = true;
                 }
             }
+            Event::Flushed { lane, words } => self.add_words(words, &lane),
             Event::Stopped { flushed } => {
-                self.add_words(flushed);
+                self.add_words(flushed, "");
                 self.pending.clear();
                 self.ended();
             }
@@ -203,7 +211,15 @@ impl Captions {
         Some(2.0 * mean)
     }
 
-    fn add_words(&mut self, words: Vec<String>) {
+    fn add_words(&mut self, words: Vec<String>, lane: &str) {
+        if !words.is_empty() && !lane.is_empty() && lane != self.lane {
+            self.lane = lane.to_owned();
+            if matches!(self.tokens.back(), Some(Token::Word(_))) {
+                self.tokens.push_back(Token::Break);
+            }
+            self.break_pending = false;
+            self.tokens.push_back(Token::Lane(format!("{lane}:")));
+        }
         for word in words {
             if self.break_pending && matches!(self.tokens.back(), Some(Token::Word(_))) {
                 self.tokens.push_back(Token::Break);
@@ -223,7 +239,7 @@ impl Captions {
         let mut text = String::new();
         for token in &self.tokens {
             match token {
-                Token::Word(word) => {
+                Token::Word(word) | Token::Lane(word) => {
                     if !text.is_empty() && !text.ends_with('\n') {
                         text.push(' ');
                     }
@@ -362,6 +378,7 @@ mod tests {
             pending: pending.iter().map(|w| w.to_string()).collect(),
             total_s: 1.2,
             language: String::new(),
+            lane: String::new(),
         }
     }
 
@@ -369,6 +386,7 @@ mod tests {
         Event::Silence {
             elapsed_s,
             sink_muted: None,
+            lane: String::new(),
         }
     }
 
@@ -499,6 +517,7 @@ mod tests {
                 pending: vec![],
                 total_s,
                 language: String::new(),
+                lane: String::new(),
             });
         }
         assert_eq!(captions.lag_s(), Some(4.0));
@@ -568,6 +587,7 @@ mod tests {
                 pending: vec![],
                 total_s: 1.0,
                 language: heard.into(),
+                lane: String::new(),
             });
             let text: String = captions
                 .status()
@@ -705,5 +725,49 @@ mod tests {
         assert_eq!(truncate("short", 10), "short");
         assert_eq!(truncate("first line\nsecond", 20), "first line");
         assert_eq!(truncate("abcdefghijk", 5), "abcd…");
+    }
+
+    fn lane_cycle(lane: &str, words: &[&str]) -> Event {
+        Event::Cycle {
+            confirmed: words.iter().map(|w| w.to_string()).collect(),
+            pending: vec![],
+            total_s: 1.2,
+            language: String::new(),
+            lane: lane.into(),
+        }
+    }
+
+    #[test]
+    fn each_change_of_speaker_starts_a_labelled_paragraph() {
+        let mut captions = Captions::new();
+        captions.apply(lane_cycle("them", &["How", "are", "you?"]));
+        captions.apply(lane_cycle("them", &["Fine."]));
+        captions.apply(lane_cycle("you", &["Good,", "thanks."]));
+        captions.apply(Event::Flushed {
+            lane: "them".into(),
+            words: vec!["Great.".into()],
+        });
+
+        assert_eq!(
+            body(&captions),
+            [(
+                "them: How are you? Fine.\nyou: Good, thanks.\nthem: Great.".to_owned(),
+                Tone::Caption
+            )]
+        );
+    }
+
+    #[test]
+    fn your_own_silence_on_a_call_is_not_no_signal() {
+        let mut captions = Captions::new();
+        captions.apply(lane_cycle("them", &["Hello"]));
+        captions.apply(Event::Silence {
+            elapsed_s: 90.0,
+            sink_muted: None,
+            lane: "you".into(),
+        });
+
+        let (dot, _) = captions.status();
+        assert_eq!(dot, Tone::Good);
     }
 }

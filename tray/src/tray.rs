@@ -99,6 +99,7 @@ fn source_name(source: Source) -> &'static str {
     match source {
         Source::Output => "System audio",
         Source::Mic => "Microphone",
+        Source::Both => "Microphone and system audio",
     }
 }
 

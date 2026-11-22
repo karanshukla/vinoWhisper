@@ -2,8 +2,9 @@ use super::*;
 
 pub(super) fn source_label(source: Source) -> &'static str {
     match source {
-        Source::Output => "What is playing",
+        Source::Output => "Playing",
         Source::Mic => "Microphone",
+        Source::Both => "Both",
     }
 }
 

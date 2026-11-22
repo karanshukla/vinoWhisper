@@ -44,7 +44,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
             Row::new("Listen to")
-                .help("What the captions follow.")
+                .help("What the captions follow. Both labels your words you and the call them.")
                 .show(ui, |ui, _| {
                     changed |= segmented(
                         ui,
