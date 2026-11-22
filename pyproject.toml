@@ -113,6 +113,7 @@ doctor = "python -m vinowhisper.doctor"
 # ── Ruff ──────────────────────────────────────────────────────────────────────
 
 [tool.ruff]
+extend-exclude = ["echo/spike"]
 line-length = 100
 target-version = "py311"
 
