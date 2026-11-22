@@ -47,10 +47,12 @@ impl Failure {
     fn message(&self) -> String {
         match self {
             Failure::Denied => {
-                "the desktop did not allow it; restart vinowhisper-tray to be asked again".into()
+                "permission was denied by the desktop; restart vinowhisper-tray to be prompted \
+                 again"
+                    .into()
             }
             Failure::Unavailable(why) => {
-                format!("this desktop has no remote-desktop portal ({why})")
+                format!("this desktop does not provide a RemoteDesktop portal ({why})")
             }
             Failure::Failed(why) => why.clone(),
         }
@@ -261,7 +263,10 @@ impl State {
             return Err(failure.message());
         }
         match self.copy(text.to_owned()).await {
-            Ok(()) => Err(format!("{}; it is on the clipboard", failure.message())),
+            Ok(()) => Err(format!(
+                "{}; copied to clipboard instead",
+                failure.message()
+            )),
             Err(_) => Err(failure.message()),
         }
     }
@@ -307,7 +312,7 @@ impl State {
         let open = self.ensure_open().await?;
         let Some(clipboard) = &open.clipboard else {
             return Err(Failure::Failed(
-                "this desktop's remote-desktop portal has no clipboard".into(),
+                "this desktop's RemoteDesktop portal does not support clipboard access".into(),
             ));
         };
         let mimes: Vec<&str> = MIME_TYPES.into_iter().chain([PASSWORD_HINT]).collect();

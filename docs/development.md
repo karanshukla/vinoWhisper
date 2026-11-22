@@ -39,7 +39,7 @@ uv run vinowhisper-setup     # symlinks commands into ~/.local/bin
 
 Edits take effect on the next process start:
 
-- **Stitcher and capture (`vinowhisper-caption`):** The tray spawns a fresh process whenever captions are shown—hide and show the overlay.
+- **Stitcher and capture (`vinowhisper-caption`):** The tray spawns a fresh process whenever captions are shown; hide and show the overlay to pick up changes.
 - **Dictation (`vinowhisper-dictate --json`):** The tray keeps one idle process running to avoid Python startup latency, so edits to `dictate.py` require restarting the tray.
 - **Server (`vinowhisper-server`):** Run `vinowhisper-server --stop` so the next request starts the updated code (check `pgrep -af vinowhisper-caption` first, as stopping kills active captions and incurs a model reload).
 - **`pyproject.toml` changes:** Re-run `uv sync`, and re-run `vinowhisper-setup` if you added a new CLI entry point.
@@ -91,7 +91,7 @@ uv run poe security   # Bandit scan matching bandit.yml
 |---|---|
 | `B404` | Flags `import subprocess`, which is core to invoking `pw-record`, `parec`, `pactl`, `optimum-cli`, and the local server |
 | `B603` | Every subprocess call passes a literal `argv` list with `shell=False`; dynamic values (PipeWire nodes, `--target`) are single elements |
-| `B607` | Tools like `pw-record`, `parec`, and `pactl` live in varying paths across distros and are resolved with `shutil.which` |
+| `B607` | Tools like `pw-record`, `parec`, and `pactl` are installed in different paths across distros and are resolved with `shutil.which` |
 
 `B602` (`shell=True`) remains enabled and must stay clean.
 
@@ -198,7 +198,7 @@ Python 3.14 is excluded from the matrix (see [install.md](install.md)). `shellch
 **Dependency canary (`deps-canary.yml`)** runs three separate steps to isolate breakages:
 
 1. `uv sync --extra export` (without `--frozen`) followed by OpenVINO import and device enumeration.
-2. `optimum-cli env` (catches valid resolves that fail on import, such as backtracking `optimum` to a pre-5.x release—as happened in Dependabot #24).
+2. `optimum-cli env` (catches valid resolves that fail on import, such as backtracking `optimum` to a pre-5.x release, as happened in Dependabot #24).
 3. `uv lock --upgrade --dry-run` (separates lockfile breakage from unresolvable upgrades).
 
 (Before 2026-08-31 this job primarily caught pruned OpenVINO nightly wheels.)
@@ -222,7 +222,7 @@ Preview unreleased entries with `git cliff --unreleased`. `bump-my-version` upda
 1. **`tray`:** Builds the static musl `x86_64-unknown-linux-musl` binary (static-pie, 6.0 MB, measured 2026-09-12). Not uploaded to PyPI.
 2. **`build`:** Verifies tag matches `pyproject.toml`, pins binary SHA-256 digests into the wheel, builds sdist/wheel, verifies pins, runs `twine check --strict`, and extracts release notes from hand-edited `CHANGELOG.md`.
 3. **`pypi`:** Publishes wheel/sdist via PyPI Trusted Publishing (OIDC).
-4. **`github-release`:** Creates the release (`gh release create --verify-tag` with `GH_REPO` set, since the job has no checkout—fixing the v0.3.0 issue) and attaches wheel, sdist, binaries, and `SHA256SUMS`.
+4. **`github-release`:** Creates the release (`gh release create --verify-tag` with `GH_REPO` set, since the job has no checkout, fixing the v0.3.0 issue) and attaches wheel, sdist, binaries, and `SHA256SUMS`.
 5. **`flatpak` (`flatpak.yml`):** Builds, smoke-tests, and attaches `vinowhisper-x86_64.flatpak` and `.sha256` (outside `SHA256SUMS`, which is already generated). If this step fails, PyPI and the GitHub Release remain intact and the Flatpak workflow can be re-run manually with the tag.
 
 **Release safeguards:**

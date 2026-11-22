@@ -78,7 +78,7 @@ pub fn caption_status(
         Phase::Starting => "Captions starting".into(),
         Phase::Live => match (device, degraded) {
             (Some(device), true) => {
-                format!("Captions live on {device}, not the NPU: expect more lag")
+                format!("Captions live on {device} (not the NPU; expect higher lag)")
             }
             (Some(device), false) => format!("Captions live on {device}"),
             (None, _) => "Captions live".into(),
@@ -183,9 +183,9 @@ fn tray_status(passive: bool) -> ksni::Status {
 fn dictate_label(state: &ShortcutState) -> String {
     match state {
         ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
-            format!("Dictate ({dictate}): hold to talk, or tap to start and stop")
+            format!("Dictate ({dictate}): hold to talk or tap for hands-free")
         }
-        _ => "Dictate: no key bound (see Settings, Shortcuts)".into(),
+        _ => "Dictate: no shortcut bound (see Settings → Shortcuts)".into(),
     }
 }
 

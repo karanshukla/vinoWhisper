@@ -1,23 +1,23 @@
 # Echo cancellation for two-lane captions (vinoEcho)
 
-With speakers instead of headphones, the mic hears the other side of the call, so their words land in both the `you` and `them` lanes of `--source both` ([terminal.md](terminal.md)). vinoEcho (`echo/`, imported as `vinoecho`, issue #216) takes their voice out of the mic lane. It is a Python package inside this repo, vinoWhisper-only until it is worth publishing, and Apache-2.0 with LocalVQE's notice (the port is derived from their code).
+When using speakers instead of headphones, the microphone picks up the remote side of the call, causing remote speech to appear in both the `you` and `them` lanes of `--source both` ([terminal.md](terminal.md)). vinoEcho (`echo/`, imported as `vinoecho`, issue #216) removes far-end speaker echo from the microphone lane. It is currently an internal Python package inside this repository, licensed under Apache-2.0 with LocalVQE's notice (as a port derived from LocalVQE).
 
 ## What runs
 
-Two [LocalVQE](https://github.com/localai-org/LocalVQE) models, both on the CPU, on one thread of their own:
+Two [LocalVQE](https://github.com/localai-org/LocalVQE) models run on the CPU on a dedicated thread:
 
-| Model | Job | Form |
+| Model | Role | Implementation |
 |---|---|---|
-| **v1.4 2.7K** | The audio Whisper hears. A Kalman filter with its own delay alignment and no mask, so your words stay. | numpy port of `daf_frontend.cpp`; weights are the 17 KB GGUF as `.npz`, shipped in the wheel |
-| **v1.2** | The speech gate only. 2.7K leaves a faint residual of their speech while you are silent, and Silero passes it; gating on v1.2's output stops every leak. | A streaming step built from the PyTorch reference, exported to an OpenVINO IR (two 16 ms hops per call), hash-pinned in `vinowhisper/echo_model.json` |
+| **v1.4 2.7K** | Produces the cleaned audio passed to Whisper. Uses a Kalman filter with built-in delay alignment and no suppression mask, preserving near-end speech. | NumPy port of `daf_frontend.cpp`; weights converted from the 17 KB GGUF into `.npz` and shipped in the wheel |
+| **v1.2** | Drives the speech gate only. The 2.7K filter leaves a faint residual of far-end speech while you are silent that Silero still passes; gating on v1.2 eliminates those leaks. | Streaming step built from the PyTorch reference, exported to an OpenVINO IR (two 16 ms hops per call), hash-pinned in `vinowhisper/echo_model.json` |
 
-`process(mic, ref) -> (cleaned, gate_signal)`. Silero and `SpeechGate` stay in vinowhisper. Output arrives in 512-sample (32 ms) chunks.
+`process(mic, ref) -> (cleaned, gate_signal)` outputs 512-sample (32 ms) chunks. Silero VAD and `SpeechGate` remain in `vinowhisper`.
 
 ## Benchmark
 
-31 calls built from LibriSpeech test-clean (16 double talk, 12 far end only, 3 near end only), scored through the caption front end. Spike on linuxlab's CPU 2026-11-21, laptop runs on the NPU the same day (issue #216):
+Evaluated on 31 synthetic calls built from LibriSpeech test-clean (16 double-talk, 12 far-end only, 3 near-end only), scored through the caption front end. CPU spike measured on `linuxlab` on 2026-11-21; laptop NPU runs measured the same day (issue #216):
 
-| Method | Double-talk WER | Your words lost | Leaked words/min when you are silent |
+| Method | Double-talk WER | Your words lost | Leaked words/min when silent |
 |---|--:|--:|--:|
 | oracle (no echo) | 4.9% | 0.3% | 0 |
 | no AEC | 74.0% | 10.1% | 170.6 |
@@ -29,33 +29,33 @@ Two [LocalVQE](https://github.com/localai-org/LocalVQE) models, both on the CPU,
 | sonora AEC3 linear | 41.9% | 11.0% | 96.1 |
 | WebRTC AEC3 | 69.9% | 47.1% | 7.1 |
 
-Filters with a mask or suppressor cut 4 to 47% of your words. The linear filters keep them but leak when you are silent, hence gating on v1.2. The 21.1% used LocalVQE's batch call, which primes the echo delay from the whole clip. The streaming call the capture path needs finds it online over about 1 to 3 s, so a fresh context per clip scores 37.9%; held for a session it converges, which is why the state lasts the whole caption session and is never reset per window.
+Filters that use a suppression mask cut 4% to 47% of near-end words. Linear filters preserve near-end words but leak far-end speech during silence, which is why v1.2 is used as the speech gate. The 21.1% result used LocalVQE's batch mode, which estimates echo delay across the entire clip. The streaming path used for live capture estimates delay online over roughly 1 to 3 seconds, scoring 37.9% with a fresh context per clip. Keeping filter state across an entire caption session allows it to converge, so the state is never reset between decode windows.
 
-Real speaker echo on the laptop (65% volume, speaker to mic delay 91 to 97 ms, 16 double-talk clips, 2 live takes; one room, directional): no AEC 63.0% WER, streaming with a fresh context per clip 44.2%, **one session context 23.1% WER, 2.3% of your words lost, 0 leaks**. Both models, one thread, per 32 ms chunk next to Whisper on the NPU: 9.9 ms mean, 16.3 ms p99.
+Real speaker echo on the laptop (65% volume, 91 to 97 ms speaker-to-mic delay, 16 double-talk clips, 2 live takes; single room, directional): no AEC scored 63.0% WER, streaming with a fresh context per clip scored 44.2%, and **a single session context achieved 23.1% WER, 2.3% near-end words lost, and 0 leaks**. Running both models on one thread alongside Whisper on the NPU took 9.9 ms mean (16.3 ms p99) per 32 ms chunk.
 
-Checked 2026-11-22 on linuxlab (CPU only, nothing else decoding): the numpy port matches LocalVQE's own `daf_cli` output on speech to correlation 0.999999999 (`tests/test_echo.py`, fixture `tests/fixtures/echo_call.npz`, LibriSpeech CC BY 4.0). One thread ran 6 s of audio in 4.7 s here (about 25 ms per 32 ms chunk, against the laptop's 9.9 ms): this VM's two shared vCPUs are not representative, and with Whisper decoding as well it falls behind.
+Verified 2026-11-22 on `linuxlab` (CPU only, no concurrent decoding): the NumPy port matches LocalVQE's `daf_cli` output on speech with 0.999999999 correlation (`tests/test_echo.py`, fixture `tests/fixtures/echo_call.npz`, LibriSpeech CC BY 4.0). Processing 6 seconds of audio on one thread took 4.7 seconds on this VM (~25 ms per 32 ms chunk vs. 9.9 ms on the laptop) because its two shared vCPUs are not representative and fall behind when Whisper is also decoding.
 
 ## When it runs
 
-`--echo-cancel auto|on|off` (default `auto`; the tray passes the `echo_cancel` setting from `gui.json` as this flag, so a change applies from the next session). `auto` turns it **off** when the default sink is Bluetooth (`device.api = bluez5`, speakers included), USB (`device.bus = usb`) or the jack's headphone or headset port (the active port's type, read from `pactl --format=json list sinks`). Built-in speakers and HDMI stay on. A filter-chain or loopback sink is followed through PipeWire's links to the device it plays into (this laptop's default sink is `effect_input.speaker_eq_v2`), up to five hops (`echo_policy.py`).
+Controlled by `--echo-cancel auto|on|off` (default `auto`; the tray passes the `echo_cancel` setting from `gui.json` as this flag, taking effect on the next session). `auto` disables echo cancellation when the default sink is Bluetooth (`device.api = bluez5`, including Bluetooth speakers), USB (`device.bus = usb`), or a headphone/headset jack port (read from `pactl --format=json list sinks`). Built-in speakers and HDMI remain enabled. Filter-chain or loopback sinks are followed through PipeWire links to the underlying output device (up to five hops in `echo_policy.py`; for example, this laptop's default sink is `effect_input.speaker_eq_v2`).
 
-The decision is made at session start and again every 3 s, so moving to earphones mid-call switches it off and back. `vinowhisper-caption --echo-status` prints what Auto would do now as JSON. `Ready` carries `echo_mode`, `echo_active` and `echo_reason`; an `EchoStatus` event follows it and repeats on each change.
+The output device is checked at session start and every 3 seconds thereafter, so switching to headphones mid-call toggles echo cancellation automatically. `vinowhisper-caption --echo-status` prints the current `auto` decision as JSON. `Ready` includes `echo_mode`, `echo_active`, and `echo_reason`; an `EchoStatus` event follows and repeats whenever the state changes.
 
-With no echo in the mic (a sink that is not audible in the room, or headphones misread as speakers) the filter left a voice within 0.05 dB and lost no words with an active reference: harmless apart from the CPU.
+When no echo is present in the microphone (for example, an inaudible sink or headphones misclassified as speakers), the filter altered voice levels by less than 0.05 dB and lost no words with an active reference, costing only CPU time.
 
 ## Warm start
 
-The 2.7K filter state (not the audio history) is saved at session end, and when the output changes, under `$XDG_STATE_HOME/vinowhisper/echo/`, keyed by (sink, port, mic source), and loaded at the next start. Cold, suppression climbs to 6 to 7 dB by about 4 s; with the previous take's state carried over it reached 6 to 8 dB within 0.5 to 1 s (spike, 2026-11-21). The delay locks 3.5 s in and is never re-estimated, so a later *increase* inside the 1.024 s filter span is re-learned, but a *decrease* puts echo before the first tap until a reset, hence a different key (and a fresh filter) when the sink or its port changes. Bluetooth and HDMI latency fit the search range from the design (GCC-PHAT searches up to 1.024 s); neither was measured.
+The 2.7K filter state (excluding audio history) is saved under `$XDG_STATE_HOME/vinowhisper/echo/` at session end and whenever the output device changes, keyed by `(sink, port, mic source)`, and restored on the next start. From a cold start, suppression reaches 6 to 7 dB after roughly 4 seconds; carrying state over from a prior take reached 6 to 8 dB within 0.5 to 1 second (spike, 2026-11-21). Echo delay locks at 3.5 seconds and is not re-estimated: a subsequent *increase* within the 1.024 s filter span can be re-learned, whereas a *decrease* shifts echo before the first tap until reset. Keying by sink and port ensures a fresh filter whenever the audio path changes. Bluetooth and HDMI latencies fall within GCC-PHAT's 1.024 s search range by design, though neither has been measured directly.
 
 ## Safety nets
 
-- **Text dedup** (`echo_text.py`): a `you` line of at least three words that fuzzy-matches what `them` said in the last 20 s is dropped, kept in the event as `Cycle.dropped` so a replay still accounts for it.
-- **Headphones hint** (`echo_meter.py`): when over the last 10 s their voice is audibly in the mic while the v1.2 gate says you are silent, for at least half of 5 s or more of far-end speech, a `Hint` event says so, at most once per 5 minutes. The thresholds are guesses, not measured: tune them on the laptop.
+- **Text deduplication** (`echo_text.py`): Drops any `you` line of at least three words that fuzzy-matches what `them` said in the last 20 seconds, recording it in `Cycle.dropped` so replays remain complete.
+- **Headphones hint** (`echo_meter.py`): Emits a `Hint` event (at most once every 5 minutes) when remote speech is audibly present in the microphone while the v1.2 gate indicates you are silent for at least half of 5 or more seconds of far-end speech within the last 10 seconds. These thresholds are initial estimates and need tuning on hardware.
 
 ## The gate model
 
-`vinowhisper/echo_model.json` pins `v12s_T2.xml` and `.bin` by sha256 (hashed 2026-11-22 from the export linuxlab ran) at a commit of [`arankays/localvqe-v1.2-ov`](https://huggingface.co/arankays/localvqe-v1.2-ov) on Hugging Face, with LocalVQE's Apache-2.0 LICENSE and a model card crediting its commit. The files served from that revision hash to the pinned values (checked 2026-11-22). They download on first use, like the speech detector's; if that fails the session runs with echo cancellation off and says why. `echo/export/` rebuilds them (`export_v12.py`; needs torch, einops, pyyaml, a LocalVQE checkout and the v1.2 checkpoint; never shipped).
+`vinowhisper/echo_model.json` pins `v12s_T2.xml` and `v12s_T2.bin` by SHA-256 (hashed 2026-11-22 from the `linuxlab` export) at a specific commit of [`arankays/localvqe-v1.2-ov`](https://huggingface.co/arankays/localvqe-v1.2-ov) on Hugging Face, including LocalVQE's Apache-2.0 LICENSE and a model card crediting its commit. Served files match the pinned hashes (verified 2026-11-22). The model downloads on first use alongside the speech detector; if the download fails, the session continues with echo cancellation disabled and reports the error. `echo/export/export_v12.py` rebuilds the IR (requires `torch`, `einops`, `pyyaml`, a LocalVQE checkout, and the v1.2 checkpoint; not shipped).
 
 ## Not here
 
-Ruled out: linking `liblocalvqe.so` (a C++ build in the Flatpak, a third language), WebRTC AEC3, DTLN-aec, fdaf-aec, pyaec, NKF (no licence), PipeWire's `module-echo-cancel` (it changes the user's audio graph) and a hand-written energy gate in place of v1.2. Mic-only captions and dictation hear what is playing too; both could take the monitor as a reference only, which is not in #216. Open: HDMI on real hardware and a real call of several minutes.
+Alternatives ruled out: linking `liblocalvqe.so` (would require a C++ build in the Flatpak), WebRTC AEC3, DTLN-aec, fdaf-aec, pyaec, NKF (no license), PipeWire's `module-echo-cancel` (modifies the user's audio graph), and a hand-written energy gate instead of v1.2. Mic-only captions and dictation can also pick up speaker playback and could eventually use the sink monitor as a reference, but that is outside the scope of #216. Still untested: HDMI output on physical hardware and multi-minute real calls.

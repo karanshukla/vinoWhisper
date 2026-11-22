@@ -69,8 +69,8 @@ fn is_executable(path: &Path) -> bool {
 
 pub fn not_found_message() -> String {
     format!(
-        "{PROGRAM} was not found. Install vinoWhisper (pip install vinowhisper, then \
-         vinowhisper-setup), or point at it with vinowhisper-tray --caption PATH."
+        "{PROGRAM} was not found. Install vinoWhisper (pip install vinowhisper && \
+         vinowhisper-setup), or specify its path with vinowhisper-tray --caption PATH."
     )
 }
 

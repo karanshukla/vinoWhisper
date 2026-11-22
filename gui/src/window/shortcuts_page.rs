@@ -20,7 +20,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Global shortcuts");
         widgets::group(ui, |ui| match state {
             Shortcuts::Asking | Shortcuts::Pending => {
-                Row::new("Asking the desktop which keys are bound.").show(ui, |_, _| {});
+                Row::new("Checking bound shortcuts…").show(ui, |_, _| {});
             }
             Shortcuts::Bound {
                 captions,
@@ -31,20 +31,23 @@ impl SettingsWindow {
                     .help("Shows or hides the floating captions.")
                     .show(ui, |ui, _| keys(ui, &captions));
                 Row::new("Dictation")
-                    .help("Hold to talk and release to type, or tap to start and tap to finish.")
+                    .help(
+                        "Hold to talk and release to type, or tap to start and stop hands-free \
+                         dictation.",
+                    )
                     .show(ui, |ui, _| keys(ui, &dictate));
                 if configurable {
-                    Row::new("Change them")
-                        .help("Opens your desktop's shortcut settings.")
+                    Row::new("Edit shortcuts")
+                        .help("Opens your desktop's keyboard shortcut settings.")
                         .show(ui, |ui, _| {
                             if ui.add(Button::secondary("Change…")).clicked() {
                                 forward::run_tray(&["configure-shortcut"]);
                             }
                         });
                 } else {
-                    Row::new("Change them")
+                    Row::new("Edit shortcuts")
                         .help(
-                            "In your desktop's shortcut settings, where they are listed under \
+                            "Configure these in your desktop's keyboard shortcut settings under \
                              vinoWhisper.",
                         )
                         .show(ui, |_, _| {});
@@ -52,7 +55,7 @@ impl SettingsWindow {
             }
             Shortcuts::Stopped => {
                 Row::new("Not running")
-                    .help("vinoWhisper is not running, so no shortcut is active.")
+                    .help("vinoWhisper is not running, so global shortcuts are inactive.")
                     .tone(Tone::Warn)
                     .show(ui, |ui, _| {
                         if ui.add(Button::primary("Start vinoWhisper")).clicked() {
@@ -64,8 +67,8 @@ impl SettingsWindow {
             Shortcuts::Unavailable => {
                 Row::new("No shortcuts portal")
                     .help(
-                        "This desktop has none. Bind these commands to keys in its keyboard \
-                         settings instead.",
+                        "This desktop does not provide a global shortcuts portal. Bind these \
+                         commands in your compositor or keyboard settings instead.",
                     )
                     .show(ui, |_, _| {});
                 Row::new("Captions").show(ui, |ui, _| {
@@ -73,8 +76,8 @@ impl SettingsWindow {
                 });
                 Row::new("Dictation")
                     .help(
-                        "On the key's press and release, for hold to talk. Or vinowhisper-tray \
-                         dictate on one key, to tap.",
+                        "Bind press and release for hold-to-talk, or bind vinowhisper-tray \
+                         dictate to a single key for tap mode.",
                     )
                     .show(ui, |ui, _| {
                         ui.with_layout(Layout::top_down(Align::Max), |ui| {

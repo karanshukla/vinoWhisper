@@ -345,17 +345,16 @@ impl Captions {
         match &self.phase {
             Phase::Starting => Span::new(
                 format!(
-                    "Starting, {}s. A cold start loads the model onto the NPU, \
-                     which takes 10 to 30 seconds.",
+                    "Starting ({}s). Loading the model onto the NPU takes 10 to 30 seconds on a \
+                     cold start.",
                     self.started_at.elapsed().as_secs()
                 ),
                 Tone::Dim,
             ),
-            Phase::Live if self.silent_for.is_some_and(|s| s >= NO_SIGNAL_AFTER_S) => Span::new(
-                "Listening. Nothing audible on the capture target yet.",
-                Tone::Dim,
-            ),
-            Phase::Live => Span::new("Listening.", Tone::Dim),
+            Phase::Live if self.silent_for.is_some_and(|s| s >= NO_SIGNAL_AFTER_S) => {
+                Span::new("Listening. Waiting for audio…", Tone::Dim)
+            }
+            Phase::Live => Span::new("Listening…", Tone::Dim),
             Phase::Stopped => Span::new("Captions stopped.", Tone::Dim),
             Phase::Failed(message) => Span::new(message.clone(), Tone::Bad),
         }

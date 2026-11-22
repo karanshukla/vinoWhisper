@@ -33,7 +33,7 @@ pub(super) fn size_label(size: TextSize) -> &'static str {
 
 pub(super) fn mode_label(mode: CleanupMode) -> &'static str {
     match mode {
-        CleanupMode::Smart => "Only when it hears something to fix",
+        CleanupMode::Smart => "Smart (only when needed)",
         CleanupMode::Always => "Every dictation",
     }
 }
@@ -80,12 +80,13 @@ pub(super) fn model_switch_note(wanted: Speech) -> String {
     let from = language_label(wanted.language);
     match (wanted.model, wanted.language) {
         (SpeechModel::Canary, Language::Auto) => {
-            "Canary can detect the language only to translate it, so Language is now English. \
-             Turn on Translate after choosing Detect automatically to keep translating."
+            "Canary only supports automatic language detection when translating, so Language was \
+             reset to English. Enable Translate to English after selecting Detect automatically \
+             to keep translating."
                 .to_owned()
         }
         (model, _) => format!(
-            "{} has no {from}, so Language is now English.",
+            "{} does not support {from}, so Language was reset to English.",
             model_label(model)
         ),
     }
@@ -94,20 +95,20 @@ pub(super) fn model_switch_note(wanted: Speech) -> String {
 pub(super) fn model_help(model: SpeechModel, installed: bool) -> &'static str {
     match (model, installed) {
         (SpeechModel::Whisper, false) => {
-            "Whisper small is not on this machine. Run vinowhisper-setup to export it again \
-             (0.9 GB, a few minutes)."
+            "Whisper small is not installed. Run vinowhisper-setup to export it (0.9 GB, takes a \
+             few minutes)."
         }
         (SpeechModel::Whisper, true) => {
-            "OpenAI's Whisper small, 0.9 GB. Five languages, translates them into English. \
-             The default, and the most accurate on English captions."
+            "OpenAI Whisper small (0.9 GB). Supports 5 languages and translates into English. \
+             Default model and most accurate for English captions."
         }
         (SpeechModel::Canary, true) => {
-            "NVIDIA's Canary 1B v2, 0.9 GB. 25 European languages, translates them into \
-             English, with or without naming the language. Switching reloads the model."
+            "NVIDIA Canary 1B v2 (0.9 GB). Supports 25 European languages and translates into \
+             English, with or without specifying the source language. Switching reloads the model."
         }
         (SpeechModel::Canary, false) => {
-            "Canary 1B v2 is not downloaded yet: use Download below (0.97 GB on an NPU, \
-             1.9 GB otherwise)."
+            "Canary 1B v2 is not downloaded yet. Click Download below to install it (0.97 GB for \
+             NPU, 1.9 GB for CPU/GPU)."
         }
     }
 }

@@ -270,7 +270,7 @@ def test_vocabulary_check_says_where_it_is_used(monkeypatch):
     result = doctor._vocabulary()[0]
     assert (result.status, result.detail) == (
         doctor.OK,
-        "2 terms, given to dictation on CPU and used to correct",
+        "2 terms, used for dictation prompting and spelling correction on CPU",
     )
 
 
@@ -293,7 +293,7 @@ def test_vocabulary_on_the_npu_with_our_export_is_given_to_dictation(monkeypatch
         (config.STEP_MODEL_DIR / name).write_text("{}")
     monkeypatch.setattr(devices, "available", lambda: [devices.Device("NPU", "NPU")])
     result = doctor._vocabulary()[0]
-    assert result.detail == "1 terms, given to dictation on NPU and used to correct"
+    assert result.detail == "1 terms, used for dictation prompting and spelling correction on NPU"
 
 
 def test_vocabulary_on_the_npu_with_auto_language_is_correction_only(monkeypatch):
@@ -309,7 +309,7 @@ def test_vocabulary_on_the_npu_with_auto_language_is_correction_only(monkeypatch
     assert "spelling correction only" in result.detail and "auto" in result.detail
     config.save_language("fr", "transcribe", config.LANGUAGE_FILE)
     result = doctor._vocabulary()[0]
-    assert result.detail == "1 terms, given to dictation on NPU and used to correct"
+    assert result.detail == "1 terms, used for dictation prompting and spelling correction on NPU"
 
 
 def test_a_missing_file_decoder_is_a_warning_with_the_package(monkeypatch):

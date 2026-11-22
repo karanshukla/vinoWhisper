@@ -15,7 +15,8 @@ impl SessionsWindow {
             widgets::banner(
                 ui,
                 Tone::Warn,
-                "The summary model isn't downloaded yet; get it on the Cleanup page of the settings.",
+                "The summary model is not downloaded yet. Download it on the Cleanup page in \
+                 Settings.",
                 |ui| {
                     if ui.add(Button::secondary("Open settings").small()).clicked() {
                         forward::open_settings("cleanup");
@@ -28,7 +29,8 @@ impl SessionsWindow {
             widgets::banner(
                 ui,
                 Tone::Info,
-                "Saving transcripts is off (settings, Captions page), so new sessions aren't kept.",
+                "Transcript saving is disabled in Captions settings, so new sessions are not \
+                 saved.",
                 |_| {},
             );
         }
@@ -55,10 +57,14 @@ impl SessionsWindow {
                             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
                                 ui.label(
-                                    RichText::new(format!("{what} from before summaries"))
+                                    RichText::new(format!("{what} saved as plain text"))
                                         .family(theme::semibold()),
                                 );
-                                widgets::small(ui, "Plain text. Bundling keeps the text as it is.");
+                                widgets::small(
+                                    ui,
+                                    "Convert legacy plain-text transcripts into session bundles \
+                                     without modifying their text.",
+                                );
                             });
                         });
                     });
@@ -68,11 +74,7 @@ impl SessionsWindow {
         let n = listing.as_ref().map_or(0, |l| l.sessions.len());
         section(ui, "Sessions", n);
         if !state.error.is_empty() {
-            widgets::notice(
-                ui,
-                Tone::Error,
-                &format!("That didn't work: {}", state.error),
-            );
+            widgets::notice(ui, Tone::Error, &format!("Action failed: {}", state.error));
             ui.add_space(8.0);
         }
         match &state.listing {
@@ -133,7 +135,7 @@ impl SessionsWindow {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if deleting {
                             if ui
-                                .add(Button::destructive("Delete the session").small())
+                                .add(Button::destructive("Delete session").small())
                                 .clicked()
                             {
                                 self.confirm_delete = None;
@@ -154,9 +156,12 @@ impl SessionsWindow {
                             a11y::heading(&shown, &name, 3);
                             if deleting {
                                 ui.label(
-                                    RichText::new("Delete this session, transcript and summary?")
-                                        .size(12.5)
-                                        .color(p.error),
+                                    RichText::new(
+                                        "Delete this session, including its transcript and \
+                                         summary?",
+                                    )
+                                    .size(12.5)
+                                    .color(p.error),
                                 );
                             } else {
                                 widgets::small(ui, facts.join(" · "));
@@ -172,7 +177,7 @@ impl SessionsWindow {
                                 }
                                 if !entry.verified && entry.error.is_none() {
                                     ui.label(
-                                        RichText::new("Changed since it was written.")
+                                        RichText::new("Modified since creation.")
                                             .size(12.5)
                                             .color(p.warn),
                                     );

@@ -88,7 +88,7 @@ class Wizard:
         if self.assume_yes:
             return True
         if not sys.stdin.isatty():
-            self.say("  (not a terminal, and no --yes — skipping)")
+            self.say("  (non-interactive stdin without --yes; skipping)")
             return False
         try:
             style.emit("  ", (prompt, style.LABEL), (" [y/N] ", style.MUTED), end="")
@@ -151,19 +151,19 @@ class Wizard:
         if backends:
             active = backends[0]
             extra = "" if active.supports_app_capture else " (no per-application capture)"
-            return Outcome(True, f"{active.record} found — {active.name} backend{extra}")
+            return Outcome(True, f"{active.record} found ({active.name} backend{extra})")
 
         self.say("  No capture tool installed. PipeWire is preferred; PulseAudio also works.")
         command = distro.install_command(distro.AUDIO_PIPEWIRE, self.distro)
         if command is None:
             for line in distro.remediation(distro.AUDIO_PIPEWIRE, self.distro).lines():
                 self.say(line)
-            return Outcome(None, "install a capture tool by hand, then re-run")
+            return Outcome(None, "install a capture tool manually, then re-run")
         if self.run(command.split(), "install it?"):
             if distro.install_needs_reboot(self.distro):
                 return Outcome(None, "capture tool added to the next boot; reboot, then re-run")
             return Outcome(True, "capture tool installed")
-        return Outcome(None, "no capture tool yet — captions cannot run without one")
+        return Outcome(None, "no capture tool installed (required for captions)")
 
     def check_decoder(self) -> Outcome:
         from . import transcribe
@@ -172,12 +172,12 @@ class Wizard:
             if shutil.which(tool):
                 return Outcome(True, f"{tool} found; vinowhisper-transcribe can read files")
         self.say("  vinowhisper-transcribe turns a recording into a saved session.")
-        self.say("  It needs ffmpeg (or GStreamer) to read anything but 16 kHz WAV.")
+        self.say("  It needs ffmpeg (or GStreamer) to read anything other than 16 kHz WAV.")
         command = distro.install_command(distro.MEDIA_DECODER, self.distro)
         if command is None:
             for line in distro.remediation(distro.MEDIA_DECODER, self.distro).lines():
                 self.say(line)
-            return Outcome(None, "install ffmpeg by hand to transcribe files")
+            return Outcome(None, "install ffmpeg manually to transcribe files")
         # Optional, so --yes does not sudo for it.
         if not self.assume_yes and self.run(command.split(), "install ffmpeg?"):
             if distro.install_needs_reboot(self.distro):
@@ -210,7 +210,7 @@ class Wizard:
                 for line in no_driver_to_install:
                     self.say(f"  {line}")
             elif self._offer_npu_driver():
-                return Outcome(None, "NPU driver installed — reboot, then re-run this")
+                return Outcome(None, "NPU driver installed; reboot and re-run vinowhisper-setup")
         installed = self._offer_gpu_runtime(inventory, found)
         if installed is not None:
             return installed
@@ -290,9 +290,9 @@ class Wizard:
         cli = optimum_cli()
         if cli is not None:
             return cli
-        self.say("  Exporting needs optimum, the optional `export` extra (it brings torch).")
+        self.say("  Model export requires the optional `export` extra (optimum and CPU torch).")
         if not self.install_export_extra():
-            return Outcome(None, "install the export extra, then re-run this")
+            return Outcome(None, "install the export extra, then re-run vinowhisper-setup")
         cli = optimum_cli()
         if cli is None:
             return Outcome(False, "the export extra installed, but optimum-cli is not on PATH")
@@ -307,19 +307,19 @@ class Wizard:
             return Outcome(False, str(exc))
         directory = status["dir"]
         if status["verified"]:
-            return Outcome(True, f"Canary 1B v2 present at {directory}, sha256s verified")
+            return Outcome(True, f"Canary 1B v2 present at {directory} (SHA-256 verified)")
         if status["present"]:
             # scripts/export_canary.py: usable, just not the bytes the pins describe.
-            return Outcome(True, f"Canary 1B v2 present at {directory} (a local export)")
+            return Outcome(True, f"Canary 1B v2 present at {directory} (local export)")
         size = status["download_bytes"] / 1e9
         self.say(f"  No Canary 1B v2 export at {directory}.")
         self.say(
             f"  $ fetch {status['repo']}@{status['revision'][:12]} ({size:.2f} GB) into "
-            f"{directory}, checking every file's sha256"
+            f"{directory}, verifying SHA-256 checksums"
         )
         self.say(f"  Or export it yourself: {config.export_command('npu', model=self.model)}")
         if not self.confirm(f"download it now ({size:.2f} GB)?"):
-            return Outcome(None, "download it from Settings > Speech, or re-run this")
+            return Outcome(None, "download it from Settings → Speech or re-run vinowhisper-setup")
         shown = [-1]
 
         def progress(done: int, total: int) -> None:
@@ -334,7 +334,7 @@ class Wizard:
             return Outcome(False, str(exc))
         except (requests.RequestException, OSError, RuntimeError) as exc:
             return Outcome(None, f"download failed ({exc}); re-run to resume")
-        return Outcome(True, f"Canary 1B v2 downloaded to {directory}, sha256s verified")
+        return Outcome(True, f"Canary 1B v2 downloaded to {directory} (SHA-256 verified)")
 
     def export(self, argv: list[str]) -> bool:
         config.EXPORT_TMP_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -473,7 +473,8 @@ class Wizard:
 
         if overlay.can_build(component):
             if not self.run(
-                overlay.build_argv(component), "build it with cargo? (minutes, the first time)"
+                overlay.build_argv(component),
+                "build with cargo? (takes a few minutes the first time)",
             ):
                 return Outcome(None, "not built; `vinowhisper-setup --gui` builds it any time")
             return overlay.install_binary(overlay.built_binary(component), dest)
@@ -542,7 +543,7 @@ class Wizard:
             style.emit(
                 (f"✗ {len(self.failed)} step(s) failed: {', '.join(self.failed)}", style.FAIL)
             )
-            style.emit(("  vinowhisper-doctor", style.COMMAND), " has the detail.")
+            style.emit("  Run ", ("vinowhisper-doctor", style.COMMAND), " for details.")
             return 1
         if self.skipped:
             style.emit(
@@ -551,15 +552,13 @@ class Wizard:
                     style.WARN,
                 )
             )
-            style.emit(
-                "  Re-run ", ("vinowhisper-setup", style.COMMAND), " once you have dealt with them."
-            )
+            style.emit("  Re-run ", ("vinowhisper-setup", style.COMMAND), " after completing them.")
             return 0
         style.emit(
             ("✓ Ready.", style.OK),
             " Run ",
             ("vinowhisper-caption", style.COMMAND),
-            " with something playing.",
+            " while audio is playing.",
         )
         return 0
 
@@ -627,12 +626,12 @@ def server_summary(units_removed: bool, device: str) -> str:
 
 
 def missing_commands_summary(missing: list[str], executable: str) -> str:
-    return f"{', '.join(missing)} not next to {executable} — run `uv sync` first"
+    return f"{', '.join(missing)} not found next to {executable}; run `uv sync` first"
 
 
 def linked_summary(bin_dir: Path, path_env: str) -> str:
     if str(bin_dir) not in path_env.split(os.pathsep):
-        return f"linked, but {bin_dir} is not on your PATH — add it"
+        return f"linked, but {bin_dir} is not on your PATH (add it to your shell profile)"
     return f"linked into {bin_dir}"
 
 
@@ -797,64 +796,62 @@ def _has_systemd() -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Guided setup: capture tools, NPU driver, model export.",
-        epilog="Every step is idempotent; re-run it as often as you like.",
+        epilog="Every step is idempotent and safe to re-run.",
     )
     parser.add_argument(
         "-y",
         "--yes",
         action="store_true",
-        help="Answer yes to every prompt, including the ones that run sudo.",
+        help="Answer yes to every prompt, including commands that use sudo.",
     )
     parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
-        help="Print the plan and every command it would run, change nothing.",
+        help="Print planned steps and commands without making any changes.",
     )
     parser.add_argument(
         "--device",
         default=None,
         metavar="NPU|GPU|CPU|auto",
-        help="Device to set up for. Decides which model export is needed, and is saved to "
-        f"{config.SERVER_FILE} for the server; without it the saved choice is kept "
+        help="Device to configure. Determines which model export is needed and saves the choice "
+        f"to {config.SERVER_FILE}; omitting it keeps the saved setting "
         f"(default {config.DEFAULT_DEVICE}).",
     )
     parser.add_argument(
         "--language",
         default=None,
         metavar="LANGUAGE",
-        help="Spoken language. With Whisper, 'en' (the default) uses the English-only model; anything "
-        f"else sets up the multilingual whisper-small. Saved to {config.LANGUAGE_FILE}, "
-        "which the server and the tray read; without it the saved choice is kept.",
+        help="Spoken language. With Whisper, 'en' (default) uses the English-only model; other "
+        f"values set up multilingual whisper-small. Saved to {config.LANGUAGE_FILE}, "
+        "which the server and tray read; omitting it keeps the saved setting.",
     )
     parser.add_argument(
         "--task",
         default=None,
         choices=config.TASKS,
-        help="'translate' captions foreign speech in English (needs a spoken language or 'auto').",
+        help="'translate' captions foreign speech in English (requires a spoken language or 'auto').",
     )
     parser.add_argument(
         "--model",
         default=None,
         choices=config.MODELS,
-        help=f"Speech model (default {config.DEFAULT_MODEL}). {config.CANARY_MODEL} takes 25 "
-        "languages and translates them into English, with auto for translation; the wizard "
-        "downloads its prebuilt export. Saved beside the language.",
+        help=f"Speech model (default {config.DEFAULT_MODEL}). {config.CANARY_MODEL} supports 25 "
+        "European languages and translates into English (with 'auto' for translation); setup "
+        f"downloads its prebuilt export and saves the choice in {config.LANGUAGE_FILE}.",
     )
     parser.add_argument(
         "--gui",
         action="store_true",
-        help="Install only the optional desktop app: the overlay and tray "
-        "(vinowhisper-tray: floating captions and dictation) and its settings window "
-        "(vinowhisper-gui). Release binaries, checked against the sha256s pinned in this "
-        "package, or cargo builds from a checkout.",
+        help="Install only the optional desktop overlay and tray (vinowhisper-tray) and settings "
+        "window (vinowhisper-gui), using SHA-256 verified release binaries or a local cargo build "
+        "from a checkout.",
     )
     parser.add_argument(
         "--ovfetch",
         action="store_true",
-        help="Install only ovfetch, which gives vinowhisper-doctor Intel's per-platform "
-        "NPU driver data: its release binary, checked against the sha256 pinned in "
-        "this package.",
+        help="Install only ovfetch (SHA-256 verified release binary) to add Intel per-platform "
+        "NPU driver data to vinowhisper-doctor.",
     )
     parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     args = parser.parse_args(argv)
@@ -868,7 +865,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if sandbox.flatpak_id() is not None and (args.gui or args.ovfetch):
-        print("The Flatpak carries the tray, the windows and Intel's NPU driver: nothing to do.")
+        print(
+            "The Flatpak already bundles the tray, GUI windows, and Intel NPU driver; nothing to do."
+        )
         return 0
 
     wizard = Wizard(

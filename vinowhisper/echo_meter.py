@@ -13,7 +13,7 @@ MIN_FAR_END_S = 5.0
 LOUD_SHARE = 0.5
 REPEAT_AFTER_S = 300.0
 
-HINT = "Their voice is coming through your speakers into the mic. Headphones will caption you more cleanly."
+HINT = "Remote audio from your speakers is bleeding into the microphone. Using headphones will improve caption accuracy."
 
 
 def _rms(chunk: np.ndarray) -> float:

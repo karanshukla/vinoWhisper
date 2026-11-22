@@ -41,7 +41,7 @@ The Intel iGPU decodes the same 12s window in 0.95s and the CPU in 2.30s, so bot
 - **Explicit hardware fallback:** Device selection tries NPU, then GPU, then CPU. Any fallback is reported in the server log, `/health`, `vinowhisper-doctor`, and as a red status-bar border. See [Hardware](https://docs.vinowhisper.com/hardware/).
 - **Distro-aware diagnostics:** Error messages and `vinowhisper-doctor` print remediation commands using your distribution's package names.
 - **Optional native overlay:** `vinowhisper-tray` is a 6.3 MB Rust binary that floats captions above other windows, including fullscreen video. It links only libc and adds no dependencies to the Python package.
-- **Dictation in the overlay:** Hold `Meta+H`, speak, and release to type into the focused window. An optional local LLM cleanup pass on the NPU can remove fillers, stammers, and spoken edits ("scratch that") strictly by deleting words—it never inserts or rewords text. See [Overlay and dictation](https://docs.vinowhisper.com/tray/).
+- **Dictation in the overlay:** Hold `Meta+H`, speak, and release to type into the focused window. An optional local LLM cleanup pass on the NPU can remove fillers, stammers, and spoken edits ("scratch that") by deleting words only, without inserting or rewording text. See [Overlay and dictation](https://docs.vinowhisper.com/tray/).
 
 ## Install
 
@@ -83,7 +83,7 @@ The Intel NPU requires a userspace compiler library that Linux distributions do 
 ```bash
 vinowhisper-caption                       # caption system audio
 vinowhisper-caption --source mic          # caption microphone input
-vinowhisper-caption --source both         # a call: you and them as two lanes
+vinowhisper-caption --source both         # caption a call (mic and system audio in two lanes)
 vinowhisper-caption --list-targets        # capture one app instead of the whole sink
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save session audio and events for replay
@@ -141,7 +141,7 @@ French, German, and Spanish are supported offline via Whisper's multilingual `wh
 - **Single-machine benchmarks (n=1):** All numbers above were measured on one Wildcat Lake laptop with early-silicon NPU drivers. GPU and CPU fallbacks were tested only on its Xe3 iGPU and Core 5 320, where 2 of 15 GPU model loads segfaulted inside OpenVINO's GPU plugin.
 - **Two-cycle latency floor:** Captions trail audio by roughly twice the cycle time because two consecutive windows must agree before committing a word. See [docs/latency.md](https://docs.vinowhisper.com/latency/) for tuning `--window`.
 - **Cross-window wording drift:** Re-decoding overlapping windows with changing right-context causes occasional phrasing changes; the stitcher suppresses most but not all of them.
-- **Overlay requires `wlr-layer-shell`:** Tested on KDE Plasma 6.7 on hardware and headless Sway 1.9 in a VM with a stubbed model. GNOME does not expose `wlr-layer-shell`, so the overlay refuses to start there (use the terminal UI instead). Hyprland, niri, and COSMIC are untested. Compositors without a global shortcuts portal can bind `vinowhisper-tray` commands directly ([examples](https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal)).
+- **Overlay requires `wlr-layer-shell`:** Tested on KDE Plasma 6.7 on hardware and headless Sway 1.9 in a VM with a stubbed model. GNOME does not expose `wlr-layer-shell`, so the overlay cannot start there (use the terminal UI instead). Hyprland, niri, and COSMIC are untested. Compositors without a global shortcuts portal can bind `vinowhisper-tray` commands directly ([examples](https://docs.vinowhisper.com/tray/#without-a-shortcuts-portal)).
 - **Dictation focus and portal requirements:** Wayland does not expose which window has focus, so dictation types into whichever window is currently focused. Typing uses the `RemoteDesktop` portal (available on KDE and GNOME, but not Sway, niri, or COSMIC). See [docs/tray.md](https://docs.vinowhisper.com/tray/#dictation).
 - **Untested non-Fedora distros and PulseAudio:** Package names for the other seven distro families come from their package indexes and may contain mistakes. The PulseAudio (`parec`) capture backend has not been run against a live PulseAudio server.
 - **NPU export requires `transformers<5.4`:** Version 5.4.0 and later export a Whisper decoder that compiles on the NPU but fails at `generate()` (bisected 2026-09-04). The `vinowhisper[export]` extra holds this pin. `transformers` 5.3.0 has two open CVEs that require exporting a malicious model repository; the default pinned `openai/whisper-small.en` is unaffected. See [docs/install.md](https://docs.vinowhisper.com/install/) for the bisect table.
@@ -152,6 +152,6 @@ French, German, and Spanish are supported offline via Whisper's multilingual `wh
 - [SECURITY.md](https://github.com/karanshukla/vinoWhisper/blob/main/SECURITY.md): local data handling and server trust boundaries
 - [CHANGELOG.md](https://github.com/karanshukla/vinoWhisper/blob/main/CHANGELOG.md)
 
-Reports from other hardware and distributions are welcome—open an [issue](https://github.com/karanshukla/vinoWhisper/issues) with the output of `vinowhisper-doctor --json`.
+Reports from other hardware and distributions are welcome; open an [issue](https://github.com/karanshukla/vinoWhisper/issues) with the output of `vinowhisper-doctor --json`.
 
 MIT licensed.

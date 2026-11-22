@@ -86,15 +86,17 @@ impl SettingsWindow {
             Row::new("Language")
                 .help(match model {
                     SpeechModel::Whisper if multilingual => {
-                        "Detect automatically picks per sentence. Switching reloads the model."
+                        "Detect automatically identifies the language on each window. Changing the \
+                         language reloads the model."
                     }
                     SpeechModel::Whisper => {
-                        "Only English is installed. Run vinowhisper-setup --language auto to add \
-                         the others."
+                        "Only English is installed. Run vinowhisper-setup --language auto to \
+                         install multilingual support."
                     }
                     SpeechModel::Canary => {
-                        "Detect automatically translates whatever is spoken into English. To \
-                         caption in another language, name it. Switching reloads the model."
+                        "Detect automatically translates spoken audio into English. Select a \
+                         specific language to caption in that language. Switching reloads the \
+                         model."
                     }
                 })
                 .show(ui, |ui, named| {
@@ -117,14 +119,14 @@ impl SettingsWindow {
             let locked = model == SpeechModel::Canary && self.speech.language == Language::Auto;
             Row::new("Translation")
                 .help(if locked {
-                    "Always on with Detect automatically: Canary translates whatever is spoken."
+                    "Always enabled when Detect automatically is selected with Canary."
                 } else if foreign {
-                    "Captions arrive in English whatever was spoken."
+                    "Translates spoken audio into English captions."
                 } else if self.speech.language == Language::En {
-                    "English speech is captioned as it is. To translate, set Language to the \
-                     one being spoken, or to Detect automatically."
+                    "English audio is transcribed directly. To translate another language into \
+                     English, select that language or Detect automatically."
                 } else {
-                    "Needs the other languages installed, as above."
+                    "Requires multilingual support (see Language above)."
                 })
                 .show(ui, |ui, _| {
                     ui.add_enabled_ui(foreign && !locked, |ui| {
@@ -147,8 +149,8 @@ impl SettingsWindow {
                 widgets::group(ui, |ui| {
                     Row::new("Exported model")
                         .help(&format!(
-                            "Could not check what is on disk: {why}. vinowhisper-setup links \
-                             the command this page asks."
+                            "Could not check installed models: {why}. Run vinowhisper-setup to \
+                             link the required command."
                         ))
                         .tone(Tone::Error)
                         .show(ui, |_, _| {});
@@ -167,8 +169,8 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             Row::new("Pause media")
                 .help(
-                    "Pauses music and video that is playing while you dictate, and resumes it \
-                     after. Players that ignore the desktop's media controls keep playing.",
+                    "Pauses active media playback while dictating and resumes it afterward. \
+                     Players without MPRIS support are unaffected.",
                 )
                 .show(ui, |ui, _| {
                     self.settings_dirty |=
@@ -177,8 +179,8 @@ impl SettingsWindow {
                 });
             Row::new("Space between dictations")
                 .help(
-                    "Types a space before a dictation that starts within 30 seconds of the \
-                     last one. A guess: if you changed field in between, the space goes there.",
+                    "Inserts a leading space when starting a new dictation within 30 seconds of \
+                     the previous one. Applies even if you switched text fields.",
                 )
                 .show(ui, |ui, _| {
                     self.settings_dirty |= widgets::switch(
@@ -190,9 +192,9 @@ impl SettingsWindow {
                 });
             Row::new("Keep typing access")
                 .help(
-                    "Dictation types through the desktop's remote control, which announces \
-                     each time it starts. It stays on this long after a dictation. 0 keeps \
-                     it on.",
+                    "Dictation uses the desktop remote-control portal, which shows a notification \
+                     when a session starts. Keeps the session open for this duration after \
+                     dictation (0 keeps it open).",
                 )
                 .show(ui, |ui, named| {
                     self.settings_dirty |= number(
@@ -211,9 +213,8 @@ impl SettingsWindow {
         let full = self.vocabulary.len() >= vocabulary::MAX_TERMS;
         let help = match &self.vocabulary_error {
             Some(error) => error.clone(),
-            None => "Names and jargon to expect when you dictate. A near-miss spelling is \
-                     corrected to the term as written here; Whisper on a GPU or CPU is also \
-                     told to listen for them."
+            None => "Custom names and terms for dictation. Close misspellings are corrected \
+                     automatically, and Whisper uses them as decoding hints when supported."
                 .to_owned(),
         };
         let tone = if self.vocabulary_error.is_some() {
@@ -230,7 +231,7 @@ impl SettingsWindow {
                 add |= ui.add_enabled(enabled, Button::secondary("Add")).clicked();
                 let field = ui.add_enabled(
                     !full,
-                    widgets::field(&mut self.new_term, "A name or term", 180.0),
+                    widgets::field(&mut self.new_term, "Enter a name or term", 180.0),
                 );
                 field.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::Role::TextInput, !full, "New term")

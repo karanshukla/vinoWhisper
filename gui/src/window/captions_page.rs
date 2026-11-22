@@ -44,7 +44,10 @@ impl SettingsWindow {
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
             Row::new("Listen to")
-                .help("What the captions follow. Both labels your words you and the call them.")
+                .help(
+                    "Audio source to caption. Both captions your microphone as “you” and system \
+                     audio as “them”.",
+                )
                 .show(ui, |ui, _| {
                     changed |= segmented(
                         ui,
@@ -56,8 +59,9 @@ impl SettingsWindow {
                 });
             Row::new("Echo cancellation")
                 .help(
-                    "Both only: takes their voice out of your microphone, so a call on speakers \
-                     does not caption it twice. Applies from the next session.",
+                    "Applies in Both mode only. Removes speaker echo from your microphone during \
+                     calls so remote speech is not captioned twice. Takes effect on the next \
+                     session.",
                 )
                 .show(ui, |ui, _| {
                     changed |= segmented(
@@ -69,7 +73,7 @@ impl SettingsWindow {
                     );
                 });
             Row::new("Hide after silence")
-                .help("0 keeps them up.")
+                .help("Set to 0 to keep captions visible.")
                 .show(ui, |ui, named| {
                     changed |= number(
                         ui,
@@ -80,7 +84,7 @@ impl SettingsWindow {
                     );
                 });
             Row::new("Save transcripts")
-                .help("Keep each session to read later.")
+                .help("Save completed sessions as transcripts to review later.")
                 .show(ui, |ui, _| {
                     changed |= widgets::switch(
                         ui,
@@ -93,7 +97,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Tray");
         widgets::group(ui, |ui| {
             Row::new("Hide icon after")
-                .help("Moves to hidden icons when idle. 0 keeps it in view.")
+                .help("Moves the tray icon to hidden icons when idle. Set to 0 to keep it visible.")
                 .show(ui, |ui, named| {
                     changed |= number(
                         ui,

@@ -58,15 +58,15 @@ impl SessionsWindow {
                 });
             } else {
                 widgets::Row::new("Part")
-                    .help("The transcript: this session has no summary yet.")
+                    .help("Transcript only (this session has no summary yet).")
                     .show(ui, |_, _| {});
             }
             let help = match dialog.format {
                 Format::Markdown => {
-                    "For notes apps like Obsidian. The session's details go in its frontmatter."
+                    "For note apps like Obsidian. Session metadata is included in YAML frontmatter."
                 }
-                Format::Text => "No markup. Opens anywhere.",
-                Format::Odt => "For LibreOffice, Word and Google Docs.",
+                Format::Text => "Plain text with no formatting.",
+                Format::Odt => "For LibreOffice, Word, and Google Docs.",
             };
             widgets::Row::new("Format").help(help).show(ui, |ui, _| {
                 widgets::segmented(
@@ -80,8 +80,8 @@ impl SessionsWindow {
                     ],
                 );
             });
-            widgets::Row::new("Where")
-                .help("The desktop's save dialog asks next.")
+            widgets::Row::new("Destination")
+                .help("Choose where to save in the file dialog.")
                 .show(ui, |ui, _| {
                     save = ui.add(Button::primary("Save…").small()).clicked();
                     cancel = ui.add(Button::ghost("Cancel").small()).clicked();
@@ -103,7 +103,7 @@ impl SessionsWindow {
     pub(super) fn export_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
         if state.exporting {
             ui.add_space(12.0);
-            a11y::live(&widgets::small(ui, "Waiting for the save dialog."));
+            a11y::live(&widgets::small(ui, "Waiting for save dialog…"));
             return;
         }
         let Some(result) = &state.exported else {
@@ -114,14 +114,16 @@ impl SessionsWindow {
             Ok(exported) => {
                 let mut text = if exported.saved_without_dialog {
                     format!(
-                        "There's no save dialog on this desktop, so it's in {}.",
+                        "No save dialog is available on this desktop. Saved to {}.",
                         exported.path.display()
                     )
                 } else {
                     format!("Exported to {}.", exported.path.display())
                 };
                 if exported.summary_missing {
-                    text.push_str(" The transcript only: there's no summary yet.");
+                    text.push_str(
+                        " Exported transcript only because this session has no summary yet.",
+                    );
                 }
                 widgets::banner(ui, Tone::Info, &text, |ui| {
                     let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
@@ -134,7 +136,7 @@ impl SessionsWindow {
                     dismissed
                 })
             }
-            Err(why) => widgets::notice(ui, Tone::Error, &format!("Export didn't work: {why}")),
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Export failed: {why}")),
         };
         if dismissed {
             self.state.lock().unwrap().exported = None;

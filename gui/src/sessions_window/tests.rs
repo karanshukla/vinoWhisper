@@ -103,7 +103,7 @@ fn each_session_is_listed_with_what_it_can_do() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
     harness.get_by_label(
-        "The summary model isn't downloaded yet; get it on the Cleanup page of the settings.",
+        "The summary model is not downloaded yet. Download it on the Cleanup page in Settings.",
     );
     harness.get_by_role_and_label(Role::Button, "Open settings");
     harness.get_by_role_and_label(Role::Button, "Bundle and summarise 3 transcripts");
@@ -129,7 +129,7 @@ fn each_session_is_listed_with_what_it_can_do() {
     );
     assert!(harness.query_by_label("Delete summary").is_none());
     harness.get_by_label(
-        "Saving transcripts is off (settings, Captions page), so new sessions aren't kept.",
+        "Transcript saving is disabled in Captions settings, so new sessions are not saved.",
     );
 }
 
@@ -139,8 +139,8 @@ fn deleting_asks_in_the_card_and_cancel_backs_out() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.state_mut().window.confirm_delete = Some("/t/b.vwsession".into());
     harness.run();
-    harness.get_by_label("Delete this session, transcript and summary?");
-    harness.get_by_role_and_label(Role::Button, "Delete the session");
+    harness.get_by_label("Delete this session, including its transcript and summary?");
+    harness.get_by_role_and_label(Role::Button, "Delete session");
     harness
         .get_by_role_and_label(Role::Button, "Cancel")
         .click();
@@ -148,7 +148,7 @@ fn deleting_asks_in_the_card_and_cancel_backs_out() {
     assert!(harness.state().window.confirm_delete.is_none());
     assert!(
         harness
-            .query_by_label("Delete this session, transcript and summary?")
+            .query_by_label("Delete this session, including its transcript and summary?")
             .is_none()
     );
 }
@@ -304,7 +304,7 @@ fn export_in_the_viewer_follows_the_tab_and_says_where_it_went() {
         .get_by_role_and_label(Role::RadioButton, "Document (.odt)")
         .click();
     harness.run();
-    harness.get_by_label("For LibreOffice, Word and Google Docs.");
+    harness.get_by_label("For LibreOffice, Word, and Google Docs.");
     harness.get_by_role_and_label(Role::Button, "Save…").click();
     until_exported(&mut harness);
     assert_eq!(
@@ -354,7 +354,7 @@ fn export_from_a_card_offers_only_the_transcript_without_a_summary_and_cancels()
     harness.run();
     harness.get_by_label("Export…").click();
     harness.run();
-    harness.get_by_label("The transcript: this session has no summary yet.");
+    harness.get_by_label("Transcript only (this session has no summary yet).");
     assert!(
         harness
             .query_by_role_and_label(Role::RadioButton, "Summary")
@@ -404,9 +404,9 @@ fn without_a_save_dialog_the_notice_says_where_it_went_and_what_was_left_out() {
     harness.get_by_role_and_label(Role::Button, "Save…").click();
     until_exported(&mut harness);
     harness.get_by_label(
-        "There's no save dialog on this desktop, so it's in \
-             /home/me/Documents/vinoWhisper/2026-10-26 Transcript.md. \
-             The transcript only: there's no summary yet.",
+        "No save dialog is available on this desktop. Saved to \
+         /home/me/Documents/vinoWhisper/2026-10-26 Transcript.md. \
+         Exported transcript only because this session has no summary yet.",
     );
     harness.get_by_role_and_label(Role::Button, "Show in folder");
 }
@@ -426,7 +426,7 @@ fn a_failed_export_says_why_and_a_cancelled_one_says_nothing() {
     harness.run();
     harness.get_by_role_and_label(Role::Button, "Save…").click();
     until_exported(&mut harness);
-    harness.get_by_label("Export didn't work: /d/x.md already exists");
+    harness.get_by_label("Export failed: /d/x.md already exists");
 
     exporter_answering(&mut harness, Ok(None));
     harness.state_mut().window.export_dialog = Some(dialog);
@@ -450,11 +450,7 @@ fn a_failed_export_says_why_and_a_cancelled_one_says_nothing() {
             .exported
             .is_none()
     );
-    assert!(
-        harness
-            .query_by_label_contains("Export didn't work")
-            .is_none()
-    );
+    assert!(harness.query_by_label_contains("Export failed").is_none());
 }
 
 #[test]
@@ -629,8 +625,8 @@ fn an_old_vinospeak_says_to_update_it() {
         .click();
     until(&mut harness, |under| under.window.reading.is_none());
     harness.get_by_label(
-        "Reading aloud stopped: this vinoSpeak can't read sessions yet. Update vinoSpeak \
-             to read them.",
+        "Reading aloud stopped: installed vinoSpeak does not support reading sessions yet. Update \
+         vinoSpeak to use this feature.",
     );
     harness
         .get_by_role_and_label(Role::Button, "Dismiss")
@@ -727,7 +723,9 @@ fn an_import_that_lost_its_speech_detector_says_so_with_the_result() {
         under.window.state.lock().unwrap().imported.is_some()
     });
     harness.run();
-    harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
+    harness.get_by_label(
+        "Import complete. The session has been added to the list and queued for summarisation.",
+    );
     harness.get_by_label("Import note: the speech detector stopped at 0:05.");
     harness
         .get_by_role_and_label(Role::Button, "Import audio or video…")
@@ -766,7 +764,9 @@ fn import_audio_transcribes_the_file_picked_and_offers_its_transcript() {
         under.window.state.lock().unwrap().imported.is_some()
     });
     harness.run();
-    harness.get_by_label("Imported. It's in the list, and is summarised like any session.");
+    harness.get_by_label(
+        "Import complete. The session has been added to the list and queued for summarisation.",
+    );
     assert!(
         harness.state().window.state.lock().unwrap().relist,
         "the window's next frame lists again"
@@ -799,7 +799,7 @@ fn without_ffprobe_an_import_says_only_how_far_it_has_got() {
     harness.state_mut().window.state.lock().unwrap().import =
         Some(importing("lecture.mp3", 750.0, None));
     harness.run();
-    harness.get_by_label("Transcribing lecture.mp3: 12:30 so far.");
+    harness.get_by_label("Transcribing lecture.mp3: 12:30 elapsed.");
 }
 
 #[test]
@@ -808,7 +808,7 @@ fn before_the_dialog_answers_the_import_names_no_file() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.state_mut().window.state.lock().unwrap().import = Some(Import::default());
     harness.run();
-    harness.get_by_label("Waiting for the file dialog.");
+    harness.get_by_label("Waiting for file dialog…");
 }
 
 #[test]
@@ -857,7 +857,7 @@ fn a_failed_import_says_why_and_a_closed_dialog_says_nothing() {
         under.window.state.lock().unwrap().imported.is_some()
     });
     harness.run();
-    harness.get_by_label("Import didn't work: no speech found in quiet.wav; nothing was saved");
+    harness.get_by_label("Import failed: no speech found in quiet.wav; nothing was saved");
     assert!(!harness.state().window.state.lock().unwrap().relist);
     harness
         .get_by_role_and_label(Role::Button, "Dismiss")
@@ -872,12 +872,12 @@ fn a_failed_import_says_why_and_a_closed_dialog_says_nothing() {
         under.window.state.lock().unwrap().import.is_none()
     });
     harness.run();
+    assert!(harness.query_by_label_contains("Import failed").is_none());
     assert!(
         harness
-            .query_by_label_contains("Import didn't work")
+            .query_by_label_contains("Import complete.")
             .is_none()
     );
-    assert!(harness.query_by_label_contains("Imported.").is_none());
 }
 
 #[test]
@@ -1036,8 +1036,8 @@ fn an_edited_copy_is_opened_as_it_is_and_the_notice_says_so() {
     harness.get_by_label("Open in text editor").click();
     until_opened(&mut harness);
     harness.get_by_label(
-        "Opened /d/2026-10-26 Transcript.md as it is: it differs from the session (edited, \
-             or summarised again), so it wasn't replaced. Export… writes a fresh copy.",
+        "Opened existing file /d/2026-10-26 Transcript.md without overwriting it because it \
+         differs from the current session. Use Export… to write a fresh copy.",
     );
 }
 
@@ -1055,5 +1055,5 @@ fn a_failure_to_open_says_why() {
         .get_by_role_and_label(Role::Button, "Open in word processor")
         .click();
     until_opened(&mut harness);
-    harness.get_by_label("Couldn't open it: xdg-open found no app for /d/x.odt");
+    harness.get_by_label("Could not open file: xdg-open found no app for /d/x.odt");
 }

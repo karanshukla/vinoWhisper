@@ -111,7 +111,7 @@ A PEP 723 script (`transformers` 5.22.2, OpenVINO 2026.4.0) that traces Whisper 
 
 - `encoder.xml`: 80 × 3000 log-mel input (30s), outputs cross-attention K/V for all 12 decoder layers (`cross_k0`…`cross_v11`).
 - `decoder.xml`: Stateless single-token step taking `ids`, `pos`, `mask` (`1 × 1 × 1 × slots+1`), `past_k*`/`past_v*` (`1 × 12 × slots × 64`), and cross K/V; outputs `logits` and `new_k*`/`new_v*`.
-- `prefill.xml` (#179): Processes up to 128 prompt tokens in one call with a causal mask, taking `ids` (`1 × 128`), a one-hot `pick` row (an `int64` index caused NPU `FeasibleAllocation Pass failed`; one-hot matmul compiles cleanly), and cross K/V; outputs last-token `logits` and K/V for all 128 slots.
+- `prefill.xml` (#179): Processes up to 128 prompt tokens in one call with a causal mask, taking `ids` (`1 × 128`), a one-hot `pick` row (an `int64` index caused NPU `FeasibleAllocation Pass failed`; one-hot matmul compiles without error), and cross K/V; outputs last-token `logits` and K/V for all 128 slots.
 - `step_export.json` (layers, heads, slots, prefill tokens), tokenizer/config files, and `SHA256SUMS`.
 
 Before saving, the exporter teacher-forces a 26-token dictation-shaped sequence (`<|startofprev|>`, vocabulary, start tokens, answer) against `transformers` and fails if fp32 wrapper logit drift exceeds `1e-3`, or if the saved fp16 IR or fp16 prefill disagrees on any argmax token (2026-11-11). INT8 comparison warns only (25/26 agreement on noise; INT8 is not loaded at runtime).

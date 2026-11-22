@@ -194,7 +194,7 @@ fn portal_autostart(enabled: bool) -> io::Result<()> {
     use ashpd::desktop::background::Background;
     let granted = async_io::block_on(async {
         let request = Background::request()
-            .reason("Captions and dictation from the tray, ready at login")
+            .reason("Start vinoWhisper in the system tray at login for captions and dictation")
             .auto_start(enabled)
             .dbus_activatable(false)
             .command([COMMAND, "--hidden"]);
@@ -414,7 +414,7 @@ fn desktop_entry(exe: &Path, caption: Option<&Path>, autostart: bool) -> String 
 Type=Application
 Name=vinoWhisper
 GenericName=Live Captions and Dictation
-Comment=Live captions for anything playing, and voice typing, transcribed on the NPU
+Comment=Local live captions and voice dictation on Linux
 Exec={launch}
 Icon={APP_ID}
 Terminal=false
