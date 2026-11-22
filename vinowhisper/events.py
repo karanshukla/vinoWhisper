@@ -1,5 +1,8 @@
 from dataclasses import asdict, dataclass, field
 
+LANE_YOU = "you"
+LANE_THEM = "them"
+
 
 @dataclass(frozen=True)
 class Ready:
@@ -28,6 +31,8 @@ class Cycle:
     pending: list[str] = field(default_factory=list)
     # Auto mode only: what two windows in a row heard, so the label does not flicker.
     language: str = ""
+    # "" for a single source; "you" (mic) or "them" (output) when both are captioned.
+    lane: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,14 @@ class Silence:
     sink_muted: bool | None
     # Sound, but the speech detector heard nobody talking in it.
     no_speech: bool = False
+    lane: str = ""
+
+
+# Words a lane still held back when the session ended; only two-lane sessions send it.
+@dataclass(frozen=True)
+class Flushed:
+    lane: str
+    words: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -44,7 +57,7 @@ class Stopped:
     flushed: list[str] = field(default_factory=list)
 
 
-Event = Ready | Cycle | Silence | Stopped
+Event = Ready | Cycle | Silence | Flushed | Stopped
 
 
 def speech_label(language: str, task: str, heard: str = "") -> str:
