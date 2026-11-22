@@ -119,7 +119,6 @@ struct SettingsWindow {
     last_page_shown: Option<Page>,
     refused: Arc<Mutex<Option<String>>>,
     // What Auto would do on this output, asked of vinowhisper-caption.
-    echo_line: Arc<Mutex<Option<Result<String, String>>>>,
     notice: Option<String>,
     // (pinned by `tests::a_model_switch_that_drops_the_language_says_so`)
     speech_note: Option<String>,
@@ -206,7 +205,6 @@ impl SettingsWindow {
             shortcuts: Arc::new(Mutex::new(Shortcuts::Asking)),
             last_page_shown: None,
             refused: Arc::new(Mutex::new(None)),
-            echo_line: Arc::new(Mutex::new(None)),
             notice: None,
             speech_note: None,
             summaries: Summaries::default(),
@@ -289,9 +287,6 @@ impl SettingsWindow {
         // Any first page asks the tray: its state names the chip in the sidebar.
         if last.is_none() || arrived(Page::Shortcuts) || (regained && current == Page::Shortcuts) {
             self.ask_shortcuts(ctx, Duration::ZERO);
-        }
-        if arrived(Page::Captions) || (regained && current == Page::Captions) {
-            self.refresh_echo_line(ctx);
         }
         if arrived(Page::Cleanup) {
             self.refresh_model(ctx, Tool::Cleanup);

@@ -1,6 +1,5 @@
 //! The vinoWhisper settings and sessions windows.
 
-mod echo;
 mod forward;
 mod model;
 mod sessions;
