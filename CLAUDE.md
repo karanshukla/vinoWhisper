@@ -569,6 +569,21 @@ then "you may need to remove systemd first". Both follow vinoSearch's (its commi
   Sway hides layer-shell and data-control from those, and what KWin does is unchecked.
   If the overlay or the clipboard fails in the Flatpak, look there first.
 
+## Two-lane captions (#118), added 2026-11-22
+
+`--source both` captions the mic (`you`) and the sink monitor (`them`) at once.
+`caption_events` holds one `_Lane` per source (recorder, `SpeechGate`, `Stitcher`,
+silence clock) and runs one transcription at a time, the lane with the most unheard
+audio first; the server serialises on `transcriber._lock` anyway. `lane` is a field
+on `Cycle` and `Silence`, `Flushed` carries each lane's held-back words, and every
+writer and renderer labels a paragraph when the speaker changes. `--record` writes
+`audio-<lane>.wav`. The tray and settings window have a Both source. Details in
+`docs/terminal.md`. Checked 2026-11-22 on linuxlab: LibriSpeech clips through the fake
+speakers and mic gave both lanes, both wavs and labelled output; the far end leaked into
+the mic lane, which is #216's echo problem. **Not yet verified on the laptop or the NPU.**
+#216 (`echo/`, vinoEcho) plugs into the `you` lane's capture; #215 only has to start
+`--source both --transcript`.
+
 ## Architecture
 
 ```
