@@ -1,152 +1,81 @@
-# Design decision: scale-to-zero, not an always-on daemon
+# Architecture
 
-Deliberately **started on demand**, not a resident service. Same
-lazy-load/idle-unload shape as serverless cold starts, with no service manager.
-Serverless, on your laptop, with no framework:
+vinoWhisper splits audio capture/UI from model inference using an on-demand local server that starts automatically and exits when idle.
 
-- Nothing runs until something needs the server. No model loaded, no Python
-  process.
-- Every client (captions, dictation, a file import, the doctor) connects to
-  `$XDG_RUNTIME_DIR/vinowhisper/server.sock`. When nobody is listening, the
-  client starts `vinowhisper-server` itself (`vinowhisper/launch.py`), detached
-  and in its own session, waits for the socket and connects again. That is when
-  the NPU model load (~10-30s) happens. A lock beside the socket keeps two
-  clients arriving together to one server.
-- The server tracks its own last-request time and exits after
-  `config.IDLE_TIMEOUT_S` (5 min). The next client starts it again.
+## On-demand server (scale-to-zero)
 
-What that costs, measured 2026-11-14 on a cloud Xeon with a stubbed model: the
-server takes 0.25-0.30 s from exec until its socket accepts (Python importing
-Flask and numpy, which systemd's start paid too), and `launch.ensure` returned in
-0.25 s, so the client adds nothing that shows; it probes the socket every 2 ms. With
-the server up, a request's connection is the same single `connect` as before. The
-launcher's own imports (subprocess, fcntl and the rest) are inside its functions:
-every command imports `launch`, and it adds 0.2 ms to their start. `vinowhisper-server
---stop` is answered by `launch.server_main` before the server module is imported,
-0.1 s with a server running against 0.35 s through it, because the tray waits on it to
-switch language. `systemctl stop` was quicker still, by the cost of starting Python.
+Nothing runs in the background until a client needs inference:
 
-Until 2026-11-14 a systemd socket unit held the socket and started the server.
-That tied it to systemd and cannot work in a Flatpak, which exports no units, so
-the clients do what the socket unit did. `vinowhisper-setup`, an upgrade and
-`vinowhisper-server --stop` remove the old units; until then a leftover socket
-unit keeps working, since the server still takes a socket systemd passes it.
-What systemd gave and this does not: `Restart=on-failure` (a crashed server is
-started by the next request instead, and `failures.py` still keeps a broken
-device from being retried forever) and the journal (below).
+1. Any client (captions, dictation, file transcription, or `vinowhisper-doctor`) connects to `$XDG_RUNTIME_DIR/vinowhisper/server.sock`.
+2. If no server is listening, `vinowhisper/launch.py` spawns `vinowhisper-server` detached in its own session, acquires a lock file beside the socket so concurrent clients start only one instance, waits for the socket to accept connections, and retries. This is when the NPU model load (~10–30s cold) occurs.
+3. The server tracks the timestamp of its last request and exits automatically after `config.IDLE_TIMEOUT_S` (5 minutes).
 
-The device, which the unit's `ExecStart` carried, is in
-`~/.config/vinowhisper/server.json` (`vinowhisper-setup --device` writes it; a
-`--device` on the server overrides it). The server's output goes to
-`~/.local/state/vinowhisper/server.log`, moved to `server.log.old` past 1 MB
-when a server starts.
+`vinowhisper-caption` runs a `/health` check before entering the caption loop so a cold start displays an explicit "waiting for the transcription server" message rather than appearing hung.
 
-Why bother on a 16GB machine for a ~500MB model: the always-on version holds
-that RAM resident regardless of use, and relying on the kernel to swap it to
-zram does not reliably help, since 500MB rarely generates enough pressure on
-16GB to get reclaimed. Scale-to-zero is the deterministic version of the same
-idea. It is a conscious choice, not a default that snuck in.
+### Startup overhead and history
 
-**Measured 2026-10-06, which is why the window is 5 minutes and not 30.** The
-loaded multilingual server is 1.17-1.24GB resident, and 1.06GB of that is
-file-backed: the NPU driver's compiled model blobs, mapped from
-`~/.cache/ze_intel_npu_cache`. Only 100-170MB is anonymous memory. So swap and
-zram cannot help (they hold anonymous pages; zram was on and held nothing), and
-the blobs are clean cache the kernel can drop anyway. What helps is unloading.
-With the blob cache warm, a stopped server answered its first `/health` with
-the model loaded in 0.69s (once, on this laptop, to `/health` and not to the
-first decoded caption). The 40-70s cold load is the first compile, or the first
-one after an OpenVINO or driver upgrade changes the cache key.
+Measured 2026-11-14 on a cloud Xeon with a stubbed model:
 
-`vinowhisper-caption` health-checks the server before starting the loop, so a
-cold start shows up as an explicit "waiting for the transcription server"
-line rather than as the captions appearing to be broken for 30 seconds.
+- `vinowhisper-server` takes 0.25–0.30s from `exec` until the socket accepts (Python importing Flask and NumPy). `launch.ensure` probes the socket every 2 ms and returns in ~0.25s; once running, client requests take a single `connect()`.
+- `launch.py` imports `subprocess`, `fcntl`, and related modules inside its functions, adding ~0.2 ms to CLI startup.
+- `launch.server_main` handles `vinowhisper-server --stop` before importing the server module (~0.1s with a running server vs. 0.35s when importing the full server), keeping language switches responsive in the tray.
 
-**Stopping it.** There's no daemon to manage day to day: the server exits
-after `IDLE_TIMEOUT_S` on its own. To drop the resident NPU process now:
+Before 2026-11-14, a systemd user socket unit managed the socket and started the server. Client-side activation removed the systemd dependency and made Flatpak packaging possible (Flatpak cannot export systemd units). `vinowhisper-setup`, upgrades, and `vinowhisper-server --stop` clean up old systemd units automatically, while the server still accepts sockets passed by an existing unit until removed. Without systemd, `Restart=on-failure` is replaced by starting a fresh server on the next client request (`failures.py` still prevents repeated retries on a broken device).
+
+- **Device config:** Stored in `~/.config/vinowhisper/server.json` (written by `vinowhisper-setup --device`; overridden by `--device` on `vinowhisper-server`).
+- **Logs:** Written to `~/.local/state/vinowhisper/server.log` and rotated to `server.log.old` on startup once past 1 MB.
+
+### Why a 5-minute idle timeout
+
+Measured 2026-10-06 on the multilingual server: the resident server uses 1.17–1.24 GB of RAM, of which 1.06 GB is file-backed compiled NPU model blobs mapped from `~/.cache/ze_intel_npu_cache` and only 100–170 MB is anonymous memory. Because swap and zram only reclaim anonymous pages (zram stayed empty) and ~500 MB–1.2 GB rarely triggers reclaim pressure on a 16 GB machine, unloading the process deterministically after 5 idle minutes is more reliable than keeping an always-on daemon.
+
+With a warm NPU blob cache, restarting a stopped server answered `/health` with the model loaded in 0.69s (single measurement on the Wildcat Lake laptop, to `/health` rather than first decode). The 40–70s cold compile occurs only on the first run or after an OpenVINO or driver update invalidates the cache key.
+
+### Stopping the server manually
+
+To unload the model immediately without waiting for `IDLE_TIMEOUT_S`:
 
 ```bash
 vinowhisper-server --stop
 ```
 
-That posts `/quit` to the socket and waits for the server to go. A decode in
-flight is cut off, as `systemctl stop` did. Nothing is left behind to tear
-down: with no server and no client, nothing is running.
+This sends `POST /quit` over the Unix socket and waits for the process to exit (aborting any in-flight decode).
 
 ## The server itself
 
-- `/transcribe` takes raw little-endian float32 PCM, 16kHz mono and under 30s,
-  with no WAV container, because the client is a rolling buffer that never has
-  a file. A body longer than one `MAX_WINDOW_S` window (plus 4KB) is refused
-  with a 413 before it is read.
-- It sets a `0077` umask and `PR_SET_NO_NEW_PRIVS` on itself when it starts,
-  which is what the old unit's `UMask=0077` and `NoNewPrivileges=yes` did. The
-  unit's seccomp-backed settings (`RestrictAddressFamilies`,
-  `RestrictNamespaces`, `LockPersonality` and the like) went with the unit on
-  2026-11-14 and nothing replaces them. For the record of what could not be
-  added even then: `MemoryDenyWriteExecute` breaks OpenVINO's CPU plugin, which
-  JIT-compiles its kernels, and `PrivateDevices` hides `/dev/accel` and
-  `/dev/dri`, so the NPU and GPU vanish and "auto" lands on the CPU.
-- Calls into the pipeline are serialized by a lock. `WhisperPipeline` is not
-  documented as thread-safe, and the NPU static pipeline holds one set of
-  compiled requests. The server is threaded only so `/health` answers during
-  a decode.
-- The device is chosen before the model loads, so a fallback warning reaches
-  the log and `/health` even when loading then fails on a missing export.
-- It binds the socket itself (`0600`, in a `0700` directory), replacing one
-  left by a server that has exited, refuses to start without
-  `XDG_RUNTIME_DIR`, and refuses if a server is already listening there.
-- It is a Unix socket rather than `127.0.0.1:8099` (the port until 0.6.x)
-  because a localhost port belongs to no user: any local account could
-  connect to it, or bind it first while it was free. `requests` cannot dial a
-  Unix socket, so `client.py` mounts a small adapter that sends every request
-  in its session there. To poke it by hand:
-  `curl --unix-socket "$XDG_RUNTIME_DIR/vinowhisper/server.sock" http://localhost/health`.
+- **Audio endpoint:** `/transcribe` accepts raw little-endian float32 PCM (16 kHz mono, under 30s) with no WAV header, matching the client's rolling buffer. Payloads larger than `MAX_WINDOW_S` plus 4 KB are rejected with HTTP 413 before reading.
+- **Process hardening:** On startup, the server sets umask `0077` and `PR_SET_NO_NEW_PRIVS` (matching the former systemd unit's `UMask=0077` and `NoNewPrivileges=yes`). The former unit's seccomp directives (`RestrictAddressFamilies`, `RestrictNamespaces`, `LockPersonality`) were dropped when the unit was removed on 2026-11-14. Note that `MemoryDenyWriteExecute` breaks OpenVINO's JIT-compiled CPU plugin, and `PrivateDevices` hides `/dev/accel` and `/dev/dri`, preventing NPU and GPU detection.
+- **Concurrency:** Pipeline calls are serialized behind a lock because `WhisperPipeline` is not documented as thread-safe and the NPU static pipeline holds a single set of compiled requests. The HTTP server is threaded only so `/health` responds during an active decode.
+- **Early device selection:** The target device is selected before model loading so fallback warnings appear in logs and `/health` even if loading later fails due to a missing export.
+- **Unix socket transport:** The server binds `$XDG_RUNTIME_DIR/vinowhisper/server.sock` (`0600` inside a `0700` directory), removes stale sockets left by dead servers, refuses to start if `XDG_RUNTIME_DIR` is unset, and refuses to start if another server is already listening. (Until 0.6.x it used `127.0.0.1:8099`, which lacked per-user access control.) `client.py` mounts a custom `requests` adapter for Unix sockets. You can query the server manually with:
 
-## Why OpenVINO GenAI, not ONNX Runtime
+  ```bash
+  curl --unix-socket "$XDG_RUNTIME_DIR/vinowhisper/server.sock" http://localhost/health
+  ```
 
-Never weighed until 2026-09-28, when a sibling tool (ovfetch, built for Gaze,
-which does run ONNX Runtime) claimed vinoWhisper needed it. It does not, and
-switching would cost more than it buys:
+## Why OpenVINO GenAI instead of ONNX Runtime
 
-- Whisper is an encoder, an autoregressive decoder with a KV cache, mel
-  features and a tokenizer. `WhisperPipeline` is all of it, including token
-  streaming and `max_new_tokens`; ONNX Runtime runs graphs, and the loop
-  would be ours.
-- The NPU wants static shapes. `STATIC_PIPELINE=True` with the
-  `--disable-stateful` export is Intel's NPU path for Whisper; ONNX Runtime's
-  OpenVINO execution provider reaches the same compiler with that work moved
-  into this repo.
-- Intel's `onnxruntime-openvino` bundles its own OpenVINO, 2025.4.1 as of
-  2026-09-28, and this project's floor is 2026.4.1.
-- Both end in the same NPU plugin and compiler, so there is no speed to gain.
+Evaluated 2026-09-28 (when sibling tool `ovfetch`, built for ONNX Runtime workloads like Gaze, noted ONNX Runtime as an option). Switching would add maintenance without improving performance:
 
-ONNX Runtime would be a candidate only as the non-Intel backend, where
-whisper.cpp over Vulkan is the current pick (see `docs/hardware.md`).
+- **Complete Whisper loop:** `WhisperPipeline` handles mel feature extraction, encoder execution, autoregressive decoding with KV caching, tokenization, token streaming, and `max_new_tokens`. ONNX Runtime executes graphs only, requiring vinoWhisper to reimplement the loop.
+- **Static NPU shapes:** `STATIC_PIPELINE=True` with `--disable-stateful` is Intel's supported NPU path for Whisper; using ONNX Runtime's OpenVINO execution provider would reach the same compiler while moving static-pipeline management into this repository.
+- **OpenVINO version floor:** Intel's `onnxruntime-openvino` bundled OpenVINO 2025.4.1 as of 2026-09-28, whereas vinoWhisper requires OpenVINO 2026.4.1+.
+- **Identical backend:** Both invoke the same OpenVINO NPU plugin and compiler, offering no speed advantage.
+
+ONNX Runtime would only be considered for non-Intel hardware, where `whisper.cpp` over Vulkan is currently the preferred candidate (see [hardware.md](hardware.md)).
 
 ## Power
 
-Measured 2026-09-12 on the Wildcat Lake laptop, per process over 15 to 30s,
-with nothing being said:
+Measured 2026-09-12 on the Wildcat Lake laptop over 15–30s intervals with no audio playing:
 
-| | Overlay visible, silence | Overlay hidden |
+| Component | Overlay visible (silence) | Overlay hidden |
 |---|---|---|
 | NPU | suspended | suspended |
-| Speaker sink | running, held by the capture | suspended |
+| Speaker sink | running (held by capture) | suspended |
 | `vinowhisper-tray` | 3.7 wakeups/s | 0 |
 | `vinowhisper-caption` + `pw-record` | 2.2 + 51.5 wakeups/s | not running |
 | `vinowhisper-server` | 0 | 0 |
 
-- **A loaded model does not hold the NPU awake.** The kernel parks it 100ms
-  after the last inference (`/sys/class/accel/accel0/device/power`), and the
-  caption loop skips inference below the silence gate, so a resident server
-  costs RAM, not NPU power.
-- **The cost of a visible overlay is the capture.** A stream on the sink
-  monitor keeps the audio hardware running even when nothing plays, and
-  `pw-record` wakes at PipeWire's graph clock (quantum 1024 at 48kHz, about 47
-  times a second), which it does not set. Hiding stops the capture, and the
-  sink suspends within seconds.
-- **Hidden, nothing wakes** apart from the server's idle watchdog, once every
-  30s until it exits. Before this was measured, the GUI ticked every second
-  for a counter it was not showing, the server woke twice a second for
-  `serve_forever`'s shutdown poll, and every silence event redrew the overlay.
+- **Idle NPU power:** Holding a loaded model costs RAM, not NPU power. The kernel suspends the NPU 100 ms after the last inference (`/sys/class/accel/accel0/device/power`), and the caption loop skips inference below the silence gate.
+- **Visible overlay cost:** An active sink-monitor capture keeps the audio hardware awake even in silence, and `pw-record` wakes at PipeWire's graph clock (quantum 1024 at 48 kHz, ~47 times/s). Hiding the overlay stops capture and allows the speaker sink to suspend within seconds.
+- **Hidden overlay cost:** Nothing wakes except the server's idle watchdog once every 30s until exit. (Earlier versions woke more frequently due to a 1s GUI counter timer, `serve_forever`'s 0.5s shutdown poll, and redrawing on every silence event; all three were fixed after these measurements.)

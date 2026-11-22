@@ -1,26 +1,16 @@
 # Contributing
 
-This was built on one Fedora/KDE laptop with an Intel NPU. The most useful
-thing you can bring is what it does on *your* machine, since that is the one
-thing I cannot test from here.
+vinoWhisper is developed on a single Fedora/KDE laptop with an Intel NPU. Reports from other distributions, audio stacks, and hardware are especially helpful.
 
-## Most useful
+## High-value reports
 
-1. **A distro correction.** `vinowhisper/distro.py` maps capabilities to
-   package names for eight families. Only Fedora is confirmed by use; the rest
-   came from package indexes. If a command it printed was wrong for your
-   distro, [open a distro issue](https://github.com/karanshukla/vinoWhisper/issues/new?template=distro_support.yml).
-   It is usually a one-line fix.
-2. **A PulseAudio report.** The `parec` backend is written and tested, and has
-   never run on a PulseAudio-only machine.
-3. **Other hardware.** Other NPU generations, Arc GPUs, the CPU fallback.
-   Attach `vinowhisper-doctor --json` and a few cycles of
-   `vinowhisper-caption --debug`.
+1. **Distribution package fixes:** `vinowhisper/distro.py` maps dependencies to package names across eight distro families, but only Fedora has been tested directly. If a suggested command is wrong for your distribution, [open a distro issue](https://github.com/karanshukla/vinoWhisper/issues/new?template=distro_support.yml).
+2. **PulseAudio testing:** The `parec` capture backend is covered by unit tests, but has not been run on a PulseAudio-only system.
+3. **Other hardware:** Reports from other Intel NPU generations, Arc GPUs, or CPU fallback runs. Include `vinowhisper-doctor --json` and a few cycles of `vinowhisper-caption --debug`.
 
-## Setup
+## Development setup
 
-For anything that does not touch the model (the stitcher, the UI, the distro
-table, capture argv), you do not need OpenVINO. This is what CI does:
+You do not need OpenVINO to work on the stitcher, terminal UI, distro tables, or capture command building. CI uses this minimal environment:
 
 ```bash
 uv venv
@@ -28,34 +18,25 @@ uv pip install --group dev
 .venv/bin/python -m pytest
 ```
 
-For the real thing, with OpenVINO and the export tooling:
+For full runtime and model export dependencies:
 
 ```bash
 uv sync --extra export
 uv run vinowhisper-setup --dry-run
 ```
 
-The overlay in `tray/` and the settings window in `gui/` are plain cargo:
-`cargo test` from either directory. To run your build as the installed one,
-see [Running your own build](docs/development.md#running-your-own-build).
+The overlay (`tray/`) and settings window (`gui/`) are standard Cargo projects—run `cargo test` in either directory. To install and run your local build, see [Running your own build](docs/development.md#running-your-own-build).
 
-## Before you push
+## Before pushing
 
 ```bash
 uv run poe check    # ruff, ruff format --check, mypy, pytest
 ```
 
-- Tests run with no NPU, no audio server and no OpenVINO. If a change can
-  only be verified on hardware, say so in the PR instead of faking a test.
-- A red `test_characterization_*` test means a deliberate oddity changed.
-  Say in the PR whether that was the point.
-- Comments are the last resort: extract, name, or pin a rule with a test pair
-  first, and cite the test from the code it governs. See
-  [docs/comment-style.md](docs/comment-style.md); the Doc Links CI job checks the
-  citations. Longer reasoning goes in `docs/`.
-- Measured claims carry a date.
-- Commits are conventional (`feat:`, `fix:`, `docs:`, ...); the changelog is
-  generated from them.
+- **No hardware in unit tests:** Tests run without an NPU, audio server, or OpenVINO. If a change requires hardware verification, state that in the PR rather than adding a mock that hides it.
+- **Characterization tests:** A failing `test_characterization_*` test indicates an intentional behavior changed. Note in the PR whether the change was intended.
+- **Code comments:** Extract helper functions, use clear names, or pin invariants with tests before adding comments, and cite governing tests from code. See [docs/comment-style.md](docs/comment-style.md); the Doc Links CI job verifies these citations. Put longer design rationale in `docs/`.
+- **Dated measurements:** Include the date on any benchmark or hardware measurement.
+- **Commit format:** Use conventional commits (`feat:`, `fix:`, `docs:`, etc.), which are used to generate `CHANGELOG.md`.
 
-[docs/development.md](docs/development.md) has the rest: why the build config
-looks the way it does, what CI runs, and how releases are cut.
+See [docs/development.md](docs/development.md) for packaging details, CI jobs, and the release process.

@@ -1,29 +1,23 @@
-# The terminal captions
+# Terminal captions
 
-`vinowhisper-caption` prints confirmed words into the terminal's own
-scrollback, so the transcript survives quitting and native search and
-selection work on it. Only the status bar at the bottom redraws.
+`vinowhisper-caption` prints confirmed words directly into your terminal's scrollback buffer and redraws only the status bar at the bottom. Confirmed text survives quitting and works with native terminal search, selection, and piping.
 
-That is why it uses Rich and not Textual. A word is never revised once
-printed, so the transcript belongs in scrollback and only one line needs a
-live region, which is `rich.live.Live`. Textual owns the screen, so the
-transcript would live in a widget that is gone on quit and cannot be piped.
+The UI uses `rich.live.Live` rather than a full-screen TUI framework like Textual because confirmed words are append-only: only the single bottom status line needs live redraws, while full-screen frameworks capture scrollback and break piping.
 
-- **Paragraphs are inferred.** A pause well above a normal gap between
-  sentences starts a new paragraph, and so does a sentence end once a
-  paragraph is about a screenful long. Sentence ends skip common abbreviations
-  and initialisms ("U.S.", "F.B.I."); a miss only delays the break to the next
-  sentence.
-- **`--transcript [PATH]` saves the words to a file as well** (issue #36,
-  added 2026-10-07), whichever renderer is showing them, `--json` included.
-  It is off unless asked for, because it writes whatever was playing to disk.
-  With no PATH it writes to `$XDG_DATA_HOME/vinowhisper/transcripts/`. A
-  directory gets a new `YYYY-MM-DD-HHMMSS.txt` per session (local time), which
-  becomes a `YYYY-MM-DD-HHMMSS.vwsession` bundle when the session ends and is
-  then summarised in the background ([sessions.md](sessions.md)); a path
-  that is not a directory is a file and is appended to, with a new header each
-  session. A path that does not exist yet and has no extension is taken as a
-  directory.
+## Display behavior
+
+- **Paragraph breaks:** Paragraphs are inferred automatically (`paragraphs.ParagraphBreaker`, shared with the status bar). A pause well above normal inter-sentence spacing starts a new paragraph, as does a sentence end once a paragraph reaches roughly a screenful. Common abbreviations and initialisms ("U.S.", "F.B.I.") are skipped; a missed break simply waits for the next sentence boundary.
+- **Level meter:** Spans -60 to 0 dBFS. The 0.002 RMS silence gate sits at roughly -54 dBFS.
+- **Terminal resizing:** Lines already printed into scrollback keep their original wrap width rather than rewrapping on resize.
+- **Plain and piped output:** `--plain`, `--debug`, and a piped `stdout` omit the status bar so output can be redirected cleanly to a file.
+
+## Saving transcripts (`--transcript`)
+
+Added 2026-10-07 (issue #36). `--transcript [PATH]` is off by default and works with every output mode, including `--json`.
+
+- **Default directory:** With no `PATH`, files are written to `$XDG_DATA_HOME/vinowhisper/transcripts/`.
+- **Directory vs. file:** When given a directory (or a nonexistent path with no file extension), each session writes to a new local-time `YYYY-MM-DD-HHMMSS.txt` file, which is converted into a `YYYY-MM-DD-HHMMSS.vwsession` bundle and summarised in the background when the session ends (see [sessions.md](sessions.md)). When given a file path, new sessions append to it under a new header.
+- **Format:** One unwrapped line per paragraph, preceded by a session header:
 
   ```
   vinoWhisper transcript, 2026-09-29 14:02, system audio, NPU
@@ -33,24 +27,8 @@ transcript would live in a widget that is gone on quit and cannot be piped.
   [01:12] Next paragraph after a real pause ...
   ```
 
-  One line per paragraph, no hard wrapping. Paragraphs break by the rules
-  above (`paragraphs.ParagraphBreaker`, shared with the status bar). The stamp is
-  the time since the model was ready, when the paragraph's first word was
-  confirmed, which runs about two cycles behind the speech. Only confirmed and
-  flushed words are written, never the dimmed pending ones, so the file is
-  append-only for the same reason scrollback is. It is flushed after every
-  cycle. The file is created at the first word, so a session with no speech
-  leaves nothing behind. Ctrl+C and hiding the overlay (SIGINT) flush the
-  tail; a SIGTERM or a kill loses what was still pending, a couple of seconds.
-  Files are 0600 in a 0700 directory it creates. Nothing deletes them: a
-  minute of speech is about 1KB. Dictation is not written.
-- **The level meter spans -60 to 0 dBFS.** The silence gate, 0.002 rms, sits
-  at about -54 dBFS.
-- **Resizing does not rewrap old lines.** Lines already in scrollback keep the
-  width they were printed at, the standing cost of using scrollback rather
-  than a widget.
-- **`--plain`, `--debug` and a piped stdout** print plain lines without the
-  status bar, so redirecting to a file works.
+- **Timestamps and flushing:** Each `[MM:SS]` timestamp records the elapsed time since the model became ready when the paragraph's first word was confirmed (roughly two cycles behind live speech). Only confirmed and flushed words are written (never pending dimmed text), and output is flushed after every cycle. The file is created on the first confirmed word, so silent sessions create no file.
+- **Shutdown and permissions:** `Ctrl+C` and hiding the overlay (`SIGINT`) flush pending tail words; `SIGTERM` or `SIGKILL` loses the couple of seconds still pending. Created files use mode `0600` inside `0700` directories. Transcripts are never deleted automatically (~1 KB per minute of speech). Dictation text is never written to transcript files.
 
 ## Calls: `--source both` (issue #118, added 2026-11-22)
 
@@ -71,6 +49,6 @@ lane costs nothing.
   `events.jsonl`. `vinowhisper-replay --restitch` redoes each lane;
   `--sweep` needs `--lane you|them`.
 - Not decided here: the mic hears the speakers, so without headphones their
-  words appear in both lanes. Echo cancellation is #216 (`echo/`).
-- Whether to save transcripts by default in this mode is left to the
-  existing `save_transcripts` setting.
+  words appear in both lanes. Echo cancellation is #216.
+- Whether to save transcripts by default in this mode is left to the existing
+  `save_transcripts` setting.

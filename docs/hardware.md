@@ -1,25 +1,18 @@
-# Hardware, and what happens when you don't have it
+# Hardware
 
-The NPU is the point. 16 TOPS is a coprocessor, not a GPU, and
-whisper-small.en is one of the genuinely useful models that fits in it.
-Everything below it exists so a broken driver degrades
-the tool instead of bricking it. The latency design assumes NPU-class cycle
-times, and the two-cycle commit policy doubles any regression.
+vinoWhisper targets the Intel NPU so live captioning can run continuously without competing with the CPU or GPU. GPU and CPU fallbacks exist so a missing or broken NPU driver degrades latency instead of blocking use. Because the two-cycle commit policy doubles cycle latency, slower devices directly increase caption lag.
 
-| Device | Selected | Model export | What you get |
+## Device selection and benchmarks
+
+| Device | Priority | Model export | Measured performance |
 |---|---|---|---|
-| **NPU** (`Intel(R) AI Boost`) | first | `--disable-stateful` | 0.70s per 12s window on LibriVox speech, measured 2026-09-12 (~1.19s per 30s window, 2026-08-03) |
-| **GPU** (Arc / Xe) | second | stateful | 0.95s per 12s window on the Wildcat Lake Xe3 iGPU (p90 1.15-1.31s) with compute-runtime 26.22, measured 2026-09-12. Loads in 2.0s warm, 8.0s the first time. 2 of 15 loads segfaulted inside the GPU plugin's `compile_model`; decoding never failed |
-| **CPU** | last resort | stateful | 2.30s per 12s window (p90 2.68s) on a Core 5 320, measured 2026-09-12, so lag lands near 4.6s. Competes with everything else on the machine |
+| **NPU** (`Intel(R) AI Boost`) | 1st | `--disable-stateful` | 0.70s per 12s window on LibriVox speech (2026-09-12); ~1.19s per 30s window (2026-08-03) |
+| **GPU** (Arc / Xe) | 2nd | `stateful` | 0.95s per 12s window on Wildcat Lake Xe3 iGPU (p90 1.15–1.31s, compute-runtime 26.22, 2026-09-12); loads in 2.0s warm / 8.0s cold; 2 of 15 loads segfaulted inside OpenVINO's GPU `compile_model` (decoding never failed) |
+| **CPU** | 3rd | `stateful` | 2.30s per 12s window (p90 2.68s) on Core 5 320 (2026-09-12), giving ~4.6s lag; competes with other workloads |
 
-Selection is automatic (`--device auto`). An *explicit* `--device NPU` that
-isn't available is refused rather than quietly downgraded, because someone who
-typed it wants to know it didn't happen. The order itself is not configurable:
-there is no machine where the GPU over the NPU is the right default for this
-workload.
+By default (`--device auto`), selection walks NPU → GPU → CPU. An explicit `--device NPU` fails rather than silently downgrading if the NPU is unavailable.
 
-A fallback is never silent. It appears in the server's log (`~/.local/state/vinowhisper/server.log`), in `/health`,
-in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
+Fallbacks are always reported in `~/.local/state/vinowhisper/server.log`, `/health`, `vinowhisper-doctor`, and the UI status bar (red border and `⚠` warning):
 
 ```
 ╭─ vinoWhisper CPU ────────────────────────────────────────────────────────────╮
@@ -30,46 +23,24 @@ in `vinowhisper-doctor`, and on the status bar as a red border and a `⚠` line:
 
 ## When a device enumerates and then fails
 
-OpenVINO's device list says what is present, not what works. The documented
-case is below: a package reinstall rewrites the level-zero symlink, the NPU
-still enumerates, and `compile_model()` fails after the 10-30s model load. Left
-alone, the server re-pays that load on every start and fails again, and every
-`vinowhisper-caption` waits out a model load to be told so. (Under the systemd
-units it ran from until 2026-11-14, `Restart=on-failure` retried and the start
-limit took the socket down with it.)
+OpenVINO can enumerate a device that later fails during `compile_model()` (for example, if a package reinstall reverts a Level Zero symlink). Without tracking failures, every server start would repeat a 10–30s load only to fail again (and under the pre-2026-11-14 systemd unit, `Restart=on-failure` hit its start limit and stopped the socket).
 
-So a device that fails to build a pipeline is written to
-`~/.config/vinowhisper/failed-devices.json` with the time and the first line
-of the error, and `--device auto` skips it from the next start on. The skip is
-reported the same way a fallback is: the server's log, `/health`, the `Ready` event,
-the status bar's `⚠` line, and the doctor. A missing or unreadable file means
-nothing has failed; the NPU is only ever skipped because a load on it said so.
+When pipeline creation fails on a device, the server records the device name, timestamp, and first error line in `~/.config/vinowhisper/failed-devices.json`. Subsequent `--device auto` starts skip that device and report the skip in logs, `/health`, the `Ready` event, the status bar, and `vinowhisper-doctor`. If the file is missing or unreadable, no device is skipped.
 
-A device reset is not a failure. Another program's fault resets the NPU for
-everyone, so when a decode dies with a device-lost error the server loads the
-model again on the same device and records nothing in `failed-devices.json`.
-If the device does not come back and it was picked automatically, the server
-falls back to the next one for the rest of that run, and the next start picks
-again. A device asked for by name is never swapped. The reload runs outside
-the `except` block that caught the error: that block's traceback holds the
-failed call's frame, and with it the dead pipeline, which would otherwise stay
-in memory and on the device through the reload.
-`tests/test_device_reset.py` pins each of those.
+**Device resets are handled differently:** If another process faults and resets the NPU, a decode fails with a device-lost error. The server reloads the pipeline on the same device without writing to `failed-devices.json`. If the reload fails under `--device auto`, it falls back to the next device for the remainder of that run and retries the NPU on the next server start. An explicitly requested device is never swapped. The reload runs outside the `except` block so the exception traceback does not retain a reference to the dead pipeline (`tests/test_device_reset.py`).
 
-Two things clear the mark. `vinowhisper-doctor` clears every mark it finds,
-whether or not it found the fix, since the doctor is what gets run after a
-repair; if the fault is still there, the next start re-marks it after one
-attempt. And a load that succeeds on a marked device clears its own mark. An
-explicit `--device NPU` still tries the NPU, mark or no mark, with a warning
-saying so, which is the manual way to re-test after a fix.
+**Clearing failure marks:**
 
-**The two model exports are not interchangeable.** The NPU needs
-`--disable-stateful`, which produces the separate `decoder_with_past` KV-cache
-submodel its static pipeline requires. That same export cannot run on CPU at
-all: it fails on a `beam_idx` port error, which is incidentally how the NPU
-was confirmed to be doing real work rather than silently falling back. So the
-CPU/GPU path needs a second export in a second directory, and the wizard, the
-doctor and the server all check which one you have against the device you got.
+- Running `vinowhisper-doctor` clears all recorded marks (so a repaired system is re-tested on the next start).
+- A successful model load clears its own mark.
+- Explicit `--device NPU` bypasses the mark with a warning, allowing manual testing after a fix.
+
+## Model exports
+
+The NPU and CPU/GPU exports are not interchangeable:
+
+- **NPU (`--disable-stateful`):** Produces a separate `decoder_with_past` KV-cache submodel required by OpenVINO's static NPU pipeline. Running it on CPU fails with a `beam_idx` port error.
+- **CPU / GPU (`stateful`):** Stored in a separate directory. `vinowhisper-setup`, `vinowhisper-doctor`, and the server verify that the installed export matches the active device.
 
 ```bash
 ./scripts/convert_model.sh --variant npu        # ~/.local/share/vinowhisper/models/whisper-small.en-ov
@@ -78,147 +49,66 @@ doctor and the server all check which one you have against the device you got.
 ./scripts/convert_model.sh --model openai/whisper-small   # multilingual, ...whisper-small-ov
 ```
 
-optimum writes a full-size intermediate copy of the model to `$TMPDIR` during
-the export, and `/tmp` is tmpfs (RAM) on Fedora. Exporting SmolLM3-3B put
-6.15 GB there on 2026-10-27 and set off a global OOM kill. So the script and
-`vinowhisper-setup` point `TMPDIR` at `~/.cache/vinowhisper/export-tmp/`, on
-disk, and remove it afterwards, including after a failure. Where `systemd-run`
-works they also run the export in a user scope capped at 90% of available
-memory, with no swap, so an export that is too big gets killed on its own
-instead of the kernel choosing what to kill.
+During export, `optimum` writes a full-size intermediate copy to `$TMPDIR`. Because `/tmp` is RAM-backed `tmpfs` on Fedora (exporting SmolLM3-3B placed 6.15 GB there on 2026-10-27 and triggered an OOM kill), `convert_model.sh` and `vinowhisper-setup` set `TMPDIR` to `~/.cache/vinowhisper/export-tmp/` on disk and clean it up afterward. Where `systemd-run` is available, exports also run inside a user scope capped at 90% of available memory with no swap so an oversized export fails cleanly instead of triggering a system OOM kill.
 
-**The model is whisper-small.en, on purpose.** Benchmarked against base.en and
-tiny.en on this NPU (2026-08-03, same clip): base.en was 2.6x faster and
-tiny.en 3.8x, and both made real transcription errors (garbled and misheard
-words, and tiny.en repeated itself at the end). small.en was the only one with
-none.
+**Why `whisper-small.en` is the default:** Benchmarked on the NPU against `base.en` and `tiny.en` on the same clip (2026-08-03), `base.en` was 2.6x faster and `tiny.en` 3.8x faster, but both produced misheard/garbled words and `tiny.en` looped at the end. `small.en` had no errors on the clip.
 
-French, German and Spanish use the multilingual `whisper-small` instead
-(`vinowhisper-server --language fr|de|es|auto`, and `--task translate` for
-English captions). It lives in its own directories, so both exports can sit
-side by side. Only the CPU device has run it (2026-10-06); the NPU static
-pipeline has not been tried on it.
+Multilingual `whisper-small` (`vinowhisper-server --language fr|de|es|auto`, `--task translate`) lives in separate directories alongside the English export. As of 2026-10-06 it has been tested only on CPU, not on the NPU static pipeline.
 
 ## When the GPU doesn't show up
 
-OpenVINO drives Intel GPUs through OpenCL, so it needs Intel's compute
-runtime, which a desktop install usually lacks: Mesa covers graphics and
-Vulkan, not OpenCL compute. Without it OpenVINO lists `CPU` and `NPU`, and
-nothing says why. That was this laptop until 2026-09-12: an Xe3 iGPU
-(`8086:fd80`, driver `xe`), the OpenCL ICD loader, and no
-`/etc/OpenCL/vendors` at all.
+OpenVINO uses OpenCL to drive Intel GPUs, which requires Intel's compute runtime (Mesa provides graphics and Vulkan, not OpenCL compute). Without `/etc/OpenCL/vendors` configured, OpenVINO lists only `CPU` and `NPU` with no warning (observed on Wildcat Lake Xe3 iGPU `8086:fd80`, driver `xe`, 2026-09-12).
 
-`vinowhisper-doctor` reads the PCI bus from sysfs and compares it with what
-OpenVINO enumerated, so it tells these apart:
+`vinowhisper-doctor` compares PCI devices in `sysfs` against OpenVINO's device list:
 
-| On the PCI bus | OpenVINO sees it | Doctor says |
+| PCI device | Visible to OpenVINO | Doctor status |
 |---|---|---|
-| Intel GPU | yes | `ok` |
-| Intel GPU | no | `warn`, names what is missing (no ICD, or only another vendor's) and prints the install command for your distro |
-| AMD or NVIDIA GPU | never | `??`, since OpenVINO only drives Intel GPUs, so it is not a fallback |
+| Intel GPU | Yes | `ok` |
+| Intel GPU | No | `warn` (identifies missing ICD and prints your distro's install command) |
+| AMD or NVIDIA GPU | Never | `??` (OpenVINO only supports Intel GPUs) |
 
-On Fedora the runtime is one package, `sudo dnf install intel-compute-runtime`,
-a metapackage that pulls in `intel-opencl` and `intel-level-zero`. There is no
-`level-zero` package on Fedora (the loader is `oneapi-level-zero`), which the
-install lines here named until 2026-09-12, so they failed outright. Wildcat
-Lake and Panther Lake need compute-runtime 26.22 or later; Fedora 44 ships
-26.22.
+On Fedora, install `sudo dnf install intel-compute-runtime`, which pulls in `intel-opencl` and `intel-level-zero` (Fedora names the loader `oneapi-level-zero`, not `level-zero`). Wildcat Lake and Panther Lake require compute-runtime 26.22 or newer (shipped in Fedora 44).
 
 ## Other vendors
 
-Neither has a path yet, and both are detected rather than ignored:
+- **AMD NPUs (XDNA, `amdxdna`):** Detected and reported as unsupported. OpenVINO has no AMD NPU plugin, and as of 2026-09-12 no Linux runtime runs Whisper small on XDNA (FastFlowLM supports XDNA2 and `large-v3-turbo` only). Because Intel reuses PCI class `0x1180` for thermal/telemetry devices, detection checks the `amdxdna` driver and its ID table rather than PCI class.
+- **AMD and NVIDIA GPUs:** Require a non-OpenVINO backend; `whisper.cpp` over Vulkan is the leading candidate because it covers Intel, AMD, and NVIDIA without CUDA or ROCm.
 
-- **AMD NPUs** (XDNA, driver `amdxdna`) are reported as present and unusable.
-  OpenVINO has no AMD NPU plugin, and as of 2026-09-12 no Linux runtime runs
-  Whisper small on one. The only Linux Whisper on an AMD NPU is FastFlowLM,
-  which is XDNA2-only and large-v3-turbo-only. AMD NPUs report PCI class
-  `0x1180`, which Intel reuses for thermal and telemetry devices, so they are
-  recognised by the `amdxdna` driver or its ID table, not by class.
-- **AMD and NVIDIA GPUs** need an engine other than OpenVINO. whisper.cpp over
-  Vulkan is the candidate, since it reaches all three vendors without ROCm or
-  CUDA.
-
-The wizard no longer offers the Intel NPU driver on a machine with no Intel
-NPU, and offers the GPU runtime where that is what's actually missing.
+`vinowhisper-setup` skips Intel NPU driver prompts on systems without an Intel NPU and offers the Intel GPU runtime only when an Intel GPU is missing OpenCL support.
 
 ## When the NPU doesn't show up
 
-`vinowhisper-doctor` walks it in fix-first order rather than reporting "no NPU"
-and stopping: the `/dev/accel/accel0` node (does the in-tree `intel_vpu` driver
-have the device?), its permissions (are you in the `render` group?), the
-`intel_vpu` module, and then the userspace driver package for your distro, with
-[Intel's release page](https://github.com/intel/linux-npu-driver/releases) as
-the authoritative fallback. Those have different fixes and are indistinguishable
-from OpenVINO's device list alone. A missing `intel_vpu` in `/proc/modules` is
-weak evidence on its own, since the driver can be built into the kernel; the
-`/dev/accel` node is the check that decides.
+`vinowhisper-doctor` checks NPU prerequisites in order so each failure mode produces a specific fix:
+
+1. `/dev/accel/accel0` exists (verifies the in-tree `intel_vpu` kernel driver bound the device).
+2. Current user has permissions on `/dev/accel/accel0` (membership in the `render` group).
+3. `intel_vpu` module presence in `/proc/modules` (advisory only, since it may be built into the kernel; `/dev/accel` is authoritative).
+4. Userspace driver package for your distro, with [Intel's linux-npu-driver releases](https://github.com/intel/linux-npu-driver/releases) as fallback.
 
 ## When the userspace half is missing
 
-The kernel checks above can all pass, OpenVINO can enumerate
-`Intel(R) AI Boost`, and `compile_model()` can still fail. The NPU stack has a
-userspace half that device enumeration does not exercise, and it goes wrong two
-ways, both silently:
+Even when `/dev/accel/accel0` exists and OpenVINO enumerates `Intel(R) AI Boost`, `compile_model()` can fail silently for two userspace reasons:
 
-- **The compiler libraries are absent.** No distro packages the NPU
-  compiler. Fedora's `intel-npu-driver` rpm ships the level-zero backend and
-  stops there, and the same holds for every family in the table. Intel ships
-  it only inside `intel-driver-compiler-npu`, in the release archive, so
-  waiting for a package upgrade never fixes it. Its file name depends on the
-  driver: 1.32.0 loads `libnpu_driver_compiler.so`, while 1.35.0 loads
-  `libopenvino_intel_npu_compiler_loader.so` (which maps
-  `libopenvino_intel_npu_compiler.so`) and falls back to the 1.32 name. The
-  doctor reads which names the installed backend carries and checks for
-  those, so a newer compiler sitting beside an older backend is not mistaken
-  for a working pair. The failure is `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` on
-  every compile, which looks like a version mismatch and is not one: measured
-  2026-09-28, Fedora's 1.32.0 backend failed on every OpenVINO from 2025.4 to
-  2026.4, and Intel's 1.32.0 with its own compiler passed on all of them.
-- **The level-zero backend is older than the silicon.** An older backend
-  enumerates the device perfectly well and then fails at compile time with
-  `Missing upper bound for one or more nodes`, which reads as a model problem
-  and is actually a graph-extension protocol mismatch.
+- **Missing NPU compiler libraries:** Linux distributions do not package Intel's NPU compiler (Fedora's `intel-npu-driver` and other distro packages ship only the Level Zero backend). Intel distributes the compiler inside `intel-driver-compiler-npu` in its release archives. Driver 1.32.0 loads `libnpu_driver_compiler.so`, whereas 1.35.0 loads `libopenvino_intel_npu_compiler_loader.so` (which opens `libopenvino_intel_npu_compiler.so`) and falls back to the 1.32 name. `vinowhisper-doctor` inspects which symbol names the installed backend expects so mismatched versions are caught. Without the compiler, every compile fails with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` (measured 2026-09-28: Fedora's 1.32.0 backend failed across OpenVINO 2025.4–2026.4, while Intel's 1.32.0 paired with its compiler passed on all of them).
+- **Level Zero backend older than the silicon:** An outdated backend enumerates the NPU and then fails during compile with `Missing upper bound for one or more nodes` (a graph-extension protocol mismatch). A common trigger is reinstalling the distro driver package, which overwrites the soname symlink back to the older packaged `.so` and orphans a manually installed newer library.
 
-The second one has a nastier variant. A hand-installed `.so` is untracked by
-the package manager, so reinstalling the distro package rewrites the soname
-symlink back to the packaged version and orphans the newer one, turning a
-working machine into that failure with nothing on screen to say why.
-
-`vinowhisper-doctor` reports both, and reports them whether or not the NPU
-enumerated, because "the NPU is there" is not evidence that either is right:
+`vinowhisper-doctor` checks both libraries unconditionally (searching `LD_LIBRARY_PATH` first to account for `setupvars.sh` toolkits) and reads embedded version strings from the `.so` files:
 
 ```
 [  ok] npu: level-zero NPU backend   /usr/lib64/libze_intel_npu.so.1.35.0 (1.35.0.20260722)
 [  ok] npu: NPU compiler             /usr/lib64/libopenvino_intel_npu_compiler.so (OpenVINO 2026.3.0-22159-4089686065a)
 ```
 
-Each library carries its own provenance as an embedded string, which is where
-those versions come from. The search tries `LD_LIBRARY_PATH` first, since a
-toolkit sourced through `setupvars.sh` is how these libraries end up outside
-the system directories. A reverted symlink prints the `ln -sf` that selects
-the newer backend again. A missing compiler prints the fix:
+For a reverted symlink, the doctor prints the `ln -sf` command to restore it. For a missing compiler, the recommended fix uses [ovfetch](https://github.com/karanshukla/ovfetch):
 
 ```bash
-vinowhisper-setup --ovfetch   # ovfetch 0.6.0 or newer
-ovfetch npu install           # into ~/.local/lib/ovfetch-npu
+vinowhisper-setup --ovfetch   # installs ovfetch 0.6.0+
+ovfetch npu install           # installs compiler (and driver for 1.35+) into ~/.local/lib/ovfetch-npu
 ```
 
-[ovfetch](https://github.com/karanshukla/ovfetch) takes the compiler for the
-installed driver (or, for 1.35 and newer, the driver and compiler together,
-since that driver only opens a compiler from its own directory) out of Intel's
-linux-npu-driver release, checks the tarball against its ledger, and keeps the
-`.so` files in `~/.local/lib/ovfetch-npu`. No root, no `dpkg`, nothing for a
-package reinstall to revert, and on an image-based system nothing to layer.
-Those libraries are not on the linker path, so vinoWhisper loads them itself
-(`ovfetch.preload`): each line of the prefix's `ovfetch-preload.txt`, in that
-order, with `RTLD_GLOBAL`, after `import openvino` and before the pipeline or
-the doctor's device scan opens the NPU. When the driver then asks for a library
-by soname, the dynamic linker hands back the copy already loaded. The doctor
-searches that prefix ahead of the system directories, as the loader effectively
-does, and `ovfetch detect` reports it as `npu_prefix`.
+`ovfetch npu install` extracts the verified `.so` files from Intel's release archive into `~/.local/lib/ovfetch-npu` without root, `dpkg`, or image layering (for 1.35+, it installs both driver and compiler together because 1.35+ loads the compiler only from its own directory). Because `~/.local/lib/ovfetch-npu` is outside the system linker path, vinoWhisper preloads each library listed in `ovfetch-preload.txt` with `RTLD_GLOBAL` (`ovfetch.preload`) after `import openvino` and before opening the NPU. `vinowhisper-doctor` searches this prefix before system directories, and `ovfetch detect` reports it as `npu_prefix`.
 
-The extraction steps still work by hand, since these are plain userspace `.so`
-files with no kernel-module or packaging-system dependency:
+Manual extraction also works (these are plain userspace `.so` files; `dpkg-deb` is available via the `dpkg` package on RPM distros as well):
 
 ```bash
 tar xf linux-npu-driver-*.tar.gz
@@ -227,32 +117,15 @@ sudo install -m 0755 $(find extracted -name '*compiler*.so') /usr/lib64/
 sudo ldconfig
 ```
 
-`dpkg-deb` is in the `dpkg` package and is present on rpm distros too, so no
-`alien` or `rpm2cpio` conversion is needed. The result is untracked by your
-package manager: note it somewhere, because nothing will upgrade it.
+Manually installed files are untracked by your package manager and must be updated by hand.
 
 ## Platform data from ovfetch
 
-[ovfetch](https://github.com/karanshukla/ovfetch) keeps a table of Intel NPUs
-by PCI ID, the first driver release Intel verified on each, and which
-OpenVINO versions are known to work with each driver, refreshed weekly from
-Intel's release notes and the kernel's `ivpu` driver. When it is on `PATH`
-(`vinowhisper-setup --ovfetch`), the doctor runs `ovfetch detect`, which is
-offline, and adds three lines:
+[ovfetch](https://github.com/karanshukla/ovfetch) maintains a weekly-refreshed table of Intel NPUs by PCI ID, minimum Intel-verified driver versions, and recorded compatible OpenVINO ranges (from Intel release notes and the kernel `ivpu` driver). When `ovfetch` is on `PATH` (`vinowhisper-setup --ovfetch`), `vinowhisper-doctor` runs `ovfetch detect` offline and adds platform status lines:
 
 ```
 [  ok] npu: platform        Wildcat Lake (0xfd3e), Intel verifies driver 1.32.0 and newer
 [  ok] npu: openvino range  OpenVINO 2026.4, inside 2025.4 to 2026.4 for NPU driver 1.35.0
 ```
 
-plus any warning ovfetch raises, such as a driver older than the platform's
-first verified release. It is optional, and nothing it says is a failure: its
-range is deliberately pessimistic, the newest OpenVINO *recorded* as working
-rather than the newest that works. Measured 2026-09-28 on Wildcat Lake,
-drivers 1.32.0 and 1.35.0 each ran a test model on every OpenVINO from 2025.0
-to 2026.4, and whisper-small.en's static pipeline on 2026.4, so a warning
-that the installed OpenVINO is past the range means untested, not broken.
-vinoWhisper does not use ovfetch's OpenVINO installer, which fetches ONNX
-Runtime or Intel's `openvino` wheel; see `docs/architecture.md` for why this
-project runs OpenVINO GenAI from pip. It does use `ovfetch npu install` for the
-NPU compiler, above: that is the one piece pip cannot provide.
+These checks are optional and advisory. `ovfetch`'s OpenVINO range reflects the newest version *officially recorded* rather than the newest that works (measured 2026-09-28 on Wildcat Lake: drivers 1.32.0 and 1.35.0 ran a test model across OpenVINO 2025.0–2026.4 and `whisper-small.en` static pipeline on 2026.4), so an out-of-range warning means untested rather than broken. vinoWhisper uses `ovfetch` only for platform metadata and `ovfetch npu install`, not its OpenVINO/ONNX Runtime installer (see [architecture.md](architecture.md)).
