@@ -179,7 +179,8 @@ class DAF:
         Pe = 0.5 * P * X2 + Rt
         mu = P / (Pe + 1e-10) * gbin[None, :] * spart[:, None]
         s = mu * X2
-        mu = np.where(s > 2.0, mu * (2.0 / np.maximum(s, 1e-30)), mu)
+        with np.errstate(over="ignore"):
+            mu = np.where(s > 2.0, mu * (2.0 / np.maximum(s, 1e-30)), mu)
         fac = np.maximum(1 - 0.5 * mu * X2, 0)
         self.P = np.maximum(A2 * fac * P + (1 - A2) * H2, 1e-12).astype(F32)
 

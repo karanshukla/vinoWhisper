@@ -12,7 +12,7 @@ use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
 use crate::app::Command;
 use crate::protocol;
-use crate::settings::{self, Source};
+use crate::settings::{self, EchoCancel, Source};
 
 const PROGRAM: &str = "vinowhisper-caption";
 pub const DICTATE: &str = "vinowhisper-dictate";
@@ -180,10 +180,14 @@ pub fn spawn(
     Ok(Child { pid, stdin })
 }
 
-fn caption_args(source: Source, transcript: bool) -> Vec<&'static str> {
+fn caption_args(source: Source, transcript: bool, echo: EchoCancel) -> Vec<&'static str> {
     let mut args = vec!["--json", "--source", source.as_arg()];
     if transcript {
         args.push("--transcript");
+    }
+    // Only two-lane sessions have an echo to cancel.
+    if source == Source::Both {
+        args.extend(["--echo-cancel", echo.as_arg()]);
     }
     args
 }
@@ -194,12 +198,13 @@ impl Session {
         program: &Path,
         source: Source,
         transcript: bool,
+        echo: EchoCancel,
         generation: u64,
         tx: Sender<Command>,
     ) -> io::Result<Session> {
         let mut process = Process::new(program);
         process
-            .args(caption_args(source, transcript))
+            .args(caption_args(source, transcript, echo))
             .stdin(Stdio::null());
         let events = tx.clone();
         let child = spawn(
@@ -246,12 +251,20 @@ mod tests {
     #[test]
     fn the_transcript_flag_is_only_passed_when_asked_for() {
         assert_eq!(
-            caption_args(Source::Mic, false),
+            caption_args(Source::Mic, false, EchoCancel::Auto),
             ["--json", "--source", "mic"]
         );
         assert_eq!(
-            caption_args(Source::Output, true),
+            caption_args(Source::Output, true, EchoCancel::Auto),
             ["--json", "--source", "output", "--transcript"]
+        );
+    }
+
+    #[test]
+    fn echo_cancellation_is_passed_only_for_two_lane_sessions() {
+        assert_eq!(
+            caption_args(Source::Both, false, EchoCancel::Off),
+            ["--json", "--source", "both", "--echo-cancel", "off"]
         );
     }
 }

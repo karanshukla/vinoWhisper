@@ -32,6 +32,7 @@ export default defineConfig({
           items: [
             { slug: 'install' },
             { slug: 'terminal' },
+            { slug: 'echo' },
             { slug: 'tray' },
           ],
         },

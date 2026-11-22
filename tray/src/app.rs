@@ -704,6 +704,7 @@ impl App {
                     program,
                     self.source(),
                     self.settings.save_transcripts,
+                    self.settings.echo_cancel,
                     self.generation,
                     self.tx.clone(),
                 ) {

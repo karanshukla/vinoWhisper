@@ -71,6 +71,6 @@ lane costs nothing.
   `events.jsonl`. `vinowhisper-replay --restitch` redoes each lane;
   `--sweep` needs `--lane you|them`.
 - Not decided here: the mic hears the speakers, so without headphones their
-  words appear in both lanes. Echo cancellation is #216 (`echo/`).
+  words appear in both lanes. Echo cancellation is [echo.md](echo.md) (#216).
 - Whether to save transcripts by default in this mode is left to the
   existing `save_transcripts` setting.

@@ -8,6 +8,14 @@ pub(super) fn source_label(source: Source) -> &'static str {
     }
 }
 
+pub(super) fn echo_label(mode: EchoCancel) -> &'static str {
+    match mode {
+        EchoCancel::Auto => "Auto",
+        EchoCancel::On => "On",
+        EchoCancel::Off => "Off",
+    }
+}
+
 pub(super) fn position_label(position: Position) -> &'static str {
     match position {
         Position::Bottom => "Bottom",

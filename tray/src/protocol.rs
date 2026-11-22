@@ -42,6 +42,17 @@ pub enum Event {
         #[serde(default)]
         flushed: Vec<String>,
     },
+    // Two-lane sessions: how the mic lane is echo-cancelled, and why.
+    EchoStatus {
+        mode: String,
+        active: bool,
+        reason: String,
+    },
+    Hint {
+        #[serde(default)]
+        kind: String,
+        message: String,
+    },
     Error {
         message: String,
     },
@@ -153,6 +164,24 @@ mod tests {
         assert!(
             matches!(parse(ERROR), Some(Event::Error { message }) if message.contains("pw-record"))
         );
+    }
+
+    #[test]
+    fn echo_records_parse() {
+        assert_eq!(
+            parse(
+                r#"{"event": "EchoStatus", "mode": "auto", "active": true, "reason": "on: speakers"}"#
+            ),
+            Some(Event::EchoStatus {
+                mode: "auto".into(),
+                active: true,
+                reason: "on: speakers".into(),
+            })
+        );
+        assert!(matches!(
+            parse(r#"{"event": "Hint", "kind": "headphones", "message": "Use headphones"}"#),
+            Some(Event::Hint { .. })
+        ));
     }
 
     #[test]

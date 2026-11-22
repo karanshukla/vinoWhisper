@@ -33,6 +33,29 @@ impl Source {
     }
 }
 
+/// Whether the mic lane of a two-lane session has their voice taken out of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EchoCancel {
+    /// On for speakers, off for Bluetooth, USB and headphone outputs.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl EchoCancel {
+    pub const ALL: [EchoCancel; 3] = [EchoCancel::Auto, EchoCancel::On, EchoCancel::Off];
+
+    pub fn as_arg(self) -> &'static str {
+        match self {
+            EchoCancel::Auto => "auto",
+            EchoCancel::On => "on",
+            EchoCancel::Off => "off",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Position {
@@ -587,6 +610,8 @@ pub struct Settings {
     /// Seconds of silence before the captions hide themselves; 0 keeps them up.
     pub hide_after_silence_s: u64,
     pub save_transcripts: bool,
+    /// Applies from the next session: the tray passes it as `--echo-cancel`.
+    pub echo_cancel: EchoCancel,
     pub open_in: OpenIn,
     /// Pause MPRIS players that are playing while dictating, and resume them after.
     pub pause_media: bool,
@@ -606,6 +631,7 @@ impl Default for Settings {
             tray_idle_minutes: DEFAULT_TRAY_IDLE_MINUTES,
             hide_after_silence_s: DEFAULT_HIDE_AFTER_SILENCE_S,
             save_transcripts: false,
+            echo_cancel: EchoCancel::default(),
             open_in: OpenIn::default(),
             pause_media: false,
             smart_spacing: false,
@@ -754,6 +780,7 @@ mod tests {
             tray_idle_minutes: 5,
             hide_after_silence_s: 40,
             save_transcripts: true,
+            echo_cancel: EchoCancel::Off,
             open_in: OpenIn::TextEditor,
             pause_media: true,
             smart_spacing: true,
@@ -1161,6 +1188,20 @@ mod tests {
         assert_eq!(Source::parse("mic"), Some(Source::Mic));
         assert_eq!(Source::parse("both"), Some(Source::Both));
         assert_eq!(Source::parse("speakers"), None);
+    }
+
+    #[test]
+    fn echo_cancellation_is_auto_unless_the_file_says_otherwise() {
+        assert_eq!(Settings::default().echo_cancel, EchoCancel::Auto);
+        let path = scratch("echo-cancel");
+        std::fs::write(&path, r#"{"echo_cancel": "off"}"#).unwrap();
+        assert_eq!(Settings::load_from(&path).echo_cancel, EchoCancel::Off);
+        for mode in EchoCancel::ALL {
+            assert_eq!(
+                serde_json::to_string(&mode).unwrap(),
+                format!("\"{}\"", mode.as_arg())
+            );
+        }
     }
 
     #[test]

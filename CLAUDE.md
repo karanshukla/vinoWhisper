@@ -581,8 +581,31 @@ writer and renderer labels a paragraph when the speaker changes. `--record` writ
 `docs/terminal.md`. Checked 2026-11-22 on linuxlab: LibriSpeech clips through the fake
 speakers and mic gave both lanes, both wavs and labelled output; the far end leaked into
 the mic lane, which is #216's echo problem. **Not yet verified on the laptop or the NPU.**
-#216 (`echo/`, vinoEcho) plugs into the `you` lane's capture; #215 only has to start
-`--source both --transcript`.
+#215 only has to start `--source both --transcript`.
+
+## vinoEcho (#216), added 2026-11-22
+
+`echo/` is a uv workspace member imported as `vinoecho`, bundled into the vinowhisper wheel
+through setuptools `package-dir` (a PyPI wheel cannot depend on an unpublished package), Apache-2.0
+with LocalVQE's notice. `Echo.process(mic, ref) -> (cleaned, gate)`: the 2.7K filter (`daf.py`,
+numpy) for what Whisper hears, v1.2 (`v12.py`, OpenVINO IR) for the speech gate only.
+`caption_events(..., echo_cancel=)` makes the `you` lane an `EchoRecorder`: the mic `Recorder`
+feeds an `EchoWorker` thread, the `them` recorder's tap is its reference, the cleaned audio lands in
+the lane's own ring buffer, and the gate signal goes to that lane's `SpeechGate`. `echo_policy.py`
+decides auto/on/off from the default sink (Bluetooth, USB, headphone port off; filter-chain sinks
+followed), `echo_worker.py` re-decides every 3 s and saves the filter per (sink, port, source),
+`echo_text.py` drops `you` lines that repeat `them`, `echo_meter.py` raises the headphones hint.
+The tray passes `echo_cancel` from `gui.json` as `--echo-cancel`; the settings window asks
+`vinowhisper-caption --echo-status`. Details, the benchmark and the open items: `docs/echo.md`.
+
+- **The v1.2 IR is not on the Hub yet.** `vinowhisper/echo_model.json` has the sha256 and sizes but
+  `revision: null`; a machine without the files in `~/.local/share/vinowhisper/models/vinoecho/` has
+  echo cancellation off with that reason. Upload `v12s_T2.xml/.bin`, set the revision, done.
+- **Nothing here ran on the NPU or with real speakers.** linuxlab checked the port against
+  LocalVQE's `daf_cli` (corr 0.999999999 on speech) and ran the whole path on fake devices. The
+  voice recordings in `~/aecbench/clips_real` and `real_raw` are Karan's: never fixtures.
+- A `test_echo*` failure on the 2.7K reference means the port changed; regenerate the fixture only
+  with `echo/export/make_daf_reference.py` and LocalVQE's own CLI.
 
 ## Architecture
 

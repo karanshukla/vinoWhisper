@@ -347,6 +347,8 @@ def caption_events(
     cancelling = _echo_for_you(lanes, echo_cancel) if source == BOTH else None
     echo_status = echo_lane.initial_status(echo_cancel) if cancelling else None
     yield _ready_event(health, warnings, echo_status)
+    if echo_status is not None:
+        yield events.EchoStatus(echo_status.mode, echo_status.active, echo_status.reason)
 
     indexes = itertools.count(1)
     dedup = echo_text.EchoDedup() if cancelling else None

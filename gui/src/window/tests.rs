@@ -155,7 +155,7 @@ fn the_captions_page_names_every_control_after_its_label() {
     for width in [WIDE, NARROW] {
         let mut harness = harness(Page::Captions, width);
         harness.run();
-        for label in ["Position", "Text size", "Listen to"] {
+        for label in ["Position", "Text size", "Listen to", "Echo cancellation"] {
             harness.get_by_role_and_label(Role::RadioGroup, label);
         }
         for label in ["Hide after silence", "Hide icon after"] {
@@ -166,6 +166,22 @@ fn the_captions_page_names_every_control_after_its_label() {
             harness.get_by_role_and_label(Role::Heading, title);
         }
     }
+}
+
+#[test]
+fn echo_cancellation_starts_on_auto_and_off_is_saved_for_the_next_session() {
+    let mut harness = harness(Page::Captions, WIDE);
+    harness.run();
+    let auto = harness.get_by_role_and_label(Role::RadioButton, "Auto");
+    assert_eq!(auto.accesskit_node().toggled(), Some(Toggled::True));
+
+    harness
+        .get_by_role_and_label(Role::RadioButton, "Off")
+        .click();
+    harness.run();
+
+    assert_eq!(harness.state().window.settings.echo_cancel, EchoCancel::Off);
+    assert!(harness.state().saved.settings);
 }
 
 #[test]

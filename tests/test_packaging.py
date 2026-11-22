@@ -79,3 +79,14 @@ def test_the_installer_hashes_uv_and_runs_no_fetched_script():
     assert len(pins) == 2
     assert all(re.fullmatch(r"[0-9a-f]{64}", pin) for pin in pins), pins
     assert "sha256sum --check" in script
+
+
+def test_the_wheel_bundles_vinoecho_and_everything_it_loads_at_runtime():
+    setuptools = _toml("pyproject.toml")["tool"]["setuptools"]
+    assert "vinoecho" in setuptools["packages"]
+    assert (ROOT / setuptools["package-dir"]["vinoecho"] / "__init__.py").is_file()
+    data = setuptools["package-data"]
+    assert "echo_model.json" in data["vinowhisper"]
+    assert (ROOT / "vinowhisper/echo_model.json").is_file()
+    for pattern in data["vinoecho"]:
+        assert list((ROOT / setuptools["package-dir"]["vinoecho"]).glob(pattern)), pattern
