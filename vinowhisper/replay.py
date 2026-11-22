@@ -13,12 +13,28 @@ from .stitch import Stitcher
 _SWEEP_HOP_S = 4.0
 
 
+def _lanes_in(directory: Path) -> list[str]:
+    seen: list[str] = []
+    for record in session.read_cycles(directory):
+        lane = record.get("lane", "")
+        if lane not in seen:
+            seen.append(lane)
+    return seen
+
+
 def _restitch(directory: Path, verbose: bool) -> int:
-    cycles = list(session.read_cycles(directory))
-    if not cycles:
+    lanes = _lanes_in(directory)
+    if not lanes:
         print(f"no Cycle events in {directory}", file=sys.stderr)
         return 1
+    for lane in lanes:
+        _restitch_lane(directory, lane, verbose)
+    return 0
 
+
+def _restitch_lane(directory: Path, lane: str, verbose: bool) -> None:
+    cycles = list(session.read_cycles(directory, lane))
+    prefix = f"{lane}: " if lane else ""
     stitcher = Stitcher()
     printed: list[str] = []
     for record in cycles:
@@ -26,7 +42,7 @@ def _restitch(directory: Path, verbose: bool) -> int:
         printed.extend(confirmed)
         if verbose:
             print(
-                f"--- cycle {record['index']}: +{len(confirmed)} confirmed, "
+                f"--- {prefix}cycle {record['index']}: +{len(confirmed)} confirmed, "
                 f"{len(stitcher.pending)} pending\n"
                 f"    raw:  {record['transcript']}\n"
                 f"    new:  {' '.join(confirmed)}",
@@ -36,19 +52,21 @@ def _restitch(directory: Path, verbose: bool) -> int:
 
     original = []
     for record in cycles:
-        original.extend(record["confirmed"])
+        original.extend(record["confirmed"] + record.get("dropped", []))
 
-    print(" ".join(printed))
+    print(prefix + " ".join(printed))
     if original and original != printed:
         print(
-            f"\n[replay] differs from the recorded run: "
+            f"\n[replay] {prefix}differs from the recorded run: "
             f"{len(original)} words then, {len(printed)} now.",
             file=sys.stderr,
         )
         _print_first_divergence(original, printed)
     elif original:
-        print(f"\n[replay] identical to the recorded run ({len(printed)} words).", file=sys.stderr)
-    return 0
+        print(
+            f"\n[replay] {prefix}identical to the recorded run ({len(printed)} words).",
+            file=sys.stderr,
+        )
 
 
 def _print_first_divergence(before: list[str], after: list[str]) -> None:
@@ -69,8 +87,8 @@ def _print_first_divergence(before: list[str], after: list[str]) -> None:
     )
 
 
-def _sweep(directory: Path, window_sizes: list[float]) -> int:
-    samples = session.read_audio(directory)
+def _sweep(directory: Path, window_sizes: list[float], lane: str = "") -> int:
+    samples = session.read_audio(directory, lane)
     duration_s = samples.size / config.SAMPLE_RATE_HZ
     print(f"[replay] {duration_s:.0f}s of audio, hop {_SWEEP_HOP_S}s\n", file=sys.stderr)
 
@@ -132,6 +150,10 @@ def main() -> int:
         help="Comma-separated window sizes to benchmark against the recorded "
         "audio. Needs the NPU and a running server.",
     )
+    parser.add_argument(
+        "--lane",
+        help="With --sweep on a two-lane recording: which lane's audio to measure (you or them).",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Per-cycle detail.")
     args = parser.parse_args()
 
@@ -149,7 +171,11 @@ def main() -> int:
         if not sizes or any(not 0 < size <= config.MAX_WINDOW_S for size in sizes):
             print(f"--sweep sizes must be in (0, {config.MAX_WINDOW_S}]", file=sys.stderr)
             return 2
-        return _sweep(args.directory, sizes)
+        lanes = _lanes_in(args.directory)
+        if len(lanes) > 1 and args.lane not in lanes:
+            print(f"--sweep needs --lane, one of: {', '.join(lanes)}", file=sys.stderr)
+            return 2
+        return _sweep(args.directory, sizes, args.lane or "")
     except (OSError, ValueError, KeyError) as exc:
         print(f"could not read session: {exc}", file=sys.stderr)
         return 1

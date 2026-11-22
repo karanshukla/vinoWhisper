@@ -45,7 +45,7 @@ Launch **vinoWhisper** from the app menu or run `vinowhisper-tray`. A dark, most
 ### Controls
 
 - **Global shortcuts:** `Meta+Alt+C` toggles captions; `Meta+H` triggers [dictation](#dictation).
-- **Tray icon:** Left-clicking toggles captions. The context menu exposes frequent controls: **Show captions**, **Listen to** (system audio or microphone), **Recent dictations** (last 5, newest first, plus **Clear** and **Add to dictionary…**), active dictation shortcut display, **Settings…** (`vinowhisper-gui`), **Start at login**, and **Quit**. Position, text size, transcript saving, language/translation, shortcuts, cleanup, and links (`vinopilot.ca` and sibling vinoPilot apps on About) live in `vinowhisper-gui`.
+- **Tray icon:** Left-clicking toggles captions. The context menu exposes frequent controls: **Show captions**, **Listen to** (system audio, microphone, or both as two lanes), **Recent dictations** (last 5, newest first, plus **Clear** and **Add to dictionary…**), active dictation shortcut display, **Settings…** (`vinowhisper-gui`), **Start at login**, and **Quit**. Position, text size, transcript saving, language/translation, shortcuts, cleanup, and links (`vinopilot.ca` and sibling vinoPilot apps on About) live in `vinowhisper-gui`.
 - **CLI control commands** (forwarded to the running tray instance):
   - `vinowhisper-tray show | hide | toggle | quit | restart`
   - `vinowhisper-tray dictate | dictate-press | dictate-release`

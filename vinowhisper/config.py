@@ -25,6 +25,7 @@ MODEL_ROOT = _data_home() / "vinowhisper/models"
 TRANSCRIPT_DIR = _data_home() / "vinowhisper/transcripts"
 SUMMARIES_FILE = _config_home() / "vinowhisper/summaries.json"
 SESSIONS_STATE_FILE = _state_home() / "vinowhisper/sessions.json"
+ECHO_STATE_DIR = _state_home() / "vinowhisper/echo"
 SUMMARIES_READY_RELPATH = "vinowhisper/summaries-ready.json"
 SUMMARISING_RELPATH = "vinowhisper/summarising.json"
 

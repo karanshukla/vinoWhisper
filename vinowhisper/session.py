@@ -23,31 +23,50 @@ EVENTS_NAME = "events.jsonl"
 _PCM_SCALE = 32767.0
 
 
-class SessionWriter:
-    def __init__(self, directory: Path) -> None:
+def audio_name(lane: str = "") -> str:
+    return f"audio-{lane}.wav" if lane else AUDIO_NAME
+
+
+class _WavFile:
+    def __init__(self, path: Path) -> None:
         import wave
 
-        self.directory = directory
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self._wav_file = _open_private(directory / AUDIO_NAME, "wb")
-        self._wav = wave.open(self._wav_file, "wb")  # noqa: SIM115
+        self._file = _open_private(path, "wb")
+        self._wav = wave.open(self._file, "wb")  # noqa: SIM115
         self._wav.setnchannels(1)
         self._wav.setsampwidth(2)
         self._wav.setframerate(config.SAMPLE_RATE_HZ)
+
+    def write(self, samples: np.ndarray) -> None:
+        pcm = np.clip(samples * _PCM_SCALE, -32768, 32767).astype("<i2")
+        self._wav.writeframes(pcm.tobytes())
+
+    def close(self) -> None:
+        self._wav.close()
+        # wave does not close a file object it was handed.
+        self._file.close()
+
+
+class SessionWriter:
+    def __init__(self, directory: Path, lanes: tuple[str, ...] = ()) -> None:
+        self.directory = directory
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._wavs = {lane: _WavFile(directory / audio_name(lane)) for lane in lanes or ("",)}
         self._events = _open_private(directory / EVENTS_NAME, "w")
 
     def audio_chunk(self, samples: np.ndarray) -> None:
-        pcm = np.clip(samples * _PCM_SCALE, -32768, 32767).astype("<i2")
-        self._wav.writeframes(pcm.tobytes())
+        self._wavs[""].write(samples)
+
+    def lane_tap(self, lane: str) -> Callable[[np.ndarray], None]:
+        return self._wavs[lane].write
 
     def event(self, event: events.Event) -> None:
         self._events.write(json.dumps(events.to_dict(event)) + "\n")
         self._events.flush()
 
     def close(self) -> None:
-        self._wav.close()
-        # wave does not close a file object it was handed.
-        self._wav_file.close()
+        for wav in self._wavs.values():
+            wav.close()
         self._events.close()
 
 
@@ -61,7 +80,11 @@ def _open_private(path: Path, mode: str) -> IO:
     return os.fdopen(fd, mode, encoding="utf-8")
 
 
-_SOURCE_LABELS = {"output": "system audio", "mic": "microphone"}
+_SOURCE_LABELS = {
+    "output": "system audio",
+    "mic": "microphone",
+    "both": "microphone and system audio",
+}
 
 
 # The transcript's text format, for every writer: bundle.py and vinoSearch parse both lines.
@@ -97,7 +120,8 @@ class TranscriptWriter:
         self._heard: collections.Counter[str] = collections.Counter()
         self._model = ""
         self._bundle_on_close = False
-        self._breaker = ParagraphBreaker()
+        self._breakers: dict[str, ParagraphBreaker] = {}
+        self._lane = ""
         self._file: IO | None = None
         self._first = True
         self._closed = False
@@ -114,9 +138,11 @@ class TranscriptWriter:
         elif isinstance(event, events.Cycle):
             if event.language:
                 self._heard[event.language] += len(event.confirmed)
-            self._words(event.confirmed)
+            self._words(event.confirmed, event.lane)
         elif isinstance(event, events.Silence):
-            self._breaker.silence(event.elapsed_s)
+            self._breaker(event.lane).silence(event.elapsed_s)
+        elif isinstance(event, events.Flushed):
+            self._words(event.words, event.lane)
         elif isinstance(event, events.Stopped):
             self._words(event.flushed)
             self.close()
@@ -157,7 +183,10 @@ class TranscriptWriter:
         heard = (+self._heard).most_common(1)
         return heard[0][0] if heard else None
 
-    def _words(self, words: list[str]) -> None:
+    def _breaker(self, lane: str) -> ParagraphBreaker:
+        return self._breakers.setdefault(lane, ParagraphBreaker())
+
+    def _words(self, words: list[str], lane: str = "") -> None:
         if not words:
             return
         file = self._file or self._open()
@@ -165,8 +194,13 @@ class TranscriptWriter:
             # (pinned by `test_session.py::test_what_was_playing_is_sampled_as_words_arrive_and_attested`)
             self._tracker.poke()
         for word in words:
-            if self._breaker.word(word):
-                file.write("\n\n" + self._stamp() + word)
+            new_paragraph = self._breaker(lane).word(word)
+            # (pinned by `test_two_lanes.py::test_each_lane_of_a_call_starts_its_own_labelled_paragraph`)
+            switched = bool(lane) and lane != self._lane
+            if switched or new_paragraph:
+                self._lane = lane
+                label = f"{lane}: " if lane else ""
+                file.write(("" if self._first else "\n\n") + self._stamp() + label + word)
             elif self._first:
                 file.write(self._stamp() + word)
             else:
@@ -201,16 +235,16 @@ def read_events(directory: Path) -> list[dict]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def read_cycles(directory: Path) -> Iterator[dict]:
+def read_cycles(directory: Path, lane: str | None = None) -> Iterator[dict]:
     for record in read_events(directory):
-        if record["event"] == "Cycle":
+        if record["event"] == "Cycle" and (lane is None or record.get("lane", "") == lane):
             yield record
 
 
-def read_audio(directory: Path) -> np.ndarray:
+def read_audio(directory: Path, lane: str = "") -> np.ndarray:
     import wave
 
-    with wave.open(str(directory / AUDIO_NAME), "rb") as handle:
+    with wave.open(str(directory / audio_name(lane)), "rb") as handle:
         if handle.getframerate() != config.SAMPLE_RATE_HZ:
             raise ValueError(f"expected {config.SAMPLE_RATE_HZ}Hz, got {handle.getframerate()}Hz")
         raw = handle.readframes(handle.getnframes())

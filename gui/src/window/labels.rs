@@ -2,8 +2,17 @@ use super::*;
 
 pub(super) fn source_label(source: Source) -> &'static str {
     match source {
-        Source::Output => "What is playing",
+        Source::Output => "Playing",
         Source::Mic => "Microphone",
+        Source::Both => "Both",
+    }
+}
+
+pub(super) fn echo_label(mode: EchoCancel) -> &'static str {
+    match mode {
+        EchoCancel::Auto => "Auto",
+        EchoCancel::On => "On",
+        EchoCancel::Off => "Off",
     }
 }
 

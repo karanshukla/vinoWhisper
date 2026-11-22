@@ -83,6 +83,8 @@ class RichRenderer:
         self._gutter = ""
         self._new_paragraph = True
         self._paragraphs = ParagraphBreaker()
+        self._lane = ""
+        self._line_label = ""
 
         self._pending: list[str] = []
         self._rms = 0.0
@@ -133,8 +135,11 @@ class RichRenderer:
             self._pending = event.pending
             if event.language:
                 self._speech = events.speech_label(self._language, self._task, event.language)
-            self._add_words(event.confirmed)
+            self._add_words(event.confirmed, event.lane)
         elif isinstance(event, events.Silence):
+            if event.lane == events.LANE_YOU:
+                # You being quiet on a call is not a problem with the signal.
+                return
             self._rms = event.rms
             self._silent_for = event.elapsed_s
             self._muted = bool(event.sink_muted)
@@ -143,6 +148,8 @@ class RichRenderer:
             else:
                 self._state = ("MUTED", "red") if self._muted else ("no signal", "red")
             self._paragraphs.silence(event.elapsed_s)
+        elif isinstance(event, events.Flushed):
+            self._add_words(event.words, event.lane)
         elif isinstance(event, events.Stopped):
             self._add_words(event.flushed)
             self._pending = []
@@ -150,7 +157,12 @@ class RichRenderer:
 
         self._refresh()
 
-    def _add_words(self, words: list[str]) -> None:
+    def _add_words(self, words: list[str], lane: str = "") -> None:
+        if words and lane and lane != self._lane:
+            self._lane = lane
+            if self._word_count:
+                self._end_paragraph()
+            self._line_label = f"{lane}:"
         for word in words:
             if self._paragraphs.word(word):
                 self._end_paragraph()
@@ -160,6 +172,10 @@ class RichRenderer:
                 self._flush_line()
             if not self._line:
                 self._begin_line()
+                if self._line_label:
+                    self._line.append(self._line_label)
+                    self._columns += len(self._line_label)
+                    self._line_label = ""
             if self._columns:
                 self._line.append(" ")
                 self._columns += 1

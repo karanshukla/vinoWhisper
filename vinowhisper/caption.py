@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import itertools
 import json
 import os
 import signal
@@ -6,7 +8,8 @@ import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +20,9 @@ from . import (
     bundle,
     capture,
     config,
+    echo_lane,
+    echo_policy,
+    echo_text,
     events,
     playing,
     session,
@@ -25,6 +31,8 @@ from . import (
     vad,
 )
 from .client import TranscriptionClient
+from .echo_lane import EchoRecorder
+from .echo_worker import Status
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
 from .version import VERSION
@@ -140,8 +148,11 @@ def _taps(
     return both
 
 
-def _ready_event(health: dict, warnings: list[str]) -> events.Ready:
+def _ready_event(health: dict, warnings: list[str], echo: Status | None = None) -> events.Ready:
     return events.Ready(
+        echo_mode=echo.mode if echo else "",
+        echo_active=echo.active if echo else False,
+        echo_reason=echo.reason if echo else "",
         device=str(health.get("device", "?")),
         device_full=str(health.get("device_full_name", "")),
         degraded=bool(health.get("degraded", False)),
@@ -197,91 +208,218 @@ def _speech_in(window: np.ndarray, level: float, speech: SpeechGate | None) -> n
     return window if speech is None else speech.apply(window)
 
 
+# What each source is called when both are captioned at once (#118).
+LANES = {"mic": events.LANE_YOU, "output": events.LANE_THEM}
+BOTH = "both"
+
+
+@dataclass
+class _Lane:
+    name: str
+    source: str
+    target: str | None
+    speech: SpeechGate | None
+    tap: Callable[[np.ndarray], None] | None
+    stitcher: Stitcher = field(default_factory=Stitcher)
+    silence: _SilenceClock = field(default_factory=_SilenceClock)
+    language: AgreedLanguage = field(default_factory=AgreedLanguage)
+    last_cycle_at_s: float = 0.0
+    last_commit_at_s: float = 0.0
+    recorder: Recorder | EchoRecorder | None = None
+
+    def started(self) -> Recorder | EchoRecorder:
+        if self.recorder is None:
+            raise RuntimeError("the lane's recorder has not been started")
+        return self.recorder
+
+    def delay_s(self) -> float:
+        return pacing_delay_s(self.started().captured_s, self.last_cycle_at_s)
+
+    def backlog_s(self) -> float:
+        return self.started().captured_s - self.last_cycle_at_s
+
+
+def _lanes(
+    source: str,
+    target: str | None,
+    tap: Callable[[np.ndarray], None] | None,
+    lane_taps: Mapping[str, Callable[[np.ndarray], None]] | None,
+    gate: Callable[[list[str]], SpeechGate | None] | None,
+    warnings: list[str],
+) -> list[_Lane]:
+    if source != BOTH:
+        return [_Lane("", source, target, gate(warnings) if gate else None, tap)]
+    lanes: list[_Lane] = []
+    for lane_source, name in LANES.items():
+        # One detector per lane: Silero carries state, and two voices must not share it.
+        # The second failure would only repeat the first one's warning.
+        speech = gate(warnings if not lanes else []) if gate else None
+        lane_target = target if lane_source == "output" else None
+        lanes.append(
+            _Lane(name, lane_source, lane_target, speech, (lane_taps or {}).get(name) or tap)
+        )
+    return lanes
+
+
+def _cycle(
+    lane: _Lane,
+    client: TranscriptionClient,
+    health: dict,
+    window_s: float,
+    index: Iterator[int],
+) -> Iterator[events.Event]:
+    recorder = lane.started()
+    captured_s = recorder.captured_s
+    hop_s = captured_s - lane.last_cycle_at_s
+
+    stalled_for_s = recorder.captured_s - lane.last_commit_at_s
+    window = recorder.window(stall_window_s(window_s, stalled_for_s, health.get("task", "")))
+    lane.last_cycle_at_s = recorder.captured_s
+
+    level = audio.rms(window)
+    heard_window = _speech_in(window, level, lane.speech)
+    if heard_window is None:
+        lane.last_commit_at_s = lane.last_cycle_at_s
+        yield replace(
+            lane.silence.event(level, no_speech=level >= config.SILENCE_RMS_THRESHOLD),
+            lane=lane.name,
+        )
+        return
+    lane.silence.reset()
+
+    window, gain = audio.normalize(heard_window, config.TARGET_RMS, config.MAX_GAIN)
+
+    started_at = time.monotonic()
+    transcript, first_piece_s = client.transcribe(window)
+    total_s = time.monotonic() - started_at
+    transcript = strip_controls(transcript)
+    heard = lane.language.push(client.heard_language)
+
+    confirmed = lane.stitcher.push(transcript)
+    if confirmed:
+        lane.last_commit_at_s = lane.last_cycle_at_s
+    yield events.Cycle(
+        index=next(index),
+        captured_s=lane.last_cycle_at_s,
+        window_s=window.size / config.SAMPLE_RATE_HZ,
+        hop_s=hop_s,
+        rms=level,
+        gain=gain,
+        first_piece_s=first_piece_s,
+        total_s=total_s,
+        transcript=transcript,
+        confirmed=confirmed,
+        pending=lane.stitcher.pending,
+        language=heard,
+        lane=lane.name,
+    )
+
+
+def _echo_for_you(lanes: list[_Lane], mode: str) -> _Lane | None:
+    if mode == echo_policy.OFF:
+        return None
+    return next((lane for lane in lanes if lane.name == events.LANE_YOU), None)
+
+
+def _with_dedup(
+    stream: Iterator[events.Event], dedup: echo_text.EchoDedup | None
+) -> Iterator[events.Event]:
+    for event in stream:
+        if dedup is not None and isinstance(event, events.Cycle):
+            if event.lane == events.LANE_THEM:
+                dedup.heard_them(event.transcript.split())
+            elif event.lane == events.LANE_YOU and dedup.echoed(event.confirmed):
+                event = replace(event, confirmed=[], dropped=event.confirmed)
+        yield event
+
+
 def caption_events(
     source: str,
     target: str | None,
     window_s: float,
     tap: Callable[[np.ndarray], None] | None = None,
     gate: Callable[[list[str]], SpeechGate | None] | None = None,
+    lane_taps: Mapping[str, Callable[[np.ndarray], None]] | None = None,
+    echo_cancel: str = echo_policy.OFF,
 ) -> Iterator[events.Event]:
     client = TranscriptionClient(language=True)
     health = client.wait_ready()
     warnings = [str(warning) for warning in health.get("warnings", [])]
-    speech = gate(warnings) if gate is not None else None
-    yield _ready_event(health, warnings)
+    lanes = _lanes(source, target, tap, lane_taps, gate, warnings)
+    cancelling = _echo_for_you(lanes, echo_cancel) if source == BOTH else None
+    echo_status = echo_lane.initial_status(echo_cancel) if cancelling else None
+    yield _ready_event(health, warnings, echo_status)
+    if echo_status is not None:
+        yield events.EchoStatus(echo_status.mode, echo_status.active, echo_status.reason)
 
-    stitcher = Stitcher()
-    index = 0
-    last_cycle_at_s = 0.0
-    last_commit_at_s = 0.0
-    silence = _SilenceClock()
-    language = AgreedLanguage()
+    indexes = itertools.count(1)
+    dedup = echo_text.EchoDedup() if cancelling else None
+    last_echo = echo_status
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
-        with Recorder(
-            source=source, target=target, tap=_taps(speech.tap if speech else None, tap)
-        ) as recorder:
+        with contextlib.ExitStack() as stack:
+            ref_feed: Callable[[np.ndarray], None] | None = None
+            if cancelling is not None:
+                you = cancelling
+                echo = echo_lane.EchoRecorder(
+                    lambda feed: Recorder(source="mic", target=None, tap=feed),
+                    echo_cancel,
+                    on_gate=you.speech.tap if you.speech else None,
+                    on_clean=you.tap,
+                )
+                you.recorder = stack.enter_context(echo)
+                ref_feed = echo.worker.feed_ref
+            for lane in lanes:
+                if lane.recorder is not None:
+                    continue
+                feeds = [lane.speech.tap if lane.speech else None, lane.tap]
+                if lane.name == events.LANE_THEM:
+                    feeds.append(ref_feed)
+                recorder = Recorder(source=lane.source, target=lane.target, tap=_taps(*feeds))
+                lane.recorder = stack.enter_context(recorder)
+            started = time.monotonic()
             while True:
-                recorder.check_alive()
+                for lane in lanes:
+                    lane.started().check_alive()
 
-                captured_s = recorder.captured_s
-                delay_s = pacing_delay_s(captured_s, last_cycle_at_s)
-                if delay_s > 0:
-                    time.sleep(delay_s)
+                delays = [lane.delay_s() for lane in lanes]
+                due = [lane for lane, delay_s in zip(lanes, delays, strict=True) if delay_s <= 0]
+                if not due:
+                    time.sleep(min(delays))
                     continue
-                hop_s = captured_s - last_cycle_at_s
-
-                stalled_for_s = recorder.captured_s - last_commit_at_s
-                window = recorder.window(
-                    stall_window_s(window_s, stalled_for_s, health.get("task", ""))
-                )
-                last_cycle_at_s = recorder.captured_s
-
-                level = audio.rms(window)
-                heard_window = _speech_in(window, level, speech)
-                if heard_window is None:
-                    last_commit_at_s = last_cycle_at_s
-                    yield silence.event(level, no_speech=level >= config.SILENCE_RMS_THRESHOLD)
-                    continue
-                silence.reset()
-
-                window, gain = audio.normalize(heard_window, config.TARGET_RMS, config.MAX_GAIN)
-
-                started_at = time.monotonic()
-                transcript, first_piece_s = client.transcribe(window)
-                total_s = time.monotonic() - started_at
-                transcript = strip_controls(transcript)
-                heard = language.push(client.heard_language)
-
-                confirmed = stitcher.push(transcript)
-                if confirmed:
-                    last_commit_at_s = last_cycle_at_s
-                index += 1
-                yield events.Cycle(
-                    index=index,
-                    captured_s=last_cycle_at_s,
-                    window_s=window.size / config.SAMPLE_RATE_HZ,
-                    hop_s=hop_s,
-                    rms=level,
-                    gain=gain,
-                    first_piece_s=first_piece_s,
-                    total_s=total_s,
-                    transcript=transcript,
-                    confirmed=confirmed,
-                    pending=stitcher.pending,
-                    language=heard,
-                )
+                # One transcription at a time (the server runs them in turn anyway); the lane
+                # with the most unheard audio goes first, so neither starves the other.
+                lane = max(due, key=_Lane.backlog_s)
+                yield from _with_dedup(_cycle(lane, client, health, window_s, indexes), dedup)
+                if cancelling is not None and isinstance(
+                    cancelling.recorder, echo_lane.EchoRecorder
+                ):
+                    worker = cancelling.recorder.worker
+                    if worker.status != last_echo:
+                        last_echo = worker.status
+                        yield events.EchoStatus(last_echo.mode, last_echo.active, last_echo.reason)
+                    hint = (
+                        worker.meter.hint(time.monotonic() - started) if last_echo.active else None
+                    )
+                    if hint:
+                        yield events.Hint(kind="headphones", message=hint)
     except KeyboardInterrupt:
         pass
 
-    yield events.Stopped(flushed=stitcher.flush())
+    if source == BOTH:
+        for lane in lanes:
+            yield events.Flushed(lane=lane.name, words=lane.stitcher.flush())
+        yield events.Stopped()
+    else:
+        yield events.Stopped(flushed=lanes[0].stitcher.flush())
 
 
 class TerminalRenderer:
     def __init__(self, debug: bool = False) -> None:
         self.debug = debug
         self._started = False
+        self._lane = ""
         self._silence_reported = False
 
     def __enter__(self) -> "TerminalRenderer":
@@ -303,10 +441,11 @@ class TerminalRenderer:
             self._silence_reported = False
             if self.debug:
                 print(self._debug_line(event), file=sys.stderr)
-            self._emit(event.confirmed)
+            self._emit(event.confirmed, event.lane)
         elif isinstance(event, events.Silence):
             if (
-                event.elapsed_s >= _SILENCE_NOTICE_AFTER_S
+                event.lane != events.LANE_YOU
+                and event.elapsed_s >= _SILENCE_NOTICE_AFTER_S
                 and not event.no_speech
                 and not self._silence_reported
             ):
@@ -316,14 +455,21 @@ class TerminalRenderer:
                     file=sys.stderr,
                 )
                 self._silence_reported = True
+        elif isinstance(event, events.Flushed):
+            self._emit(event.words, event.lane)
         elif isinstance(event, events.Stopped):
             self._emit(event.flushed)
             print(flush=True)
 
-    def _emit(self, words: list[str]) -> None:
+    def _emit(self, words: list[str], lane: str = "") -> None:
         if not words:
             return
-        print((" " if self._started else "") + " ".join(words), end="", flush=True)
+        text = " ".join(words)
+        if lane and lane != self._lane:
+            print(("\n" if self._started else "") + f"{lane}: {text}", end="", flush=True)
+            self._lane = lane
+        else:
+            print((" " if self._started else "") + text, end="", flush=True)
         self._started = True
 
     @staticmethod
@@ -372,9 +518,10 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live captioning via NPU Whisper.")
     parser.add_argument(
         "--source",
-        choices=["output", "mic"],
+        choices=["output", "mic", BOTH],
         default=config.DEFAULT_SOURCE,
-        help="'output' captions system audio (default), 'mic' captions your voice.",
+        help="'output' captions system audio (default), 'mic' captions your voice, "
+        "'both' captions each as its own lane (you / them), for calls.",
     )
     parser.add_argument(
         "--target",
@@ -438,8 +585,26 @@ def _parse_args() -> argparse.Namespace:
         help="Decode every sound above the silence level, not only what the speech "
         "detector hears as someone talking. Mumbling and noise then get captioned too.",
     )
+    parser.add_argument(
+        "--echo-cancel",
+        choices=list(echo_policy.MODES),
+        default=echo_policy.AUTO,
+        help="With --source both: take their voice out of the mic lane. 'auto' (default) "
+        "does it on speakers and not on Bluetooth, USB or headphone outputs.",
+    )
+    parser.add_argument(
+        "--echo-status",
+        action="store_true",
+        help="Print what --echo-cancel auto would do on the current output, as JSON, then exit.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     return parser.parse_args()
+
+
+def _echo_status(mode: str) -> int:
+    status = echo_lane.initial_status(mode)
+    print(json.dumps({"mode": status.mode, "active": status.active, "reason": status.reason}))
+    return 0
 
 
 def _list_targets() -> int:
@@ -476,6 +641,8 @@ def main() -> int:
     # (pinned by `test_caption.py::test_characterization_an_inherited_ignored_sigint_is_undone`)
     signal.signal(signal.SIGINT, signal.default_int_handler)
     args = _parse_args()
+    if args.echo_status:
+        return _echo_status(args.echo_cancel)
     try:
         if args.list_targets:
             return _list_targets()
@@ -499,18 +666,21 @@ def main() -> int:
 
     plain = args.plain or args.debug or not sys.stdout.isatty()
     json_out = JsonRenderer() if args.json else None
-    writer = session.SessionWriter(args.record) if args.record else None
+    lanes = tuple(LANES.values()) if args.source == BOTH else ()
+    writer = session.SessionWriter(args.record, lanes=lanes) if args.record else None
     transcript = None
     if args.transcript:
         # (pinned by `test_caption.py::test_a_mic_session_does_not_track_what_is_playing`)
-        tracker = playing.Tracker(args.target) if args.source == "output" else None
+        tracker = playing.Tracker(args.target) if args.source in ("output", BOTH) else None
         transcript = session.TranscriptWriter(args.transcript, args.source, tracker=tracker)
     try:
         stream = caption_events(
             source=args.source,
             target=args.target,
             window_s=args.window,
-            tap=writer.audio_chunk if writer else None,
+            tap=writer.audio_chunk if writer and not lanes else None,
+            lane_taps={lane: writer.lane_tap(lane) for lane in lanes} if writer else None,
+            echo_cancel=args.echo_cancel,
             gate=None if args.no_speech_gate else speech_gate,
         )
         with json_out or _renderer(plain, debug=args.debug) as renderer:

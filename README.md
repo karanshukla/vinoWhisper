@@ -83,6 +83,7 @@ The Intel NPU requires a userspace compiler library that Linux distributions do 
 ```bash
 vinowhisper-caption                       # caption system audio
 vinowhisper-caption --source mic          # caption microphone input
+vinowhisper-caption --source both         # a call: you and them as two lanes
 vinowhisper-caption --list-targets        # capture one app instead of the whole sink
 vinowhisper-caption --debug               # per-cycle timings, levels, raw transcript
 vinowhisper-caption --record ~/sess       # save session audio and events for replay

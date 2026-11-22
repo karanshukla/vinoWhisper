@@ -68,13 +68,22 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 # Explicit, not flat-layout discovery (docs/development.md)
-packages = ["vinowhisper"]
+# vinoecho ships inside this wheel until it is on PyPI: a PyPI wheel cannot depend on an unpublished package
+packages = ["vinowhisper", "vinoecho"]
+
+[tool.setuptools.package-dir]
+vinowhisper = "vinowhisper"
+vinoecho = "echo/src/vinoecho"
 
 # Dropping either from the wheel fails quietly (docs/development.md)
 [tool.setuptools.package-data]
-vinowhisper = ["model_digests.json", "model_sources.json", "tray_release.json", "gui_release.json", "ovfetch_release.json", "cleanup_model.json", "canary_model.json", "vad_model.json"]
+vinowhisper = ["model_digests.json", "model_sources.json", "tray_release.json", "gui_release.json", "ovfetch_release.json", "cleanup_model.json", "canary_model.json", "vad_model.json", "echo_model.json"]
+vinoecho = ["weights/*.npz"]
 
 # ── uv ────────────────────────────────────────────────────────────────────────
+
+[tool.uv.workspace]
+members = ["echo"]
 
 [dependency-groups]
 # Installable alone so CI never downloads OpenVINO (docs/development.md)
@@ -101,7 +110,7 @@ dev = [
 [tool.poe.tasks]
 lint  = "ruff check ."
 fmt   = "ruff format --check ."
-types = "mypy vinowhisper/"
+types = "mypy vinowhisper/ echo/src/"
 test  = "pytest -v --tb=short"
 fix.sequence = [{ cmd = "ruff check --fix ." }, { cmd = "ruff format ." }]
 security.cmd = "uvx --from bandit[toml]==1.9.4 bandit -c pyproject.toml -r vinowhisper/"
@@ -114,6 +123,8 @@ doctor = "python -m vinowhisper.doctor"
 
 [tool.ruff]
 line-length = 100
+# Upstream LocalVQE code, kept as it came
+extend-exclude = ["echo/export"]
 target-version = "py311"
 
 [tool.ruff.lint]
@@ -124,7 +135,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["vinowhisper"]
+known-first-party = ["vinowhisper", "vinoecho"]
 
 # ── Mypy ──────────────────────────────────────────────────────────────────────
 
@@ -139,12 +150,12 @@ warn_unused_ignores = false
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
-pythonpath = ["."]
+pythonpath = [".", "echo/src"]
 
 # ── Coverage ──────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]
-source = ["vinowhisper"]
+source = ["vinowhisper", "vinoecho"]
 branch = true
 
 [tool.coverage.report]

@@ -22,15 +22,36 @@ pub enum Event {
         total_s: f64,
         #[serde(default)]
         language: String,
+        // "you" or "them" when both sources are captioned, empty for one.
+        #[serde(default)]
+        lane: String,
     },
     Silence {
         elapsed_s: f64,
         #[serde(default)]
         sink_muted: Option<bool>,
+        #[serde(default)]
+        lane: String,
+    },
+    Flushed {
+        lane: String,
+        #[serde(default)]
+        words: Vec<String>,
     },
     Stopped {
         #[serde(default)]
         flushed: Vec<String>,
+    },
+    // Two-lane sessions: how the mic lane is echo-cancelled, and why.
+    EchoStatus {
+        mode: String,
+        active: bool,
+        reason: String,
+    },
+    Hint {
+        #[serde(default)]
+        kind: String,
+        message: String,
     },
     Error {
         message: String,
@@ -119,6 +140,7 @@ mod tests {
                 pending: vec!["think".into(), "so".into()],
                 total_s: 1.19,
                 language: String::new(),
+                lane: String::new(),
             })
         );
     }
@@ -130,6 +152,7 @@ mod tests {
             Some(Event::Silence {
                 elapsed_s: 46.0,
                 sink_muted: Some(true),
+                lane: String::new(),
             })
         );
         assert_eq!(
@@ -141,6 +164,24 @@ mod tests {
         assert!(
             matches!(parse(ERROR), Some(Event::Error { message }) if message.contains("pw-record"))
         );
+    }
+
+    #[test]
+    fn echo_records_parse() {
+        assert_eq!(
+            parse(
+                r#"{"event": "EchoStatus", "mode": "auto", "active": true, "reason": "on: speakers"}"#
+            ),
+            Some(Event::EchoStatus {
+                mode: "auto".into(),
+                active: true,
+                reason: "on: speakers".into(),
+            })
+        );
+        assert!(matches!(
+            parse(r#"{"event": "Hint", "kind": "headphones", "message": "Use headphones"}"#),
+            Some(Event::Hint { .. })
+        ));
     }
 
     #[test]

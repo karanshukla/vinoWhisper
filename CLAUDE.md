@@ -569,6 +569,44 @@ then "you may need to remove systemd first". Both follow vinoSearch's (its commi
   Sway hides layer-shell and data-control from those, and what KWin does is unchecked.
   If the overlay or the clipboard fails in the Flatpak, look there first.
 
+## Two-lane captions (#118), added 2026-11-22
+
+`--source both` captions the mic (`you`) and the sink monitor (`them`) at once.
+`caption_events` holds one `_Lane` per source (recorder, `SpeechGate`, `Stitcher`,
+silence clock) and runs one transcription at a time, the lane with the most unheard
+audio first; the server serialises on `transcriber._lock` anyway. `lane` is a field
+on `Cycle` and `Silence`, `Flushed` carries each lane's held-back words, and every
+writer and renderer labels a paragraph when the speaker changes. `--record` writes
+`audio-<lane>.wav`. The tray and settings window have a Both source. Details in
+`docs/terminal.md`. Checked 2026-11-22 on linuxlab: LibriSpeech clips through the fake
+speakers and mic gave both lanes, both wavs and labelled output; the far end leaked into
+the mic lane, which is #216's echo problem. **Not yet verified on the laptop or the NPU.**
+#215 only has to start `--source both --transcript`.
+
+## vinoEcho (#216), added 2026-11-22
+
+`echo/` is a uv workspace member imported as `vinoecho`, bundled into the vinowhisper wheel
+through setuptools `package-dir` (a PyPI wheel cannot depend on an unpublished package), Apache-2.0
+with LocalVQE's notice. `Echo.process(mic, ref) -> (cleaned, gate)`: the 2.7K filter (`daf.py`,
+numpy) for what Whisper hears, v1.2 (`v12.py`, OpenVINO IR) for the speech gate only.
+`caption_events(..., echo_cancel=)` makes the `you` lane an `EchoRecorder`: the mic `Recorder`
+feeds an `EchoWorker` thread, the `them` recorder's tap is its reference, the cleaned audio lands in
+the lane's own ring buffer, and the gate signal goes to that lane's `SpeechGate`. `echo_policy.py`
+decides auto/on/off from the default sink (Bluetooth, USB, headphone port off; filter-chain sinks
+followed), `echo_worker.py` re-decides every 3 s and saves the filter per (sink, port, source),
+`echo_text.py` drops `you` lines that repeat `them`, `echo_meter.py` raises the headphones hint.
+The tray passes `echo_cancel` from `gui.json` as `--echo-cancel`; the settings window asks
+`vinowhisper-caption --echo-status`. Details, the benchmark and the open items: `docs/echo.md`.
+
+- **The v1.2 IR is on the Hub** (`arankays/localvqe-v1.2-ov`, pinned in
+  `vinowhisper/echo_model.json`; the served files hash to the pins, checked 2026-11-22). Bump the
+  revision and the hashes together. Fetched through `source.fetch` into an empty directory on linuxlab, 2026-11-22.
+- **Nothing here ran on the NPU or with real speakers.** linuxlab checked the port against
+  LocalVQE's `daf_cli` (corr 0.999999999 on speech) and ran the whole path on fake devices. The
+  voice recordings in `~/aecbench/clips_real` and `real_raw` are Karan's: never fixtures.
+- A `test_echo*` failure on the 2.7K reference means the port changed; regenerate the fixture only
+  with `echo/export/make_daf_reference.py` and LocalVQE's own CLI.
+
 ## Architecture
 
 ```

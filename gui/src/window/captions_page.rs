@@ -1,6 +1,15 @@
 use super::*;
 
 impl SettingsWindow {
+    pub(super) fn refresh_echo_line(&self, ctx: &egui::Context) {
+        let line = Arc::clone(&self.echo_line);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            *line.lock().unwrap() = Some(crate::echo::status(EchoCancel::Auto));
+            ctx.request_repaint();
+        });
+    }
+
     pub(super) fn captions(&mut self, ui: &mut egui::Ui) -> bool {
         let [overlay, listening] = widgets::columns(ui, |ui, column| match column {
             Column::Left => self.overlay(ui),
@@ -44,7 +53,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
             Row::new("Listen to")
-                .help("What the captions follow.")
+                .help("What the captions follow. Both labels your words you and the call them.")
                 .show(ui, |ui, _| {
                     changed |= segmented(
                         ui,
@@ -53,6 +62,25 @@ impl SettingsWindow {
                         &Source::ALL,
                         source_label,
                     );
+                });
+            Row::new("Echo cancellation")
+                .help(
+                    "Both only: takes their voice out of your microphone, so a call on speakers \
+                     does not caption it twice. Applies from the next session.",
+                )
+                .show(ui, |ui, _| {
+                    changed |= segmented(
+                        ui,
+                        "Echo cancellation",
+                        &mut self.settings.echo_cancel,
+                        &EchoCancel::ALL,
+                        echo_label,
+                    );
+                    if let Some(Ok(line)) = self.echo_line.lock().unwrap().as_ref()
+                        && self.settings.echo_cancel == EchoCancel::Auto
+                    {
+                        widgets::small(ui, line);
+                    }
                 });
             Row::new("Hide after silence")
                 .help("0 keeps them up.")

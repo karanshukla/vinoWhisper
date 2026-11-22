@@ -13,6 +13,8 @@ const NO_SIGNAL_AFTER_S: f64 = 3.0;
 
 const STATUS_CHARS: usize = 72;
 
+const HINT_SHOWN_FOR: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
     Starting,
@@ -49,6 +51,7 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Word(String),
+    Lane(String),
     Break,
 }
 
@@ -57,12 +60,15 @@ pub struct Captions {
     tokens: VecDeque<Token>,
     pending: Vec<String>,
     break_pending: bool,
+    lane: String,
     phase: Phase,
     started_at: Instant,
     device: Option<String>,
     language: String,
     task: String,
     speech: String,
+    echo: Option<String>,
+    hint: Option<(Instant, String)>,
     degraded: bool,
     warning: Option<String>,
     cycles: VecDeque<f64>,
@@ -82,12 +88,15 @@ impl Captions {
             tokens: VecDeque::new(),
             pending: Vec::new(),
             break_pending: false,
+            lane: String::new(),
             phase: Phase::Starting,
             started_at: Instant::now(),
             device: None,
             language: String::new(),
             task: String::new(),
             speech: String::new(),
+            echo: None,
+            hint: None,
             degraded: false,
             warning: None,
             cycles: VecDeque::new(),
@@ -155,6 +164,7 @@ impl Captions {
                 pending,
                 total_s,
                 language,
+                lane,
             } => {
                 self.phase = Phase::Live;
                 if !language.is_empty() {
@@ -166,8 +176,11 @@ impl Captions {
                 }
                 self.cycles.push_back(total_s);
                 self.pending = pending;
-                self.add_words(confirmed);
+                self.add_words(confirmed, &lane);
             }
+            // You being quiet on a call is not a fault in the signal
+            // (pinned by `tests::your_own_silence_on_a_call_is_not_no_signal`).
+            Event::Silence { lane, .. } if lane == "you" => {}
             Event::Silence { elapsed_s, .. } => {
                 self.silent_for = Some(elapsed_s);
                 if elapsed_s >= PARAGRAPH_SILENCE_S {
@@ -175,11 +188,14 @@ impl Captions {
                     self.break_pending = true;
                 }
             }
+            Event::Flushed { lane, words } => self.add_words(words, &lane),
             Event::Stopped { flushed } => {
-                self.add_words(flushed);
+                self.add_words(flushed, "");
                 self.pending.clear();
                 self.ended();
             }
+            Event::EchoStatus { reason, .. } => self.echo = Some(reason),
+            Event::Hint { message, .. } => self.hint = Some((Instant::now(), message)),
             Event::Error { message } => self.fail(message),
         }
     }
@@ -203,7 +219,15 @@ impl Captions {
         Some(2.0 * mean)
     }
 
-    fn add_words(&mut self, words: Vec<String>) {
+    fn add_words(&mut self, words: Vec<String>, lane: &str) {
+        if !words.is_empty() && !lane.is_empty() && lane != self.lane {
+            self.lane = lane.to_owned();
+            if matches!(self.tokens.back(), Some(Token::Word(_))) {
+                self.tokens.push_back(Token::Break);
+            }
+            self.break_pending = false;
+            self.tokens.push_back(Token::Lane(format!("{lane}:")));
+        }
         for word in words {
             if self.break_pending && matches!(self.tokens.back(), Some(Token::Word(_))) {
                 self.tokens.push_back(Token::Break);
@@ -223,7 +247,7 @@ impl Captions {
         let mut text = String::new();
         for token in &self.tokens {
             match token {
-                Token::Word(word) => {
+                Token::Word(word) | Token::Lane(word) => {
                     if !text.is_empty() && !text.ends_with('\n') {
                         text.push(' ');
                     }
@@ -300,6 +324,17 @@ impl Captions {
         if !self.speech.is_empty() {
             spans.push(Span::new(format!(" · {}", self.speech), Tone::Dim));
         }
+        if let Some(echo) = &self.echo {
+            spans.push(Span::new(format!(" · echo {echo}"), Tone::Dim));
+        }
+        if let Some((at, message)) = &self.hint
+            && at.elapsed() < HINT_SHOWN_FOR
+        {
+            spans.push(Span::new(
+                format!(" · {}", truncate(message, STATUS_CHARS)),
+                Tone::Warn,
+            ));
+        }
         if self.phase == Phase::Live
             && let Some(seconds) = self.hiding_in()
         {
@@ -362,6 +397,7 @@ mod tests {
             pending: pending.iter().map(|w| w.to_string()).collect(),
             total_s: 1.2,
             language: String::new(),
+            lane: String::new(),
         }
     }
 
@@ -369,6 +405,7 @@ mod tests {
         Event::Silence {
             elapsed_s,
             sink_muted: None,
+            lane: String::new(),
         }
     }
 
@@ -499,6 +536,7 @@ mod tests {
                 pending: vec![],
                 total_s,
                 language: String::new(),
+                lane: String::new(),
             });
         }
         assert_eq!(captions.lag_s(), Some(4.0));
@@ -568,6 +606,7 @@ mod tests {
                 pending: vec![],
                 total_s: 1.0,
                 language: heard.into(),
+                lane: String::new(),
             });
             let text: String = captions
                 .status()
@@ -705,5 +744,84 @@ mod tests {
         assert_eq!(truncate("short", 10), "short");
         assert_eq!(truncate("first line\nsecond", 20), "first line");
         assert_eq!(truncate("abcdefghijk", 5), "abcd…");
+    }
+
+    fn lane_cycle(lane: &str, words: &[&str]) -> Event {
+        Event::Cycle {
+            confirmed: words.iter().map(|w| w.to_string()).collect(),
+            pending: vec![],
+            total_s: 1.2,
+            language: String::new(),
+            lane: lane.into(),
+        }
+    }
+
+    #[test]
+    fn each_change_of_speaker_starts_a_labelled_paragraph() {
+        let mut captions = Captions::new();
+        captions.apply(lane_cycle("them", &["How", "are", "you?"]));
+        captions.apply(lane_cycle("them", &["Fine."]));
+        captions.apply(lane_cycle("you", &["Good,", "thanks."]));
+        captions.apply(Event::Flushed {
+            lane: "them".into(),
+            words: vec!["Great.".into()],
+        });
+
+        assert_eq!(
+            body(&captions),
+            [(
+                "them: How are you? Fine.\nyou: Good, thanks.\nthem: Great.".to_owned(),
+                Tone::Caption
+            )]
+        );
+    }
+
+    #[test]
+    fn your_own_silence_on_a_call_is_not_no_signal() {
+        let mut captions = Captions::new();
+        captions.apply(lane_cycle("them", &["Hello"]));
+        captions.apply(Event::Silence {
+            elapsed_s: 90.0,
+            sink_muted: None,
+            lane: "you".into(),
+        });
+
+        let (dot, _) = captions.status();
+        assert_eq!(dot, Tone::Good);
+    }
+
+    #[test]
+    fn the_status_says_what_echo_cancellation_chose() {
+        let mut captions = Captions::new();
+        captions.apply(Event::EchoStatus {
+            mode: "auto".into(),
+            active: false,
+            reason: "off: Bluetooth".into(),
+        });
+
+        let text: String = captions
+            .status()
+            .1
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert!(text.contains("echo off: Bluetooth"), "{text}");
+    }
+
+    #[test]
+    fn a_headphones_hint_shows_in_the_status_in_a_warning_tone() {
+        let mut captions = Captions::new();
+        captions.apply(Event::Hint {
+            kind: "headphones".into(),
+            message: "Headphones will caption you more cleanly.".into(),
+        });
+
+        let hint = captions
+            .status()
+            .1
+            .into_iter()
+            .find(|span| span.text.contains("Headphones"))
+            .expect("the hint");
+        assert_eq!(hint.tone, Tone::Warn);
     }
 }
