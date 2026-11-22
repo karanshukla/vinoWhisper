@@ -14,7 +14,7 @@ Prototype code from the 2026-11-21 laptop runs for [#216](https://github.com/kar
 
 ## Bench harness
 
-Paths are hardcoded to `BENCH_DIR` (was `~/.cache/claude-scratch/aec216`): `clips/` from linuxlab's `~/aecbench`, `models/` (the two GGUFs, `localvqe-v1.2-1.3M.pt`, Silero), `src/LocalVQE` built with `cmake -DLOCALVQE_BUILD_SHARED=ON`.
+Paths are hardcoded to `BENCH_DIR`. linuxlab has a copy at `~/aecbench` with the real recordings (`clips_real`, `real_raw`, `real_log.json`), the streaming IRs (`ov_v12s`), the laptop results (`laptop-results`) and these scripts (`spike`); no NPU there, so use CPU for Whisper. Scripts that import vinowhisper expect it at `~/Development/vinoWhisper` (linuxlab: `~/workspace/vinoWhisper`). Layout: `clips/` from linuxlab's `~/aecbench`, `models/` (the two GGUFs, `localvqe-v1.2-1.3M.pt`, Silero), `src/LocalVQE` built with `cmake -DLOCALVQE_BUILD_SHARED=ON`.
 
 | File | Measures |
 |---|---|
@@ -27,3 +27,4 @@ Paths are hardcoded to `BENCH_DIR` (was `~/.cache/claude-scratch/aec216`): `clip
 | `contention*.{py,sh}`, `combined.{py,sh}` | Per-hop cost alone and next to NPU decoding |
 | `noecho.py` | Active reference, no echo in the mic |
 | `session.py` | A 250 s two-lane call with read passages; built, never run |
+| `smoke.py` | `BENCH_DIR OUT.npy SPIKE_DIR`: both ports on 5 s of a real clip. Bit-identical on the laptop and linuxlab (2026-11-21). Reads the 2.7K weights from `localvqe-v1.4-aec-2.7K-f32.npz` (the GGUF's 22 tensors), so it needs no `gguf` package |
