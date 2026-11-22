@@ -227,13 +227,16 @@ class _Lane:
     last_commit_at_s: float = 0.0
     recorder: Recorder | EchoRecorder | None = None
 
+    def started(self) -> Recorder:
+        if self.recorder is None:
+            raise RuntimeError("the lane's recorder has not been started")
+        return self.recorder
+
     def delay_s(self) -> float:
-        assert self.recorder is not None
-        return pacing_delay_s(self.recorder.captured_s, self.last_cycle_at_s)
+        return pacing_delay_s(self.started().captured_s, self.last_cycle_at_s)
 
     def backlog_s(self) -> float:
-        assert self.recorder is not None
-        return self.recorder.captured_s - self.last_cycle_at_s
+        return self.started().captured_s - self.last_cycle_at_s
 
 
 def _lanes(
@@ -265,8 +268,7 @@ def _cycle(
     window_s: float,
     index: Iterator[int],
 ) -> Iterator[events.Event]:
-    recorder = lane.recorder
-    assert recorder is not None
+    recorder = lane.started()
     captured_s = recorder.captured_s
     hop_s = captured_s - lane.last_cycle_at_s
 
@@ -379,8 +381,7 @@ def caption_events(
             started = time.monotonic()
             while True:
                 for lane in lanes:
-                    assert lane.recorder is not None
-                    lane.recorder.check_alive()
+                    lane.started().check_alive()
 
                 delays = [lane.delay_s() for lane in lanes]
                 due = [lane for lane, delay_s in zip(lanes, delays, strict=True) if delay_s <= 0]
