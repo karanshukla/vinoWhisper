@@ -93,7 +93,7 @@ impl App {
         }
         if self.pill.is_none() {
             self.pill = Some(self.create_layer("vinowhisper-dictation", |layer, app| {
-                place_pill(layer, &app.settings, app.visible);
+                place_pill(layer, &app.settings, app.visible, app.captions.stacked());
             }));
         }
         self.draw_pill();

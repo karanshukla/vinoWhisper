@@ -39,7 +39,7 @@ Checked 2026-11-22 on linuxlab (CPU only, nothing else decoding): the numpy port
 
 `--echo-cancel auto|on|off` (default `auto`; the tray passes the `echo_cancel` setting from `gui.json` as this flag, so a change applies from the next session). `auto` turns it **off** when the default sink is Bluetooth (`device.api = bluez5`, speakers included), USB (`device.bus = usb`) or the jack's headphone or headset port (the active port's type, read from `pactl --format=json list sinks`). Built-in speakers and HDMI stay on. A filter-chain or loopback sink is followed through PipeWire's links to the device it plays into (this laptop's default sink is `effect_input.speaker_eq_v2`), up to five hops (`echo_policy.py`).
 
-The decision is made at session start and again every 3 s, so moving to earphones mid-call switches it off and back. `vinowhisper-caption --echo-status` prints what Auto would do now as JSON, which is what the settings window shows under "Echo cancellation". `Ready` carries `echo_mode`, `echo_active` and `echo_reason`; an `EchoStatus` event follows it and repeats on each change.
+The decision is made at session start and again every 3 s, so moving to earphones mid-call switches it off and back. `vinowhisper-caption --echo-status` prints what Auto would do now as JSON. `Ready` carries `echo_mode`, `echo_active` and `echo_reason`; an `EchoStatus` event follows it and repeats on each change.
 
 With no echo in the mic (a sink that is not audible in the room, or headphones misread as speakers) the filter left a voice within 0.05 dB and lost no words with an active reference: harmless apart from the CPU.
 

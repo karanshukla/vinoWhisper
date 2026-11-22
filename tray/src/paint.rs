@@ -58,13 +58,14 @@ impl Geometry {
         }
     }
 
-    fn height(&self) -> f32 {
-        self.pad_y * 2.0 + self.status_line + self.gap + self.caption_line * LINES as f32
+    fn height(&self, stacked: bool) -> f32 {
+        let lines = if stacked { LINES * 2 } else { LINES };
+        self.pad_y * 2.0 + self.status_line + self.gap + self.caption_line * lines as f32
     }
 }
 
-pub fn logical_height(size: TextSize) -> u32 {
-    Geometry::new(size, 1.0).height().ceil() as u32
+pub fn logical_height(size: TextSize, stacked: bool) -> u32 {
+    Geometry::new(size, 1.0).height(stacked).ceil() as u32
 }
 
 pub const PILL_WIDTH: u32 = 640;
@@ -149,20 +150,25 @@ impl Painter {
             },
         );
 
-        self.draw_text(
-            canvas,
-            &captions.caption_spans(),
-            TextBlock {
-                metrics: Metrics::new(g.caption_px, g.caption_line),
-                weight: Weight::MEDIUM,
-                style: Style::Normal,
-                wrap: Wrap::WordOrGlyph,
-                left,
-                right,
-                top: top + g.status_line + g.gap,
-                lines: LINES,
-            },
-        );
+        let blocks = captions.blocks();
+        let mut top = top + g.status_line + g.gap;
+        for block in &blocks {
+            self.draw_text(
+                canvas,
+                block,
+                TextBlock {
+                    metrics: Metrics::new(g.caption_px, g.caption_line),
+                    weight: Weight::MEDIUM,
+                    style: Style::Normal,
+                    wrap: Wrap::WordOrGlyph,
+                    left,
+                    right,
+                    top,
+                    lines: LINES,
+                },
+            );
+            top += g.caption_line * LINES as f32;
+        }
     }
 
     pub fn paint_pill(&mut self, canvas: &mut Canvas, scale: f32, pill: &Pill) {
@@ -347,7 +353,7 @@ mod tests {
     fn bigger_text_asks_for_a_taller_surface() {
         let heights: Vec<u32> = [TextSize::Small, TextSize::Medium, TextSize::Large]
             .into_iter()
-            .map(logical_height)
+            .map(|size| logical_height(size, false))
             .collect();
         assert!(
             heights.windows(2).all(|pair| pair[0] < pair[1]),
@@ -358,12 +364,13 @@ mod tests {
     #[test]
     fn the_box_fits_two_caption_lines_and_the_status_line() {
         let g = Geometry::new(TextSize::Medium, 1.0);
-        assert!(g.height() >= g.caption_line * 2.0 + g.status_line);
+        assert!(g.height(false) >= g.caption_line * 2.0 + g.status_line);
+        assert!(g.height(true) >= g.caption_line * 4.0 + g.status_line);
     }
 
     #[test]
     fn a_frame_paints_the_box_centred_and_leaves_the_sides_clear() {
-        let (width, height) = (3000u32, logical_height(TextSize::Medium));
+        let (width, height) = (3000u32, logical_height(TextSize::Medium, false));
         let mut pixels = vec![0u8; (width * height * 4) as usize];
         let mut canvas = Canvas::new(&mut pixels, width, height);
         let mut captions = Captions::new();
@@ -413,7 +420,7 @@ mod tests {
     #[test]
     fn painting_at_a_fractional_scale_stays_in_bounds() {
         let scale = 1.5;
-        let height = (logical_height(TextSize::Large) as f32 * scale).round() as u32;
+        let height = (logical_height(TextSize::Large, false) as f32 * scale).round() as u32;
         let width = 900;
         let mut pixels = vec![0u8; (width * height * 4) as usize];
         let mut canvas = Canvas::new(&mut pixels, width, height);

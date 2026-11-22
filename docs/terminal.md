@@ -64,8 +64,11 @@ lane costs nothing.
 - Every `Cycle` and `Silence` event carries a `lane` field (`""` for one
   source), and `Flushed(lane, words)` carries each lane's held-back words
   before `Stopped`.
-- The terminal, status bar, overlay and transcript start a labelled paragraph
-  when the speaker changes (`[01:12] you: ...`). The `you` lane going quiet is
+- The terminal and transcript start a labelled paragraph when the speaker
+  changes (`[01:12] you: ...`). The overlay (2026-11-22) stacks the lanes
+  instead: `them` above `you`, two lines each, no grey pending words (one lane
+  decodes at a time, so a lane's pending tail sat there and kept changing). The
+  box grows to four lines on the first lane event. The `you` lane going quiet is
   never reported as "no signal".
 - `--record DIR` writes `audio-you.wav` and `audio-them.wav` next to one
   `events.jsonl`. `vinowhisper-replay --restitch` redoes each lane;

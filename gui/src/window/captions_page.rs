@@ -1,15 +1,6 @@
 use super::*;
 
 impl SettingsWindow {
-    pub(super) fn refresh_echo_line(&self, ctx: &egui::Context) {
-        let line = Arc::clone(&self.echo_line);
-        let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            *line.lock().unwrap() = Some(crate::echo::status(EchoCancel::Auto));
-            ctx.request_repaint();
-        });
-    }
-
     pub(super) fn captions(&mut self, ui: &mut egui::Ui) -> bool {
         let [overlay, listening] = widgets::columns(ui, |ui, column| match column {
             Column::Left => self.overlay(ui),
@@ -76,11 +67,6 @@ impl SettingsWindow {
                         &EchoCancel::ALL,
                         echo_label,
                     );
-                    if let Some(Ok(line)) = self.echo_line.lock().unwrap().as_ref()
-                        && self.settings.echo_cancel == EchoCancel::Auto
-                    {
-                        widgets::small(ui, line);
-                    }
                 });
             Row::new("Hide after silence")
                 .help("0 keeps them up.")
