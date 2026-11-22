@@ -594,7 +594,7 @@ feeds an `EchoWorker` thread, the `them` recorder's tap is its reference, the cl
 the lane's own ring buffer, and the gate signal goes to that lane's `SpeechGate`. `echo_policy.py`
 decides auto/on/off from the default sink (Bluetooth, USB, headphone port off; filter-chain sinks
 followed), `echo_worker.py` re-decides every 3 s and saves the filter per (sink, port, source),
-`echo_text.py` drops `you` lines that repeat `them`, `echo_meter.py` raises the headphones hint.
+`echo_text.py` drops `you` lines that repeat `them`, `echo_meter.py` raises the headphones hint (the overlay ignores it since 2026-11-22).
 The tray passes `echo_cancel` from `gui.json` as `--echo-cancel`; `vinowhisper-caption --echo-status` prints what Auto would do (the settings window
 stopped showing it 2026-11-22). Details, the benchmark and the open items: `docs/echo.md`.
 

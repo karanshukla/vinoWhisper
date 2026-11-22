@@ -13,8 +13,6 @@ const NO_SIGNAL_AFTER_S: f64 = 3.0;
 
 const STATUS_CHARS: usize = 72;
 
-const HINT_SHOWN_FOR: std::time::Duration = std::time::Duration::from_secs(20);
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
     Starting,
@@ -129,7 +127,6 @@ pub struct Captions {
     task: String,
     speech: String,
     echo: Option<String>,
-    hint: Option<(Instant, String)>,
     degraded: bool,
     warning: Option<String>,
     cycles: VecDeque<f64>,
@@ -156,7 +153,6 @@ impl Captions {
             task: String::new(),
             speech: String::new(),
             echo: None,
-            hint: None,
             degraded: false,
             warning: None,
             cycles: VecDeque::new(),
@@ -282,7 +278,7 @@ impl Captions {
                 self.ended();
             }
             Event::EchoStatus { reason, .. } => self.echo = Some(reason),
-            Event::Hint { message, .. } => self.hint = Some((Instant::now(), message)),
+            Event::Hint { .. } => {}
             Event::Error { message } => self.fail(message),
         }
     }
@@ -393,14 +389,6 @@ impl Captions {
         }
         if let Some(echo) = &self.echo {
             spans.push(Span::new(format!(" · echo {echo}"), Tone::Dim));
-        }
-        if let Some((at, message)) = &self.hint
-            && at.elapsed() < HINT_SHOWN_FOR
-        {
-            spans.push(Span::new(
-                format!(" · {}", truncate(message, STATUS_CHARS)),
-                Tone::Warn,
-            ));
         }
         if self.phase == Phase::Live
             && let Some(seconds) = self.hiding_in()
@@ -894,22 +882,5 @@ mod tests {
             .map(|s| s.text.as_str())
             .collect();
         assert!(text.contains("echo off: Bluetooth"), "{text}");
-    }
-
-    #[test]
-    fn a_headphones_hint_shows_in_the_status_in_a_warning_tone() {
-        let mut captions = Captions::new();
-        captions.apply(Event::Hint {
-            kind: "headphones".into(),
-            message: "Headphones will caption you more cleanly.".into(),
-        });
-
-        let hint = captions
-            .status()
-            .1
-            .into_iter()
-            .find(|span| span.text.contains("Headphones"))
-            .expect("the hint");
-        assert_eq!(hint.tone, Tone::Warn);
     }
 }
