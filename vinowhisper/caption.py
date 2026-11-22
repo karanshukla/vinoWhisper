@@ -20,6 +20,9 @@ from . import (
     bundle,
     capture,
     config,
+    echo_lane,
+    echo_policy,
+    echo_text,
     events,
     playing,
     session,
@@ -28,6 +31,8 @@ from . import (
     vad,
 )
 from .client import TranscriptionClient
+from .echo_lane import EchoRecorder
+from .echo_worker import Status
 from .recorder import CaptureError, Recorder, playback_streams, sink_muted
 from .stitch import Stitcher, strip_controls
 from .version import VERSION
@@ -143,8 +148,11 @@ def _taps(
     return both
 
 
-def _ready_event(health: dict, warnings: list[str]) -> events.Ready:
+def _ready_event(health: dict, warnings: list[str], echo: Status | None = None) -> events.Ready:
     return events.Ready(
+        echo_mode=echo.mode if echo else "",
+        echo_active=echo.active if echo else False,
+        echo_reason=echo.reason if echo else "",
         device=str(health.get("device", "?")),
         device_full=str(health.get("device_full_name", "")),
         degraded=bool(health.get("degraded", False)),
@@ -217,7 +225,7 @@ class _Lane:
     language: AgreedLanguage = field(default_factory=AgreedLanguage)
     last_cycle_at_s: float = 0.0
     last_commit_at_s: float = 0.0
-    recorder: Recorder | None = None
+    recorder: Recorder | EchoRecorder | None = None
 
     def delay_s(self) -> float:
         assert self.recorder is not None
@@ -305,6 +313,24 @@ def _cycle(
     )
 
 
+def _echo_for_you(lanes: list[_Lane], mode: str) -> _Lane | None:
+    if mode == echo_policy.OFF:
+        return None
+    return next((lane for lane in lanes if lane.name == events.LANE_YOU), None)
+
+
+def _with_dedup(
+    stream: Iterator[events.Event], dedup: echo_text.EchoDedup | None
+) -> Iterator[events.Event]:
+    for event in stream:
+        if dedup is not None and isinstance(event, events.Cycle):
+            if event.lane == events.LANE_THEM:
+                dedup.heard_them(event.transcript.split())
+            elif event.lane == events.LANE_YOU and dedup.echoed(event.confirmed):
+                event = replace(event, confirmed=[], dropped=event.confirmed)
+        yield event
+
+
 def caption_events(
     source: str,
     target: str | None,
@@ -312,25 +338,43 @@ def caption_events(
     tap: Callable[[np.ndarray], None] | None = None,
     gate: Callable[[list[str]], SpeechGate | None] | None = None,
     lane_taps: Mapping[str, Callable[[np.ndarray], None]] | None = None,
+    echo_cancel: str = echo_policy.OFF,
 ) -> Iterator[events.Event]:
     client = TranscriptionClient(language=True)
     health = client.wait_ready()
     warnings = [str(warning) for warning in health.get("warnings", [])]
     lanes = _lanes(source, target, tap, lane_taps, gate, warnings)
-    yield _ready_event(health, warnings)
+    cancelling = _echo_for_you(lanes, echo_cancel) if source == BOTH else None
+    echo_status = echo_lane.initial_status(echo_cancel) if cancelling else None
+    yield _ready_event(health, warnings, echo_status)
 
     indexes = itertools.count(1)
+    dedup = echo_text.EchoDedup() if cancelling else None
+    last_echo = echo_status
 
     # Wraps the whole with-block so a Ctrl+C during cleanup still exits cleanly.
     try:
         with contextlib.ExitStack() as stack:
-            for lane in lanes:
-                recorder = Recorder(
-                    source=lane.source,
-                    target=lane.target,
-                    tap=_taps(lane.speech.tap if lane.speech else None, lane.tap),
+            ref_feed: Callable[[np.ndarray], None] | None = None
+            if cancelling is not None:
+                you = cancelling
+                echo = echo_lane.EchoRecorder(
+                    lambda feed: Recorder(source="mic", target=None, tap=feed),
+                    echo_cancel,
+                    on_gate=you.speech.tap if you.speech else None,
+                    on_clean=you.tap,
                 )
+                you.recorder = stack.enter_context(echo)
+                ref_feed = echo.worker.feed_ref
+            for lane in lanes:
+                if lane.recorder is not None:
+                    continue
+                feeds = [lane.speech.tap if lane.speech else None, lane.tap]
+                if lane.name == events.LANE_THEM:
+                    feeds.append(ref_feed)
+                recorder = Recorder(source=lane.source, target=lane.target, tap=_taps(*feeds))
                 lane.recorder = stack.enter_context(recorder)
+            started = time.monotonic()
             while True:
                 for lane in lanes:
                     assert lane.recorder is not None
@@ -344,7 +388,19 @@ def caption_events(
                 # One transcription at a time (the server runs them in turn anyway); the lane
                 # with the most unheard audio goes first, so neither starves the other.
                 lane = max(due, key=_Lane.backlog_s)
-                yield from _cycle(lane, client, health, window_s, indexes)
+                yield from _with_dedup(_cycle(lane, client, health, window_s, indexes), dedup)
+                if cancelling is not None and isinstance(
+                    cancelling.recorder, echo_lane.EchoRecorder
+                ):
+                    worker = cancelling.recorder.worker
+                    if worker.status != last_echo:
+                        last_echo = worker.status
+                        yield events.EchoStatus(last_echo.mode, last_echo.active, last_echo.reason)
+                    hint = (
+                        worker.meter.hint(time.monotonic() - started) if last_echo.active else None
+                    )
+                    if hint:
+                        yield events.Hint(kind="headphones", message=hint)
     except KeyboardInterrupt:
         pass
 
@@ -526,8 +582,26 @@ def _parse_args() -> argparse.Namespace:
         help="Decode every sound above the silence level, not only what the speech "
         "detector hears as someone talking. Mumbling and noise then get captioned too.",
     )
+    parser.add_argument(
+        "--echo-cancel",
+        choices=list(echo_policy.MODES),
+        default=echo_policy.AUTO,
+        help="With --source both: take their voice out of the mic lane. 'auto' (default) "
+        "does it on speakers and not on Bluetooth, USB or headphone outputs.",
+    )
+    parser.add_argument(
+        "--echo-status",
+        action="store_true",
+        help="Print what --echo-cancel auto would do on the current output, as JSON, then exit.",
+    )
     parser.add_argument("--version", action="version", version=f"vinowhisper {VERSION}")
     return parser.parse_args()
+
+
+def _echo_status(mode: str) -> int:
+    status = echo_lane.initial_status(mode)
+    print(json.dumps({"mode": status.mode, "active": status.active, "reason": status.reason}))
+    return 0
 
 
 def _list_targets() -> int:
@@ -564,6 +638,8 @@ def main() -> int:
     # (pinned by `test_caption.py::test_characterization_an_inherited_ignored_sigint_is_undone`)
     signal.signal(signal.SIGINT, signal.default_int_handler)
     args = _parse_args()
+    if args.echo_status:
+        return _echo_status(args.echo_cancel)
     try:
         if args.list_targets:
             return _list_targets()
@@ -601,6 +677,7 @@ def main() -> int:
             window_s=args.window,
             tap=writer.audio_chunk if writer and not lanes else None,
             lane_taps={lane: writer.lane_tap(lane) for lane in lanes} if writer else None,
+            echo_cancel=args.echo_cancel,
             gate=None if args.no_speech_gate else speech_gate,
         )
         with json_out or _renderer(plain, debug=args.debug) as renderer:

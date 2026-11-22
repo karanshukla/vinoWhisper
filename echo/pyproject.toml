@@ -1,0 +1,18 @@
+[project]
+name = "vinoecho"
+version = "0.1.0"
+description = "Echo cancellation for vinoWhisper's two-lane captions: LocalVQE's 2.7K filter in numpy and v1.2 as an OpenVINO gate"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11,<3.14"
+dependencies = ["numpy"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vinoecho = ["weights/*.npz"]

@@ -9,11 +9,13 @@ import numpy as np
 
 from tests import pcm
 from vinowhisper import caption, events, replay, session
+from vinowhisper.echo_meter import EchoMeter
 from vinowhisper.ui import RichRenderer
 
 
 class _LaneRecorder:
     made: list["_LaneRecorder"] = []
+    limit = 3
 
     def __init__(self, source, target, tap=None):
         self.source, self.target, self.tap = source, target, tap
@@ -32,7 +34,7 @@ class _LaneRecorder:
 
     def check_alive(self):
         self.checks += 1
-        if self.checks > 3:
+        if self.checks > self.limit:
             raise KeyboardInterrupt
 
     def window(self, seconds):
@@ -182,3 +184,92 @@ def test_the_status_bar_labels_a_paragraph_by_who_spoke():
     text = out.getvalue()
     assert "them: Hello there." in text
     assert "you: Hi." in text
+
+
+class _EchoRecorder:
+    """Stands in for the mic lane's cancelling recorder: a recorder plus a worker to feed."""
+
+    made: list["_EchoRecorder"] = []
+
+    class worker:  # noqa: N801
+        feeds: list = []
+        status = None
+        meter = EchoMeter()
+
+        @staticmethod
+        def feed_ref(chunk):
+            _EchoRecorder.worker.feeds.append(chunk)
+
+    def __init__(self, mic, mode, on_gate, on_clean):
+        self.mode, self.on_gate, self.on_clean = mode, on_gate, on_clean
+        self.inner = mic(lambda chunk: None)
+        self.made.append(self)
+        self.worker.status = caption.Status(mode, True, "on: speakers")
+
+    def __enter__(self):
+        self.inner.__enter__()
+        return self
+
+    def __exit__(self, *exc_info):
+        return None
+
+    def check_alive(self):
+        self.inner.check_alive()
+
+    captured_s = property(lambda self: self.inner.captured_s)
+
+    def window(self, seconds):
+        return self.inner.window(seconds)
+
+
+def _run_echo(monkeypatch, mode):
+    _EchoRecorder.made = []
+    _LaneRecorder.made = []
+    monkeypatch.setattr(caption, "Recorder", _LaneRecorder)
+    monkeypatch.setattr(caption, "TranscriptionClient", _LaneClient)
+    monkeypatch.setattr(caption.echo_lane, "EchoRecorder", _EchoRecorder)
+    monkeypatch.setattr(
+        caption.echo_lane, "initial_status", lambda mode: caption.Status(mode, True, "on: speakers")
+    )
+    return list(caption.caption_events("both", None, 12.0, echo_cancel=mode))
+
+
+def test_the_ready_event_says_whether_the_mic_lane_is_echo_cancelled_and_why(monkeypatch):
+    stream = _run_echo(monkeypatch, "auto")
+
+    ready = stream[0]
+    assert (ready.echo_mode, ready.echo_active, ready.echo_reason) == ("auto", True, "on: speakers")
+    assert len(_EchoRecorder.made) == 1
+    assert [r.source for r in _LaneRecorder.made if r.target is None] != []
+
+
+def test_off_leaves_both_lanes_as_plain_recorders(monkeypatch):
+    stream = _run_echo(monkeypatch, "off")
+
+    assert _EchoRecorder.made == []
+    assert stream[0].echo_mode == ""
+
+
+def test_what_them_just_said_is_not_also_captioned_as_you(monkeypatch):
+    class Client(_LaneClient):
+        def transcribe(self, samples):
+            return "the quarterly numbers are up four percent", 0.1
+
+    monkeypatch.setattr(caption, "TranscriptionClient", Client)
+    monkeypatch.setattr(_LaneRecorder, "limit", 12)
+    _EchoRecorder.made = []
+    _LaneRecorder.made = []
+    monkeypatch.setattr(caption, "Recorder", _LaneRecorder)
+    monkeypatch.setattr(caption.echo_lane, "EchoRecorder", _EchoRecorder)
+    monkeypatch.setattr(
+        caption.echo_lane, "initial_status", lambda mode: caption.Status(mode, True, "on: speakers")
+    )
+
+    stream = list(caption.caption_events("both", None, 12.0, echo_cancel="on"))
+    cycles = [e for e in stream if isinstance(e, events.Cycle)]
+
+    them = [c for c in cycles if c.lane == "them"]
+    you = [c for c in cycles if c.lane == "you"]
+    assert any(c.confirmed for c in them)
+    assert you and not any(c.confirmed for c in you)
+    assert any(c.dropped for c in you)

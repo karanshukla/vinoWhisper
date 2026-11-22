@@ -1,0 +1,7 @@
+vinoEcho
+Copyright 2026 Karan Shukla
+
+daf.py and v12.py, and export/v12_stream.py, are derived from LocalVQE
+(https://github.com/localai-org/LocalVQE, commit 7f61cd05095d), Apache-2.0,
+Copyright the LocalVQE authors. See LICENSE. The weights in
+src/vinoecho/weights/ are LocalVQE's v1.4 2.7K model, converted from its GGUF.

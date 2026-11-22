@@ -52,7 +52,7 @@ def _restitch_lane(directory: Path, lane: str, verbose: bool) -> None:
 
     original = []
     for record in cycles:
-        original.extend(record["confirmed"])
+        original.extend(record["confirmed"] + record.get("dropped", []))
 
     print(prefix + " ".join(printed))
     if original and original != printed:
