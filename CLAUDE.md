@@ -600,7 +600,7 @@ The tray passes `echo_cancel` from `gui.json` as `--echo-cancel`; the settings w
 
 - **The v1.2 IR is on the Hub** (`arankays/localvqe-v1.2-ov`, pinned in
   `vinowhisper/echo_model.json`; the served files hash to the pins, checked 2026-11-22). Bump the
-  revision and the hashes together. Not yet fetched through `source.fetch` on a clean machine.
+  revision and the hashes together. Fetched through `source.fetch` into an empty directory on linuxlab, 2026-11-22.
 - **Nothing here ran on the NPU or with real speakers.** linuxlab checked the port against
   LocalVQE's `daf_cli` (corr 0.999999999 on speech) and ran the whole path on fake devices. The
   voice recordings in `~/aecbench/clips_real` and `real_raw` are Karan's: never fixtures.
