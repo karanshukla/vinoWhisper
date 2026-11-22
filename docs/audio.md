@@ -1,131 +1,67 @@
 # Audio capture
 
-What captures the audio on your machine, and the one question about it
-that this project answered wrong for four days.
+How vinoWhisper captures desktop and microphone audio, handles system mute, and filters silence and non-speech audio.
 
 ## Distro support
 
-Audio capture works two ways, picked automatically:
+Audio capture uses one of two backends, selected automatically:
 
-- **PipeWire** (`pw-record`), preferred, and the only backend that can tap an
-  individual application's playback stream, which is what `--target` is for.
-- **PulseAudio** (`parec`), the fallback. Everything works except
-  per-application capture; `--list-targets` there lists monitor sources and
-  says why.
+- **PipeWire (`pw-record`):** Preferred, and the only backend that supports capturing a single application's playback stream (`--target`).
+- **PulseAudio (`parec`):** Fallback backend. Supports full-sink and microphone capture, but not per-application `--target` (`--list-targets` lists monitor sources instead).
 
-`pactl` is used for the default sink and mute state where present (on PipeWire
-too, via `pipewire-pulse`); without it, PipeWire's own `default.audio.sink`
-metadata answers the same question. On a machine running both stacks where the
-automatic pick is wrong, `VINOWHISPER_CAPTURE_BACKEND=pipewire` or
-`=pulseaudio` forces it.
+When `pactl` is available (including via `pipewire-pulse`), it is used to query the default sink and mute state; otherwise PipeWire's `default.audio.sink` metadata is used. On systems with both stacks installed, set `VINOWHISPER_CAPTURE_BACKEND=pipewire` or `VINOWHISPER_CAPTURE_BACKEND=pulseaudio` to override automatic detection.
 
-Package names per family live in one table in
-[`vinowhisper/distro.py`](../vinowhisper/distro.py), so `vinowhisper-doctor` and
-the wizard both speak your distro:
+Per-distro package mappings live in [`vinowhisper/distro.py`](../vinowhisper/distro.py) and are shared by `vinowhisper-setup` and `vinowhisper-doctor`:
 
 | Family | Covered | Confidence |
 |---|---|---|
-| Fedora / RHEL / Alma / Rocky / Nobara | ✓ | Built and run here |
-| Fedora Atomic (Silverblue, Kinoite, Bazzite) | ✓ `rpm-ostree install` | From the docs, not from use; `pw-record` ships in the image |
-| Debian / Ubuntu / Pop / Mint / elementary / Raspbian | ✓ | From the package index, not from use |
-| Arch / CachyOS / EndeavourOS / Manjaro / Garuda | ✓ | Same |
-| openSUSE / SLES | ✓ | Same |
-| openSUSE Aeon / MicroOS | ✓ `transactional-update pkg install` | Same |
-| Void, Gentoo, Alpine | ✓ | Same |
-| NixOS | ✓ | Configuration advice, not `nix-env` lines: imperative installs there do not persist |
-| Anything else | degrades | Generic advice, and it says so |
+| Fedora / RHEL / Alma / Rocky / Nobara | ✓ | Tested on hardware |
+| Fedora Atomic (Silverblue, Kinoite, Bazzite) | ✓ (`rpm-ostree install`) | From docs, untested; `pw-record` ships in the image |
+| Debian / Ubuntu / Pop / Mint / elementary / Raspbian | ✓ | From package index, untested |
+| Arch / CachyOS / EndeavourOS / Manjaro / Garuda | ✓ | From package index, untested |
+| openSUSE / SLES | ✓ | From package index, untested |
+| openSUSE Aeon / MicroOS | ✓ (`transactional-update pkg install`) | From package index, untested |
+| Void, Gentoo, Alpine | ✓ | From package index, untested |
+| NixOS | ✓ | Configuration snippets (imperative `nix-env` installs do not persist) |
+| Other distros | Degrades | Generic advice with a clear notice |
 
-**If a package name is wrong for your distro, that is expected, and it is the
-fastest thing here to fix.** See [CONTRIBUTING.md](../CONTRIBUTING.md) or the
-distro-support issue template.
+If a package name is incorrect for your distribution, please report it via [CONTRIBUTING.md](../CONTRIBUTING.md) or the distro-support issue template.
 
-That is also why the wizard and the doctor print these commands rather than
-run them unasked. They carry `-y` or `--needed` so they work exactly as
-printed, and every NPU entry points at the upstream release as the
-authoritative fallback. The family is matched on `ID` in `/etc/os-release`
-first, and on `ID_LIKE` only when the `ID` is unknown, since `ID_LIKE` is often
-missing or unhelpful.
+Because non-Fedora entries are untested, `vinowhisper-setup` and `vinowhisper-doctor` print commands for confirmation rather than running them silently. Printed commands include `-y` or `--needed` so they can be run as shown, and NPU entries link to Intel's upstream release as a fallback. Distribution detection matches `/etc/os-release` on `ID` first, falling back to `ID_LIKE` only if `ID` is unrecognized.
 
-## "Captions stop when you mute the system"
+## System mute and volume behavior
 
-They don't, and this section used to say the opposite at length. Measured with
-`vinowhisper-doctor` on 2026-08-07, always against a Chrome stream playing the
-same audio as a control:
+System mute and volume sliders do **not** stop captions on PipeWire. Measured with `vinowhisper-doctor` on 2026-08-07 against a Chrome playback stream as a control:
 
-| Sink state | Default sink monitor | Chrome stream | Monitor / app |
+| Sink state | Default sink monitor | Chrome stream | Monitor / app ratio |
 |---|---|---|---|
 | 100% volume | 0.01419 | 0.02040 | 0.70 |
 | 20% volume | 0.05739 | 0.06610 | 0.87 |
 | **Muted** | **0.08578** | **0.08781** | **0.98** |
 
-The ratio is the measurement, not the absolute levels, since the content
-differed between runs. It doesn't move with the volume slider and it doesn't
-move on mute. **The sink monitor is both pre-volume and pre-mute here.**
-`pw-dump` agrees on the volume half: `monitor.channel-volumes` is unset, and
-PipeWire defaults it to `false`.
-
-So the original diagnosis was wrong, and so was every mitigation built on it.
-Lowering the volume costs nothing. Muting the system costs nothing. The
-earlier threshold-lowering work was chasing a mechanism that isn't there.
+Because the audio content varied across runs, the monitor-to-app ratio is the relevant metric: it stays high regardless of volume or mute state. On PipeWire, `monitor.channel-volumes` defaults to `false` (confirmed via `pw-dump`), so the default sink monitor taps audio pre-volume and pre-mute.
 
 ### What actually silences the capture
 
-1. **Muting the application rather than the system.** YouTube's own mute
-   button, or Chrome's slider in the KDE mixer. The app then writes silence
-   into its own PipeWire stream, and there is no tap upstream of that.
-   `--target` does not help, because the stream it would capture is the
-   silence. Note the node stays listed in `--list-targets` the whole time,
-   because that lists nodes that exist, not nodes carrying signal. This is the
-   likeliest explanation for the original report.
-2. **`--target effect_output.bass_eq`.** It shows up in `--list-targets` as
-   the most obvious-looking choice and is the worst one: it sits on the
-   *output* side of the EQ chain, downstream of both volume and mute. It
-   measured 0.00034 at 20% volume and 0.00000 while muted, in the same runs
-   where the sink monitor read 0.05739 and 0.08578. It is the one node here
-   that genuinely is post-everything. Aim at a real application instead.
-3. **Nothing playing.** `vinowhisper-doctor` says so explicitly when every
-   target reads zero.
+1. **Muting the application itself:** Using YouTube's mute button or muting Chrome in the desktop mixer causes the app to write silence into its PipeWire stream. `--target` cannot bypass this because the stream itself is silent (the node still appears in `--list-targets`, which lists existing nodes rather than active signal).
+2. **Targeting `effect_output.bass_eq`:** Although `--target effect_output.bass_eq` appears in `--list-targets`, it sits downstream of both volume and mute. In the 2026-08-07 measurements, it dropped to 0.00034 RMS at 20% volume and 0.00000 while muted while the sink monitor read 0.05739 and 0.08578. Target a real application stream instead.
+3. **Nothing playing:** `vinowhisper-doctor` reports explicitly when all probed targets read zero.
 
-Quiet-but-not-silent audio is handled separately: every window is boosted
-toward a speech-like level (`config.TARGET_RMS`, up to 20x) before it reaches
-the model, since Whisper's accuracy degrades on quiet input. Ordinary web
-video lands around 0.014 rms, so this earns its place on source material
-alone, independent of the volume question above.
+Quiet audio is normalized separately: every window is boosted toward `config.TARGET_RMS` (up to 20x gain) before inference, since typical web video sits around 0.014 RMS and Whisper accuracy drops on quiet input.
 
 ## Silence
 
-True digital silence on a sink monitor measures about 0.0 to 0.004 rms, from
-dither and the EQ chain's noise. The 0.002 gate (`config.SILENCE_RMS_THRESHOLD`)
-only saves NPU cycles on dead air. It is not the defence against
-hallucinations; that is the two-cycle commit policy plus `collapse_repeats`.
-Raise it and quiet speech, which really does sit near the noise floor, gets
-dropped.
+Digital silence on a sink monitor measures roughly 0.0–0.004 RMS due to dither and EQ noise. The 0.002 RMS threshold (`config.SILENCE_RMS_THRESHOLD`) exists only to save NPU cycles on dead air; hallucinations are suppressed by the two-cycle commit policy and `collapse_repeats`. Raising this threshold risks dropping quiet speech.
 
-Some silence is normal, so the terminal only prints its "no signal" notice
-after 45 seconds of it. That much, while someone expects captions, is a
-symptom, and the notice points at the causes above.
+Because brief pauses are normal, the terminal displays a "no signal" troubleshooting notice only after 45 continuous seconds of silence.
 
 ## Sound that is not speech (2026-11-13)
 
-Whisper writes words for whatever it is given, and the level gate passes anything
-louder than dead air, which the 20x gain then brings up to speech level. So since
-2026-11-13 the caption loop runs every captured chunk through Silero VAD (the same
-pinned model as file imports, `vad.py`) on the capture thread, and before each decode:
+Whisper transcribes non-speech audio if passed through the RMS gate (especially after up to 20x normalization). Since 2026-11-13, the caption loop runs each captured chunk through Silero VAD (the same pinned model used for file imports in `vad.py`) on the capture thread:
 
-- a window with under `config.CAPTION_MIN_SPEECH_S` (0.3s) of speech is not sent;
-  it is a `Silence` event with `no_speech` set, shown as "no speech" rather than "no
-  signal", and the 45-second dead-capture notice does not fire for it;
-- anything further than `TRIM_PAD_S` from speech is scaled by 1e-4 before the gain,
-  so a music bed or a hum between two sentences never reaches Whisper.
+- Windows containing less than `config.CAPTION_MIN_SPEECH_S` (0.3s) of detected speech are skipped, emitting a `Silence` event with `no_speech` set. The UI shows "no speech" instead of "no signal", and the 45-second dead-capture notice does not fire.
+- Audio further than `TRIM_PAD_S` from detected speech is scaled by `1e-4` before gain normalization so background music or hum between sentences does not reach Whisper.
 
-`--no-speech-gate` turns it off. If the detector cannot load, `Ready.warnings` says so
-and captions decode every sound, as before.
+Pass `--no-speech-gate` to disable Silero VAD. If the detector fails to load, `Ready.warnings` reports the error and captioning falls back to decoding all audio above the RMS gate.
 
-**It does not stop mumbling.** Silero detects a voice, not words. Measured on espeak-ng
-speech (2026-11-13): reversed speech and speech low-passed with a 30 to 120 tap filter
-all score a median 1.00, the same as clear speech, at either 0.5 or 0.8, while noise and
-a 120 Hz hum score 0. What would catch mumbling is Whisper's own confidence
-(`no_speech_prob` and the average log-probability), which the NPU static pipeline does
-not return; our own decode loop (`whisper_step.py`) has the logits. Auto language with
-translate makes it worse, since it forces English sentences out of a guessed language.
-Unit tests only; not yet run in a live caption session.
+**Mumbling is not filtered:** Silero detects voice-like energy rather than intelligible words. Measured on `espeak-ng` audio (2026-11-13), reversed speech and low-passed speech (30–120 tap filters) all scored a median 1.00 (identical to clear speech) at thresholds of both 0.5 and 0.8, while noise and 120 Hz hum scored 0. Filtering unintelligible speech requires Whisper confidence scores (`no_speech_prob` and average log-probability), which OpenVINO's NPU static pipeline does not expose (though the custom decode loop in `whisper_step.py` has access to logits). Using `--language auto` with `--task translate` amplifies hallucinations on mumbled audio by forcing English output from a guessed language. Covered by unit tests; not yet verified in a live caption session.

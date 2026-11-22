@@ -1,13 +1,8 @@
-# The overlay: captions and dictation
+# Overlay and dictation
 
-`vinowhisper-tray` puts the captions in a small box that floats above every
-other window, fullscreen video included. It adds a tray icon and a global
-keyboard shortcut. It is optional: the terminal captions need none of it, and
-installing it adds nothing to the Python package.
+`vinowhisper-tray` displays live captions in a floating box above all other windows (including fullscreen video), adds a system tray icon and global keyboard shortcuts, and provides hold-to-talk and hands-free dictation. It is optional and adds no dependencies to the Python package.
 
-It is a renderer, not a second implementation. It runs `vinowhisper-caption
---json` and draws the events that come back, so capture, stitching, the
-server and every fix to them are shared with the terminal UI.
+The tray spawns `vinowhisper-caption --json` and renders its event stream directly, so audio capture, stitching, and server logic remain shared with the terminal UI.
 
 ## Install
 
@@ -15,199 +10,76 @@ server and every fix to them are shared with the terminal UI.
 vinowhisper-setup --gui
 ```
 
-That downloads `vinowhisper-tray-x86_64-linux` from the GitHub release matching
-your installed vinoWhisper and checks it against the sha256 pinned inside the
-Python package. It installs the binary into `~/.local/bin`, adds a launcher
-entry, and asks whether to start the tray at login. A plain
-`vinowhisper-setup` offers the same step when it runs in a Wayland session.
-Both skip it on GNOME, where the overlay can't start ([below](#where-it-works)).
-Nothing needs Rust.
+`vinowhisper-setup --gui` downloads `vinowhisper-tray-x86_64-linux` and `vinowhisper-gui` from the matching GitHub Release, verifies both against SHA-256 digests pinned in the Python package (`vinowhisper/tray_release.json` and `vinowhisper/gui_release.json`), installs them into `~/.local/bin`, writes desktop launchers, and offers to enable autostart at login. Plain `vinowhisper-setup` offers this step on supported Wayland sessions and skips it on GNOME (see [Where it works](#where-it-works)).
 
-**It is not on PyPI, on purpose.** A Rust GUI has no place inside a Python
-wheel, and `pip install vinowhisper` stays the terminal tool alone. The link
-between the two is the pin. The release workflow builds the binary, writes its
-sha256 into the wheel (`vinowhisper/tray_release.json`), and only then builds
-the wheel, so the digest on PyPI and the binary on GitHub come out of one
-workflow run. The settings window, `vinowhisper-gui`, is pinned the same way
-(`gui_release.json`) and installed by the same step, after the tray. It is a
-glibc build made on Ubuntu 22.04, so it needs glibc 2.35 or newer; the tray is
-static and needs nothing. A tray without the window still works, so a missing
-window leaves the step unfinished rather than failed.
+- **Distribution details:** The Rust binaries are hosted on GitHub Releases rather than bundled in the PyPI wheel. `vinowhisper-tray` is a static musl binary (6.0 MB release; 6.3 MB local glibc build, 5.6 MB before dictation; measured 2026-09-12, 135 pure-Rust crates) with no runtime library requirements. `vinowhisper-gui` is built on Ubuntu 22.04 and requires glibc 2.35+; if it is missing, the tray continues to work.
+- **Verification rules:** Any hash mismatch aborts without installing. Source checkouts and unpinned wheels have no release pin and build locally with Cargo instead of downloading unverified binaries. Prebuilt assets are currently `x86_64` only.
 
-- **A mismatch installs nothing**, not even a partial file, and fails setup.
-- **No pin means no download.** A source checkout has no pin, and neither does
-  a wheel built outside the release workflow. There the wizard offers a cargo
-  build instead, never an unverified binary. It is the same line
-  `model_digests.json` draws for the model export.
-- **x86_64 only**, for now. On other architectures the wizard points at cargo.
-
-From a checkout, with a Rust toolchain ([rustup](https://rustup.rs) or your
-distro's `cargo` package), either of these builds it locally:
+To build from a checkout (requires `cargo` / [rustup](https://rustup.rs)):
 
 ```bash
-vinowhisper-setup --gui        # sees the checkout and offers `cargo build`
-./scripts/install.sh --gui     # the bootstrap installer; rebuilds both on every run
+vinowhisper-setup --gui        # detects checkout and offers cargo build
+./scripts/install.sh --gui     # bootstrap installer; rebuilds both binaries
 ```
 
-Or by hand:
+Or manually:
 
 ```bash
 cargo build --release --locked --manifest-path tray/Cargo.toml
 install -Dm755 tray/target/release/vinowhisper-tray ~/.local/bin/vinowhisper-tray
 cargo build --release --locked --manifest-path gui/Cargo.toml
 install -Dm755 gui/target/release/vinowhisper-gui ~/.local/bin/vinowhisper-gui
-vinowhisper-tray --install --autostart   # launcher, icon, tray at login
+vinowhisper-tray --install --autostart   # launcher, icons, autostart at login
 ```
 
-The release asset is a fully static musl build, 6.0MB, so the same file runs
-on any distro's libc. A local `cargo build` is 6.3MB (5.6MB before dictation) and links only libc
-(both measured 2026-09-12). Every dependency is pure Rust and compiled in, and
-the 135 crates it pulls in are a build-time cost only.
+**Distro packaging status:** Not yet packaged in distros (Fedora ships OpenVINO 2025.1.0, below the 2026.4.1 floor, and lacks `openvino-genai` and `optimum`; checked 2026-09-12). Packagers can export `.desktop` files and icons with `vinowhisper-tray --export-desktop DIR` (using bare `vinowhisper-tray` in `Exec`), and `vinowhisper-setup --gui` detects `/usr/bin/vinowhisper-tray`.
 
-A distro package is not available yet. Fedora cannot package the Python side:
-its openvino is 2025.1.0, older than the 2026.4.1 floor, and openvino-genai
-and optimum are not packaged (checked 2026-09-12). Packaging the overlay alone
-is planned. `vinowhisper-tray --export-desktop DIR` writes both desktop entries
-and the icons for a packager, with the launcher naming the `vinowhisper-tray` command
-rather than a path, since a buildroot path would be wrong once installed.
-`vinowhisper-setup --gui` already recognises a copy in /usr/bin.
+**Locating `vinowhisper-caption`:** The tray searches `PATH`, then `~/.local/bin`, then its own directory. Override with `--caption PATH` or `$VINOWHISPER_CAPTION`.
 
-It needs `vinowhisper-caption` from the Python package. It looks for it on
-`PATH`, then in `~/.local/bin` (where `vinowhisper-setup` links it), then next
-to its own binary. `--caption PATH` or `$VINOWHISPER_CAPTION` override the
-search.
+**Launchers and autostart:** First launch creates the main `.desktop` launcher only if absent (avoiding shadowing a packaged or `--caption`-pinned entry). Icons and the Settings app-menu entry (`io.github.karanshukla.vinowhisper.settings.desktop`, matching the settings window's app ID so Plasma displays its icon rather than a generic Wayland icon; fixed 2026-10-11) are kept up to date automatically. Autostart launches with `--hidden` so the NPU stays idle until requested; toggling **Start at login** in the tray menu (or re-running `--install` without `--autostart`) adds or removes it.
 
-**The launcher and autostart.** The first run writes a launcher only if there
-is none: `--install` may have baked a `--caption` path into one, and a
-packaged launcher must not be shadowed by a copy in the home directory. The
-icons are the exception, rewritten whenever they differ, since they hold
-nothing of yours. So is a second entry, "vinoWhisper Settings" in the app
-menu (`io.github.karanshukla.vinowhisper.settings.desktop`), which runs
-`vinowhisper-gui` from beside the tray. Its file name is the settings window's
-app id, which is how Plasma's task manager finds the window's icon. Without it
-the window showed the generic Wayland icon (found 2026-10-11). The autostart
-entry runs `--hidden`, so it starts in the tray without touching the NPU until
-asked. The tray's "Start at login"
-checkmark writes or removes that entry (baking in `--caption` if this instance
-was started with one); re-running `--install` without `--autostart` also
-turns it off.
+## Using the overlay
 
-## Using it
+Launch **vinoWhisper** from the app menu or run `vinowhisper-tray`. A dark, mostly opaque box (~70 characters wide) appears at the bottom of the screen (or top, for videos with burned-in bottom subtitles) with a status bar above two caption lines. Pending unconfirmed words render dimmed, and a non-NPU fallback adds a red border. All mouse clicks pass straight through the box to windows underneath.
 
-Launch it from the app menu or run `vinowhisper-tray`. The box appears at the
-bottom of the screen with a status line (device, lag, silence) above two lines
-of captions. Words still waiting on a second cycle to confirm them are shown
-dimmed, the same rule the terminal uses. They matter more here: with only two
-lines, showing nothing until two cycles agree reads as a frozen caption rather
-than one still being decided.
+### Controls
 
-The box is dark and mostly opaque, because legibility over a white video frame
-matters more than seeing the frame through it, and about 70 characters wide, a
-comfortable reading measure. The newest lines sit at the bottom and older text
-leaves at the top. On a device below the NPU the whole frame gets a red
-border, the terminal's rule carried over.
+- **Global shortcuts:** `Meta+Alt+C` toggles captions; `Meta+H` triggers [dictation](#dictation).
+- **Tray icon:** Left-clicking toggles captions. The context menu exposes frequent controls: **Show captions**, **Listen to** (system audio, microphone, or both as two lanes), **Recent dictations** (last 5, newest first, plus **Clear** and **Add to dictionary…**), active dictation shortcut display, **Settings…** (`vinowhisper-gui`), **Start at login**, and **Quit**. Position, text size, transcript saving, language/translation, shortcuts, cleanup, and links (`vinopilot.ca` and sibling vinoPilot apps on About) live in `vinowhisper-gui`.
+- **CLI control commands** (forwarded to the running tray instance):
+  - `vinowhisper-tray show | hide | toggle | quit | restart`
+  - `vinowhisper-tray dictate | dictate-press | dictate-release`
+  - `vinowhisper-tray reload`: reloads `gui.json` and `language.json`. Source, position, text size, tray idle delay, hide-after-silence delay, and language apply immediately; `save_transcripts` applies on the next caption session; editing `shortcut` has no effect once bound in the portal. Switching language while dictating is refused (`reload` exits 1 and restores `language.json`).
+  - `vinowhisper-tray shortcuts` / `configure-shortcut`: prints portal-bound shortcuts as JSON or opens the portal configuration dialog.
 
-The box ignores the mouse completely: clicks go straight through to whatever
-is underneath, so it never blocks the video controls it sits over. It is
-driven from three places instead:
+### Idle, auto-hide, and configuration behavior
 
-| | |
-|---|---|
-| **Shortcut** | Meta+Alt+C by default. Shows or hides the captions. Meta+H is [dictation](#dictation) |
-| **Tray icon** | The app's own mark, drawn in Breeze's style (see [The icon](#the-icon)). Left click does the same. The menu keeps what you reach for mid-video: Show captions, Listen to (system audio, microphone, or both as two lanes), Recent dictations (the last five, newest first, with Clear), the dictation key, Settings…, Start at login, and Quit. Everything else (position, text size, transcripts, language, translation, shortcuts, and the links to vinopilot.ca and the other vinoPilot apps on its About page) is in the settings window, `vinowhisper-gui`, which Settings… opens |
-| **Command** | `vinowhisper-tray show`, `hide`, `toggle`, `dictate`, `quit`, `reload`, `shortcuts`, `configure-shortcut`, sent to the running instance. `reload` re-reads `gui.json` and `language.json`: source, position, size, tray idle time, the hide-after-silence delay and language apply at once, saving transcripts from the next session, and a changed `shortcut` not at all, since the portal keeps the binding you already have. A language change while dictating is refused: `reload` exits 1 with the reason and the tray writes `language.json` back, so the window shows what is really in use. `shortcuts` prints what the desktop bound, as JSON. The settings window sends all three |
+- **Hiding stops capture:** Hiding the box stops `vinowhisper-caption` so the transcription server can idle out after 5 minutes ([architecture.md](architecture.md)). Showing it starts a fresh session (also resetting errors).
+- **Auto-hide on silence:** After 3s of `Silence` events (whole-window RMS under `SILENCE_RMS_THRESHOLD`), the status bar counts down (`no signal 4s · … · hiding in 11s`) and hides the box at 15s, stopping capture. Speech cancels the countdown. Configured via `hide_after_silence_s` in `gui.json` (Settings → Captions → **Hide after silence**; `0` disables; untested on hardware as of 2026-10-11).
+- **Passive tray icon:** After 30 wall-clock minutes with captions hidden and no dictation (`CLOCK_BOOTTIME` `timerfd`, so suspend time counts without waking the machine; fixed 2026-09-22 from monotonic calloop `Timer`), the tray marks itself `Passive` so Plasma tucks it behind the panel arrow (measured over D-Bus 2026-09-21). Showing captions or dictating restores it. Configured via `tray_idle_minutes` in `gui.json` (read at startup; `0` disables).
+- **Saving transcripts:** Toggle **Save transcripts** (`save_transcripts` in `gui.json`, off by default) to pass `--transcript` on the next caption start ([terminal.md](terminal.md)). Completed sessions bundle into `.vwsession` files, summarise in the background, and can be browsed in `vinowhisper-gui --sessions` ([sessions.md](sessions.md)). Unit-tested as of 2026-10-07.
+- **Config files:** UI settings live in `~/.config/vinowhisper/gui.json`; speech model, language, and task live in `~/.config/vinowhisper/language.json` (shared with the server). Changing language runs `vinowhisper-server --stop` so the next session loads the new model; switching mid-dictation is refused for 3s on the pill to avoid dropping the recording. Unreadable config files log a warning and fall back to defaults.
 
-**Hidden means stopped.** Hiding the box also stops the caption process. A
-hidden box that kept transcribing would keep the server from ever idling out,
-and scale-to-zero is why the server is started on demand at all
-([architecture.md](architecture.md)). Showing it again starts a fresh
-session, which also retries after an error.
+### Global shortcuts
 
-**Silence hides it too.** Once the capture has been silent for 3 seconds the
-status line counts down ("no signal 4s · … · hiding in 11s"), and at 15
-seconds of silence the box hides itself, stopping the session like any other
-hide. Speech before then cancels the countdown. Silence is the caption loop's
-own `Silence` event (whole-window RMS under `SILENCE_RMS_THRESHOLD`), so the
-count starts once the last window has gone quiet, not at the last word. The
-delay is `hide_after_silence_s` in `gui.json` ("Hide after silence" on the
-settings window's Captions page), and 0 keeps the box up. Untested on
-hardware as of 2026-10-11.
+On Wayland, global shortcuts are managed by `xdg-desktop-portal`. On Plasma, a confirmation dialog appears on first run; afterward the bindings live in **System Settings → Shortcuts → vinoWhisper** (or click **Change…** on Settings → Shortcuts, which requires portal v2 `ConfigureShortcuts`). The `shortcut` key in `gui.json` (XDG syntax, default `LOGO+ALT+C`) sets only the initial preferred trigger.
 
-After 30 minutes with the captions hidden and no dictation, the tray icon
-reports itself Passive, which Plasma moves into the hidden icons behind the
-panel's arrow. Showing captions or dictating brings it back. Same mechanism
-as waydroid-tray; measured flipping both ways over D-Bus on 2026-09-21. The
-delay is `tray_idle_minutes` in `gui.json`, and 0 keeps the icon in view.
-It is read at startup, so restart the overlay after changing it.
-
-The 30 minutes are wall-clock minutes, suspend included: the timer is a
-`CLOCK_BOOTTIME` timerfd. Until 2026-09-22 it was calloop's `Timer`, which
-runs on the monotonic clock, and that clock stops while the laptop sleeps. On
-a laptop that suspended often, three hours on the clock were 23 minutes to the
-timer, and the icon never tucked away. A timer that expires during suspend
-fires on resume, and it never wakes the machine (that would be
-`CLOCK_BOOTTIME_ALARM`).
-
-**Save transcripts** is a checkmark, off by default, stored as `save_transcripts`
-in `gui.json`. When it is set the overlay adds `--transcript` to the caption
-command, and Python does all the writing: see [terminal.md](terminal.md) for the
-file and where it goes. It applies from the next time the captions start, so
-toggling it while they are showing changes nothing until they are hidden and
-shown again. Not run against a live overlay as of 2026-10-07; the argv and the
-settings file are covered by unit tests.
-
-Saved sessions are kept as `.vwsession` bundles and summarised in the background.
-The sessions window (`vinowhisper-gui --sessions`) lists them, and the tray posts a
-notification when a summary is ready: see [sessions.md](sessions.md).
-
-Settings are remembered in `~/.config/vinowhisper/gui.json`, except the language, which lives in `~/.config/vinowhisper/language.json` because the server reads it too. Changing it runs `vinowhisper-server --stop`, and the next caption or dictation starts the server on the new model. While you are dictating (recording, transcribing, or text not yet pasted) the switch is refused: the pill says so for three seconds and the language stays as it was, because a restart would drop the recording. Live captions are not protected the same way; switching restarts them on purpose. An
-unreadable one is reported and ignored, and every field has a default, so a
-bad settings file never stops captions from starting. The top position is for
-video that burns its own subtitles into the bottom of the frame.
-
-### The shortcut
-
-Wayland does not let an app grab a key while another window has focus, so the
-shortcut goes through the desktop portal: the app asks for one, the desktop
-decides. On Plasma a dialog asks you to confirm it the first time. You can
-also pick a different key right there. After that the binding lives in the
-desktop's own settings, like any other shortcut. The settings window's
-Shortcuts page shows what is bound, and its **Change…** button opens that
-settings page; or go to System Settings > Shortcuts, where it is listed under
-*vinoWhisper*.
-
-The preferred trigger only matters the first time. It is `shortcut` in
-`gui.json`, in the XDG shortcuts syntax (`LOGO+ALT+C`). Editing it later does
-not move a binding that already exists; rebind it in the desktop instead.
-
-**The portal needs a launcher.** Measured 2026-09-12 on Plasma 6.7: with no
-`.desktop` file, the portal refuses the app id ("App info not found"), and
-the shortcut portal then refuses the shortcut ("An app id is required"). So
-the first run writes the launcher itself if `--install` never did. With no
-portal at all, bind the commands below instead; they reach the running
-instance the same way.
+Measured 2026-09-12 on Plasma 6.7: the portal requires an installed `.desktop` file to resolve an app ID ("App info not found" / "An app id is required"), which is why the tray creates its launcher automatically on first run if missing.
 
 ### Without a shortcuts portal
 
-Sway, niri and COSMIC have no GlobalShortcuts portal, and Hyprland's
-registers the shortcuts but leaves the key to you (`preferred_trigger` is
-ignored). The tray logs "no global shortcut" and keeps running; bind its
-commands in the compositor instead:
+Sway, niri, and COSMIC do not implement `GlobalShortcuts`, and Hyprland ignores `preferred_trigger`. The tray logs `no global shortcut` and continues running; bind its CLI commands directly in your compositor:
 
-| Command | Does | Bind it to |
+| Command | Action | Bind to |
 |---|---|---|
-| `vinowhisper-tray toggle` | show or hide the captions; starts the tray if it is not running | a key press |
-| `vinowhisper-tray dictate-press` | the dictation key going down | a key press |
-| `vinowhisper-tray dictate-release` | the dictation key coming up: types what was said, or turns a short tap into hands-free | the same key's release |
-| `vinowhisper-tray dictate` | a whole tap: start, or stop and type | a key press, where the compositor has no release bindings |
+| `vinowhisper-tray toggle` | Show/hide captions (starts tray if stopped) | Key press |
+| `vinowhisper-tray dictate-press` | Dictation key down | Key press |
+| `vinowhisper-tray dictate-release` | Dictation key up (types, or starts hands-free on short tap) | Key release |
+| `vinowhisper-tray dictate` | Tap toggle (start, or stop and type) | Key press (if no release bindings) |
 
-Press and release together give the same hold-to-talk and tap-for-hands-free
-behaviour as the portal, timed in the tray (`dictation::TAP`, 350ms). The
-`dictate*` commands do nothing when the tray is not running, so start it at
-login (`vinowhisper-tray --autostart`, or `exec vinowhisper-tray --hidden`
-in the compositor's config).
+Press + release bindings reproduce full hold-to-talk and tap-for-hands-free behavior (`dictation::TAP` = 350 ms). `dictate*` commands require the tray to be running (`vinowhisper-tray --autostart` or `exec vinowhisper-tray --hidden`).
 
-Sway (`~/.config/sway/config`):
+**Sway (`~/.config/sway/config`):**
 
 ```
 bindsym --no-repeat $mod+Alt+c exec vinowhisper-tray toggle
@@ -215,11 +87,9 @@ bindsym --no-repeat $mod+h exec vinowhisper-tray dictate-press
 bindsym --release $mod+h exec vinowhisper-tray dictate-release
 ```
 
-`--no-repeat` matters: without it Sway runs the press binding again on every
-key repeat while you hold the key, about 25 processes a second. The tray
-ignores the extra presses, but there is no reason to start them.
+Use `--no-repeat` so holding the key does not spawn ~25 extra processes per second.
 
-Hyprland (`~/.config/hypr/hyprland.conf`):
+**Hyprland (`~/.config/hypr/hyprland.conf`):**
 
 ```
 bind = SUPER ALT, C, exec, vinowhisper-tray toggle
@@ -227,8 +97,7 @@ bind = SUPER, H, exec, vinowhisper-tray dictate-press
 bindr = SUPER, H, exec, vinowhisper-tray dictate-release
 ```
 
-niri (`~/.config/niri/config.kdl`) has no release bindings, so dictation is
-tap to start, tap to finish (hands-free also stops itself after silence):
+**niri (`~/.config/niri/config.kdl`)** (tap mode only; hands-free also auto-stops on silence):
 
 ```
 binds {
@@ -237,139 +106,51 @@ binds {
 }
 ```
 
-COSMIC: Settings > Keyboard > Keyboard Shortcuts > Custom Shortcuts, with
-`vinowhisper-tray toggle` and `vinowhisper-tray dictate` as the commands.
+**COSMIC:** Settings → Keyboard → Keyboard Shortcuts → Custom Shortcuts for `vinowhisper-tray toggle` and `vinowhisper-tray dictate`.
 
-Checked 2026-10-24 on headless Sway 1.9 (Ubuntu 24.04), keys sent over VNC,
-with a stub in place of `vinowhisper-dictate`: the bindings above gave
-hold-to-talk, tap-for-hands-free and tap-to-finish, the text went on the
-clipboard through wlr-data-control and was pasted into foot by the virtual
-keyboard, and `toggle` showed and hid the overlay. Hyprland, niri and COSMIC
-are from their documentation.
-
-**Change…** needs version 2 of the shortcut portal, where
-ConfigureShortcuts first appears. On version 1 the binding is still an
-ordinary desktop shortcut, so change it in System Settings instead.
+Verified 2026-10-24 on headless Sway 1.9 (Ubuntu 24.04, VNC input, stubbed `vinowhisper-dictate`): hold-to-talk, tap-for-hands-free, tap-to-finish, and `toggle` all worked. Hyprland, niri, and COSMIC configs are from documentation.
 
 ## Dictation
 
-Added 2026-09-21, from [issue #12](https://github.com/karanshukla/vinoWhisper/issues/12).
-The overlay also types what you say into whatever window has focus.
+Added 2026-09-21 ([issue #12](https://github.com/karanshukla/vinoWhisper/issues/12)). Dictation types spoken text into whichever window currently has focus.
 
-- **Hold** the dictation key, talk, release: the text is typed on release.
-- **Tap** it (shorter than 350ms) to start hands-free, talk, tap again to finish.
-  Or just stop talking: after at least 0.5s of speech and then 2.5s of quiet,
-  it finishes by itself. Quiet before you have said anything never ends it, and
-  a held key never auto-stops. Added 2026-10-07, from
-  [issue #56](https://github.com/karanshukla/vinoWhisper/issues/56).
+- **Hold-to-talk:** Hold `Meta+H` (matching Windows `Win+H` / laptop F-row dictation keys), speak, and release to type.
+- **Hands-free mode ([issue #56](https://github.com/karanshukla/vinoWhisper/issues/56), 2026-10-07):** Tap `Meta+H` (<350 ms) to start hands-free, then tap again to finish—or pause speaking (auto-stops after ≥0.5s of speech followed by 2.5s of silence; silence before speech never stops it, and held keys never auto-stop).
 
-**What the desktop shows when it types.** Wayland lets no app type into another without
-asking, so dictation types through the desktop's remote-control portal, and the desktop
-tells you when that starts:
+Rebind under Settings → Shortcuts → **Change…** or System Settings (*Dictate*). Verified 2026-09-21 on KDE: adding `Meta+J` beside `Meta+H` sent `ShortcutsChanged` (`"Meta+H, Meta+J"`) and worked immediately for hold-to-talk.
 
-- **Your first dictation** opens a "Remote Control Requested" dialog. Allow it, and tick
-  "Allow … without asking next time" (Plasma 6.8) so it does not come back.
-- **The first dictation after a pause** brings one "Remote control session started"
-  notification. The session then stays open, with KDE's remote-control icon in the tray,
-  and dictations in the next 5 minutes type without one. Five minutes after the last
-  one, the session closes and the icon goes. That is what **Keep typing access** on the settings window's Speech page
-  sets: longer means fewer notifications, 0 keeps the session open until the tray quits.
-- A desktop without the portal (Sway, niri, COSMIC) cannot be typed into, and has no
-  clipboard for it either: the pill says "Not typed", and the text waits in Recent
-  dictations.
+**Desktop remote-control prompts:** Because Wayland prevents apps from injecting keystrokes silently, dictation uses `org.freedesktop.portal.RemoteDesktop`:
 
-Why it works this way, and what it replaced: [How the text gets there](#how-dictation-works).
+- First use opens a "Remote Control Requested" dialog (on Plasma 6.8, check "Allow … without asking next time").
+- Starting a typing session shows one "Remote control session started" notification and KDE's tray indicator. The session stays open for 5 idle minutes by default (**Settings → Speech → Keep typing access**; `typing_idle_minutes` in `gui.json`; `0` keeps it open until tray quit).
+- Compositors without a `RemoteDesktop` portal (Sway, niri, COSMIC) cannot receive typed text or portal clipboard writes: the pill shows "Not typed" and stores the text in **Recent dictations**.
 
-**The 2.5s timeout is a guess.** It was picked from how other dictation tools
-feel, not measured, and nobody has dictated with it on the laptop yet. "Quiet"
-is `config.SILENCE_RMS_THRESHOLD`, the same level captions use, so a noisy room
-may never read as quiet and a soft talker may read as quiet mid-sentence. The
-tests are logic only (chunk counts, no microphone). The constants are
-`HANDS_FREE_MIN_SPEECH_S` and `HANDS_FREE_SILENCE_S` in `config.py`.
-
-**Why it lives in Python.** `vinowhisper-dictate` already sees every 100ms
-chunk in its tap, so the rule is counted in samples and tested without a clock;
-the overlay would only see `Level` events at an irregular ~10/s. Python cannot
-tell hold from tap, though, and the recording starts on the press, before the
-overlay knows which it is. So `start` takes no argument: on a tap's release
-the overlay sends a separate `hands-free` command, and only then can the
-silence rule stop it. Speech heard before that still counts.
-
-It asks the portal for **Meta+H**, which is what the dictation key on this
-laptop's F-row sends, after Windows' Win+H. A small pill shows what it is
-doing: a level meter while listening, then "Transcribing", then the text it
-typed. It sits above the caption box when that is showing, and works with the
-captions hidden. Without a shortcuts portal, bind `vinowhisper-tray dictate` to a
-key: it behaves as a tap. For hold-to-talk there, bind `vinowhisper-tray
-dictate-press` to the key's press and `vinowhisper-tray dictate-release` to its
-release (sway: `bindsym` and `bindsym --release`; Hyprland has the portal).
-
-Rebinding works like the captions shortcut: **Change…** in the settings window or System
-Settings, listed as *Dictate*. Measured 2026-09-21: adding Meta+J beside
-Meta+H took effect immediately, KDE sent `ShortcutsChanged` with
-"Meta+H, Meta+J", hold-to-talk worked on the new key, and the tray names both.
+**Hands-free silence detection:** Implemented in Python (`vinowhisper-dictate`) using sample counts (`HANDS_FREE_MIN_SPEECH_S` = 0.5s, `HANDS_FREE_SILENCE_S` = 2.5s, `SILENCE_RMS_THRESHOLD`). Because the overlay only knows tap vs. hold on release, it sends a `hands-free` command on a short tap's release, enabling auto-stop while counting speech already heard. The 2.5s timeout is an initial estimate, not yet tuned on hardware.
 
 ### Pausing media while you dictate
 
-Added 2026-11-09, from [issue #163](https://github.com/karanshukla/vinoWhisper/issues/163).
-Off by default: **Pause media** on the settings window's Speech page, stored as
-`pause_media` in `gui.json`.
+Added 2026-11-09 ([issue #163](https://github.com/karanshukla/vinoWhisper/issues/163)). Enable **Pause media** on Settings → Speech (`pause_media` in `gui.json`, off by default).
 
-On the key's press the tray lists `org.mpris.MediaPlayer2.*` on the session bus and
-calls `Pause` on each player whose `PlaybackStatus` is `Playing`, remembering which.
-When the dictation is over (typed, nothing heard, cancelled or failed, and after the
-paste) it calls `Play` on those only, and only on the ones still `Paused`: a player
-you stopped, started or closed yourself in the meantime is left alone. Quitting the
-tray mid-dictation resumes them first.
-
-- A player that ignores MPRIS keeps playing, as before.
-- It runs on one thread of its own (`tray/src/media.rs`), so the pause never delays
-  the recording and a resume cannot overtake its pause. Each call gives up after 1 s.
-- Hands-free stops itself after silence, which music in the room prevented; with
-  this on, it can.
-- Dictation only. Captions from the microphone do not pause anything.
-
-Checked 2026-11-09 against two fake players on a real session bus: the playing one
-was paused and resumed, the already-paused one was never touched. **Not yet run on
-the laptop**, so real browsers and the timing against the microphone's first 90-290ms
-are unmeasured.
+On dictation key press, `tray/src/media.rs` (dedicated thread, 1s timeout per call) finds `org.mpris.MediaPlayer2.*` players with `PlaybackStatus == Playing` and calls `Pause`. After dictation finishes (or on tray quit mid-dictation), it calls `Play` only on players it paused that are still `Paused`. Players ignoring MPRIS continue playing. Applies to dictation only (enabling hands-free silence detection while music was playing), not mic captions. Verified 2026-11-09 against fake MPRIS players on a live session bus; real browser timing vs. mic startup (90–290 ms) is untested on hardware.
 
 ### A space between dictations
 
-Added 2026-11-10, from [issue #120](https://github.com/karanshukla/vinoWhisper/issues/120).
-Off by default: **Space between dictations** on the settings window's Speech page,
-stored as `smart_spacing` in `gui.json`.
+Added 2026-11-10 ([issue #120](https://github.com/karanshukla/vinoWhisper/issues/120)). Enable **Space between dictations** on Settings → Speech (`smart_spacing` in `gui.json`, off by default).
 
-Two dictations in a row into the same field come out as `First sentence.Second
-sentence.`, because each paste is only its own text. With the setting on, the tray
-types a space first when all of these hold:
+Prepends a single space before typing when all four conditions hold (`Spacing` in `tray/src/dictation.rs`, unit-tested only):
 
-- the previous dictation was typed (not left on the clipboard after typing failed),
-- the key for this one went down less than 30 seconds after that paste,
-- the previous text ended in something other than whitespace, and this one starts
-  with a letter or a digit.
+1. The previous dictation was typed (not clipboard fallback).
+2. Less than 30s elapsed between the previous paste and this key press.
+3. The previous text did not end in whitespace.
+4. The new text starts with a letter or digit (not punctuation).
 
-The 30 seconds run from the last paste to the next key press, not to the next paste,
-so a long second dictation still follows the first. One space at most, and none
-before text that opens with punctuation.
-
-**It is a guess.** Wayland does not say what has focus and the tray cannot read the
-field (see "Where the text goes is not checked" below), so it cannot tell that you
-clicked into another field between the two. If you did, that field gets a leading
-space. That is why it is off by default. The space is part of what is typed, and of
-what goes on the clipboard when typing fails. Recent dictations and the pill
-show the text without it. The cleanup model never sees the previous dictation.
-
-The rule is `Spacing` in `tray/src/dictation.rs` and has unit tests. Not run in a
-live session yet.
+Because Wayland does not report focus changes, switching fields within 30s inserts a leading space in the new field (hence off by default). Recent dictations, the pill, and LLM cleanup do not include the prepended space.
 
 ### Cleaning up what you say
 
-Optional, off by default (beta). Turn on **Clean up dictation** on the settings
-window's Cleanup page and a small language model, running on this machine, tidies
-the text before it is typed. **It only ever deletes words.** It removes:
+Optional (beta, off by default). Enable **Clean up dictation** on Settings → Cleanup to run a local SmolLM3-3B model (1.7 GB download, verified per file, runs on NPU/GPU/CPU inside the local server) before typing. **Cleanup strictly deletes words**—it never inserts, rewords, converts "three" to "3", or answers questions ("write me a poem" types those words).
 
-| You say | It types |
+| You say | Typed output |
 |---|---|
 | "So um I think we should uh ship it on Friday." | "So I think we should ship it on Friday." |
 | "We need that that fixed." | "We need that fixed." |
@@ -378,620 +159,157 @@ the text before it is typed. **It only ever deletes words.** It removes:
 | "The release is ready for review, delete that last word." | "The release is ready for." |
 | "To undo it, say literal scratch that." | "To undo it, say scratch that." |
 
-- **Fillers**: um, uh, er, hmm, and euh, ähm, eh in French, German and Spanish.
-- **Stammers and false starts**: a word said twice, a sentence restarted.
-- **Self-corrections**: "no wait", "I mean", "sorry", "or rather" keep what came
-  after and drop what it replaced. "Actually" is only a filler: "My name's Karan.
-  Actually, my name's Jim" keeps both sentences.
-- **Spoken edits**: "scratch that" removes the sentence or clause before it,
-  "delete that last word" the word before it. Say **literal** first to type the
-  phrase itself.
-- The same in **French, German and Spanish** ("non attends", "streich das", "borra
-  eso", …).
-
-**What it never does:** add a word, reword or shorten a sentence, reorder anything,
-change "three" to "3", or answer what you said. Dictating "what is the capital of
-France?" types the question; "write me a poem" types those words. Every answer is
-checked, and anything that is not a pure deletion of what you said is thrown away
-and your words are typed as Whisper heard them. The same happens when the model is
-slower than the time limit (4 seconds) or something fails, so dictation never breaks
-because of it. Rewriting rambling speech into tidier prose is a different, riskier
-job, and this deliberately does not do it.
-
-**Most dictations skip it.** In the default mode, the model only runs when it hears
-one of the words above or a repeated word; everything else is typed at once. Pick
-"Every dictation" on the Cleanup page to run it every time, for corrections spoken
-without a cue word.
-
-**Nothing leaves the machine.** The model is SmolLM3-3B, on the NPU when there is one
-(the GPU or CPU otherwise). The Cleanup page downloads it once (1.7 GB, checked file
-by file), and can verify or delete it. It loads when you press the dictation key, so
-the load overlaps your speech: a few seconds the first time after a while, then about
-2 seconds per cleaned dictation. It unloads after 5 minutes unused. The pill says
-"Cleaning up with the model" while it works.
-
-To see what went in and what the model answered, run the tray with
-`VINOWHISPER_CLEANUP_DEBUG=1`. How it was chosen and measured is under
-[LLM cleanup](#llm-cleanup-beta) below.
+- Removes **fillers** (`um`, `uh`, `er`, `hmm`, plus `euh`, `ähm`, `eh`), **stammers/restarts**, **self-corrections** (`no wait`, `I mean`, `sorry`, `or rather`; `actually` is treated only as a filler), and **spoken edits** (`scratch that`, `delete that last word`, plus French/German/Spanish equivalents like `non attends`, `streich das`, `borra eso`). Say **literal** before a command to keep the phrase.
+- In default **Smart** mode, cleanup runs only when a cue word or adjacent duplicate appears; **Every dictation** runs it on all utterances.
+- Any output that fails the strict deletion check, times out (default 4s), or errors falls back immediately to the raw transcript. The model warms on key press (~2s per cleaned dictation once warm) and unloads after 5 idle minutes. Run with `VINOWHISPER_CLEANUP_DEBUG=1` to inspect inputs and outputs. See [LLM cleanup (beta)](#llm-cleanup-beta) for benchmarks and config keys.
 
 ### How dictation works
 
-One utterance is one `Dictated`, and none of the caption stitching applies.
-While the key is held (or hands-free is on), the audio is cut at pauses and each
-finished piece is decoded in the background; on release only the tail is
-decoded, the pieces are joined with single spaces and cleaned once. It stops
-and types by itself at 5 minutes (`DICTATION_MAX_S`). Release to text was about
-0.5-0.8s for a short utterance on the NPU, measured 2026-09-21, when the whole
-thing was one decode. The release-to-text time for a ~60s dictation is not
-measured yet; that needs the NPU.
+#### Segmentation, previews, and mic noise floor
 
-- **Where it cuts.** A piece must hold at least 5s (`SEGMENT_MIN_S`) and then
-  see 300ms of consecutive 100ms chunks under `SILENCE_RMS_THRESHOLD`
-  (`SEGMENT_PAUSE_S`). If a piece reaches `MAX_WINDOW_S` with no pause, it is
-  cut after the quietest chunk of its last 3s (`SEGMENT_FALLBACK_S`), which
-  can land inside a word. The 5s, 300ms and 3s are starting values, not tuned
-  on speech.
-- **What still covers the whole utterance.** The 0.3s minimum and the
-  silence check apply to the whole recording, not to each piece. A piece that
-  is entirely silent is skipped. Cancel drops queued and in-flight pieces and
-  types nothing.
-- **Hands-free auto-stop is separate from cutting.** The quiet rule (0.5s of
-  speech, then 2.5s quiet) counts over the whole recording, not per piece, so
-  the 300ms pause that cuts a piece never trips it, and speech in earlier
-  pieces still counts. When it fires, the last piece is decoded and everything
-  is typed as on a release. It shares the 5 minute cap's one-shot stop, so
-  neither can queue a second stop, and cancel wins over both.
-- **One decode at a time.** A single worker thread sends the pieces in order.
-  The server serializes requests behind one transcriber lock anyway, so a
-  dictation and running captions wait on each other; that contention is left
-  as it is.
-- **Text so far in the pill.** Added 2026-10-07, from
-  [issue #55](https://github.com/karanshukla/vinoWhisper/issues/55). Each time
-  a piece finishes decoding, `dictate` sends `Partial` with the cleaned text of
-  all pieces so far (cumulative, not a delta, so a dropped line cannot desync
-  the pill). While listening, the pill is the animated level meter alone until
-  words arrive, then the meter and the text on one line, cut to its last 64
-  characters so the newest words stay in view. There is no "Listening…" text
-  (removed 2026-10-07 at the user's request), so hold and hands-free look the
-  same. Anything that is not the user's words (Starting the microphone,
-  Transcribing, Heard nothing, errors) is drawn dim and italic, so it cannot
-  be read as part of the text. Nothing is typed until release, and the target window is not touched.
-  No `Partial` is sent once the key is released or after a cancel.
-- **Preview of the uncut tail.** Added 2026-10-07. A piece only finishes at a
-  pause after 5s (`SEGMENT_MIN_S`), so a normal sentence showed nothing until
-  release. Every `PREVIEW_EVERY_S` (1.5s), if the decoder is idle, the uncut
-  tail (at least `PREVIEW_MIN_S`, and louder than the noise floor) is decoded
-  and sent as a `Partial` after the finished pieces. It is never kept: the
-  typed text comes from the real pieces, and a preview queued before a cut is
-  dropped. The final decode can wait behind at most one preview. Measured
-  2026-10-08 (8 dictations, `dictate-release` line): 3 releases hit a busy
-  decoder and the final waited 282-528ms (release-to-text 0.9-1.2s against
-  0.6-0.8s otherwise). So no preview starts while the last `PREVIEW_QUIET_S`
-  (0.3s) was quiet, since a pause is when the key comes up; the interval
-  counter keeps running, so speech resuming previews at once. `behind_preview`
-  on the release line says whether the busy job was a preview. Not yet
-  re-measured after the change.
-- **Silence is relative to the mic.** Added 2026-10-07. The fixed
-  `SILENCE_RMS_THRESHOLD` (0.002) is under this laptop's mic noise floor
-  (measured 0.021), so no chunk counted as quiet: pause cuts and the
-  hands-free stop (#56) never fired. The segmenter now tracks the quietest
-  chunk as the floor and treats under 2x of it as quiet (`NOISE_FLOOR_MARGIN`),
-  never below the fixed threshold, ignoring a floor above `NOISE_FLOOR_MAX_RMS`.
-  The first `NOISE_FLOOR_SETTLE_S` (0.5s) never sets the floor (2026-10-08):
-  mics fade in when capture starts, and the floor is a minimum, so one faded
-  chunk would hold it under the room's noise for the whole dictation. Intel's
-  DMIC firmware (Zephyr `drivers/dai/intel/dmic`, which SOF runs on Meteor Lake
-  and later) ramps -90 dB to 0 dB over 100ms at 48 kHz, 200ms at 16 kHz, on
-  every start, and WirePlumber suspends an idle mic after 5s, so nearly every
-  dictation opens with it. A full ramp averages about a quarter of the room's
-  level: simulated through `_Segmenter`, a 0.021 room read as 0.005 and never
-  went quiet. Speech and silence in that opening are scored once the floor is
-  known, so room noise there is not counted as speech. A chunk under half the
-  fixed threshold (a dropout) is not taken as the floor either. Read from the
-  firmware source and simulated, not measured on hardware.
-- **Capitalisation.** Whisper capitalises the start of each piece and may end
-  it with a full stop, so a cut mid-sentence can read "...the report. And
-  then...". Nothing repairs this.
-- **Captions' buffer is untouched.** The recorder's 29.5s ring buffer is still
-  what captions read; dictation keeps its own audio per piece from the
-  recorder's tap, so a 5-minute utterance costs about 19MB.
+Dictation runs as one `Dictated` utterance without caption stitching, capping at 5 minutes (`DICTATION_MAX_S`):
 
-**How the text gets there.** Wayland lets no app type into another, so the
-text is typed through the remote-desktop portal (`org.freedesktop.portal.RemoteDesktop`),
-one key per character with `NotifyKeyboardKeysym`. Since 2026-11-14 this is the only route,
-native and Flatpak alike, by the user's choice of one input method over several:
+- **Background piece cutting:** Once a piece reaches 5s (`SEGMENT_MIN_S`) and sees 300 ms of consecutive quiet 100 ms chunks (`SEGMENT_PAUSE_S`), it decodes in the background on a single worker thread (serialized behind the server's transcriber lock alongside any active captions). If no pause occurs before `MAX_WINDOW_S`, it cuts after the quietest chunk in the last 3s (`SEGMENT_FALLBACK_S`). On release, only the tail decodes, pieces join with single spaces, and cleanup runs once. Short utterances measured 0.5–0.8s release-to-text on NPU (2026-09-21); ~60s dictations are unmeasured. Whisper capitalizes each piece independently, which can introduce mid-sentence periods.
+- **Whole-utterance rules:** The 0.3s minimum duration, silence check, hands-free stop, and cancel apply across the full recording. Dictation keeps its own per-piece audio tap (~19 MB for a 5-minute utterance) separate from captions' 29.5s ring buffer.
+- **Live pill previews ([issue #55](https://github.com/karanshukla/vinoWhisper/issues/55), 2026-10-07):** Finished pieces emit cumulative `Partial` events shown beside the level meter (last 64 characters; status messages like "Transcribing" render dim italic). Every 1.5s (`PREVIEW_EVERY_S`), if the worker is idle and the last 0.3s (`PREVIEW_QUIET_S`) was not quiet (avoiding delaying release—2026-10-08 measured 3 of 8 releases waiting 282–528 ms behind a preview, lifting release-to-text from 0.6–0.8s to 0.9–1.2s; logged via `behind_preview`), the uncut tail (`≥PREVIEW_MIN_S`) decodes as a throwaway preview.
+- **Adaptive mic noise floor (2026-10-07/08):** Because laptop mic noise (~0.021 RMS) exceeds `SILENCE_RMS_THRESHOLD` (0.002), `_Segmenter` tracks the quietest chunk as the floor (capped at `NOISE_FLOOR_MAX_RMS`, ignoring dropouts under half the fixed threshold) and treats `<2x` floor (`NOISE_FLOOR_MARGIN`) as quiet. The first 0.5s (`NOISE_FLOOR_SETTLE_S`) is excluded from setting the floor because Intel DMIC firmware (Zephyr `drivers/dai/intel/dmic`, triggered whenever WirePlumber resumes a mic after 5s idle) ramps -90 dB → 0 dB over 100 ms at 48 kHz / 200 ms at 16 kHz, which otherwise pulled the simulated floor from 0.021 down to 0.005 (simulated from firmware source, not measured on hardware).
+- **Idle worker process:** The tray keeps `vinowhisper-dictate --json` idle on stdin to avoid 270 ms of Python import time on key press. Key press spawns `pw-record` (audio arrives in 90–290 ms) and warms the server; release records an extra 250 ms tail so final syllables are not clipped.
 
-- **Keysyms, not keycodes.** Each character goes out as its keysym (the code point for
-  Latin-1, `0x01000000` + the code point for the rest), and the desktop's layout decides which key
-  makes it. A line break or tab (only a `replacements.json` value can carry one) is typed
-  as a space: a pasted line break was harmless in a terminal with bracketed paste, a
-  typed Return runs the line. Measured 2026-11-14 on
-  Plasma 6.8.2, US layout: curly quotes, em dash, ellipsis, accented letters, `€` and `ß`
-  all came through as written. KDE has a report of the wrong keycode on other layouts
-  ([bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021)); not tried here.
-- **One session, kept open.** KDE posts "Remote control session started" each time a
-  session starts. A session per dictation, which is what the portal fallback used to do,
-  was a notification per dictation; one session kept open was one notification for
-  three key presses 5 s apart (2026-11-14). KDE keeps its remote-control icon in the tray
-  while the session is open; it went away when the idle close ran (2026-11-14, Flatpak). So the session is opened at the first
-  dictation and closed after `typing_idle_minutes` without one (Settings → Speech →
-  Keep typing access; 5 by default, 0 keeps it open). The next dictation after that
-  opens a new one, with its notification.
-- **Permission once.** The first session shows Plasma's "Remote Control Requested"
-  dialog; on Plasma 6.8 it has "Allow … without asking next time". After that a saved
-  restore token starts each session silently (0.01 s). KDE issues a new token each time,
-  so it is saved after every start, in `~/.local/state/vinowhisper/remote-desktop.token`.
-- **A session the desktop closed meanwhile** fails on the first key; one new session is
-  tried then, and only before anything was typed, so nothing is typed twice.
-- **Why not the clipboard and Shift+Insert** (2026-09-21 to 2026-11-14). It needed
-  `ext-data-control-v1`, and KWin 6.8 hides that from Flatpak apps, whichever Wayland
-  socket they connect on, along with `org_kde_kwin_fake_input`
-  (measured 2026-11-14 by listing the globals inside and outside the sandbox). It also needed a
-  key source of its own: `/dev/uinput` (a udev rule), the compositor's
-  `zwp_virtual_keyboard_v1`, or the portal. Three routes that behaved differently, a
-  `wl_display.sync` before the keys so uinput did not paste the previous clipboard, and
-  clearing the clipboard after the paste read it. All of that is gone.
-- **The clipboard comes from the same session** (since 2026-11-14), through the portal's
-  Clipboard interface (`RequestClipboard` before `Start`, then `SetSelection`, and a
-  `SelectionTransfer` for each paste), for Recent dictations and for text whose typing
-  failed partway. KWin hides data-control from Flatpak apps too, so this is the only
-  clipboard the Flatpak gets; native uses it as well, so there is one mechanism. A copy
-  lasts while the session is open: Keep typing access closes it, and a copy with the
-  session closed starts one, with its notification.
-- **What is lost:** desktops without a remote-desktop portal (Sway, niri, COSMIC: see the
-  table below) get no typing and no clipboard. The text waits in Recent dictations, with
-  no way out of it there.
+#### Typing, clipboard, and Recent dictations
 
-**Where the text goes is not checked.** Wayland does not say what has focus,
-so it types into whatever does. If typing failed partway, the text is put on the
-clipboard and the pill says so; after typing into the wrong window, recover it from the
-tray's **Recent dictations** submenu.
+Since 2026-11-14, both native and Flatpak builds use `org.freedesktop.portal.RemoteDesktop` exclusively (replacing the older `ext-data-control-v1` + `Shift+Insert` / `/dev/uinput` / `zwp_virtual_keyboard_v1` / `org_kde_kwin_fake_input` routes, because KWin 6.8 hides `ext-data-control-v1` and `fake_input` from Flatpak sandboxes; verified 2026-11-14):
 
-**Recent dictations** holds the last five texts that were dictated and
-non-empty, newest first, as labels cut to 40 characters. Clicking one puts
-the full text on the clipboard through the portal session, with the hint
-`x-kde-passwordManagerHint: secret` so Klipper does not record it, and shows "Copied" on
-the pill. The portal has no primary selection, so middle-click does not paste it. The
-text stays until you copy something else or the session closes (Keep typing access).
-It used to be cleared after its first read, but through the portal the desktop reads
-it the moment it is offered (the secret hint twice, then the text; traced 2026-11-14),
-so that cleared it before you could paste. A click
-while a dictation is in progress is refused, so it cannot replace the text
-about to be typed. **Clear** empties the list. The list lives only in the
-overlay's memory: never written to disk or to logs, and absent from
-`VINOWHISPER_TRAY_TRACE` output (the debug formatting of the dictation state
-now prints a character count, not the text; it printed the text before).
-Quitting the overlay loses the list, on purpose. Not run against a live Plasma
-Verified 2026-11-14 on Plasma 6.8.2 in the Flatpak: "Copied" on the pill, and the text pasted with Ctrl+V more than once.
+- **Keysym typing:** Each character is sent via `NotifyKeyboardKeysym` (Latin-1 code point, or `0x01000000 + codepoint` for other Unicode). Line breaks and tabs (possible via `replacements.json`) are mapped to spaces so typing into a terminal never executes a command. Verified 2026-11-14 on Plasma 6.8.2 (US layout): curly quotes, em dash, ellipsis, accented characters, `€`, and `ß` all typed accurately (non-US layouts may hit [KDE bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021), untested).
+- **Session persistence and tokens:** The first session prompts for permission; KDE's restore token is updated on every start in `~/.local/state/vinowhisper/remote-desktop.token` (~0.01s silent restore). One persistent session stays open until `typing_idle_minutes` passes (default 5; verified 2026-11-14: one notification across three dictations 5s apart, tray indicator cleared on idle close). If the desktop closes a session mid-idle, one fresh session is attempted before any character is typed.
+- **Portal clipboard & Recent dictations:** Uses the same portal session (`RequestClipboard`, `SetSelection`, `SelectionTransfer`) when typing fails partway or when clicking an entry in **Recent dictations** (last 5 non-empty texts, 40-char menu labels, held in memory only, excluded from disk/logs/`VINOWHISPER_TRAY_TRACE`, cleared on quit or **Clear**). Copies set `x-kde-passwordManagerHint: secret` to keep Klipper out (no primary selection / middle-click). Because the desktop reads offered clipboard selections immediately (traced 2026-11-14), copies remain available until overwritten or the portal session closes. Verified 2026-11-14 on Plasma 6.8.2 Flatpak. Clicking a recent item while dictating is ignored.
 
-The microphone is recorded by `vinowhisper-dictate --json`, which the
-overlay keeps running idle (reading its stdin, not the microphone) so that
-Python's imports (270ms) are not paid when the key goes down. It starts
-`pw-record` on the key, which delivers audio 90-290ms later, and keeps
-recording 250ms past the release so a key let go on the last syllable does
-not cut it off. The key also wakes the server, so a cold model load overlaps
-the speech.
+#### Word replacements
 
-**Word replacements, added 2026-10-07**, from [issue #58](https://github.com/karanshukla/vinoWhisper/issues/58).
-`~/.config/vinowhisper/replacements.json` (under `$XDG_CONFIG_HOME` if set)
-maps what Whisper writes to what you want typed:
+Added 2026-10-07 ([issue #58](https://github.com/karanshukla/vinoWhisper/issues/58)). Create `~/.config/vinowhisper/replacements.json` (under `$XDG_CONFIG_HOME` if set) to post-process dictated text on any device/model:
 
 ```json
 {"open vino": "OpenVINO", "vino whisper": "vinoWhisper", "k8s": "Kubernetes"}
 ```
 
-It is post-processing, so it works on every device and with both speech models.
-On a GPU or CPU the decoder can also be told which words to expect: see "A personal
-vocabulary" below.
-Matching is case-insensitive and on whole words, so "vino" leaves "vinous"
-alone, with the longest key first and any punctuation left where it was
-("open vino." becomes "OpenVINO."). Spaces inside a key match any run of
-whitespace. The value is inserted exactly as written. The file is read on
-every start, so an edit applies to the next dictation with no restart. A
-missing file means no replacements. A file that is not valid JSON, not an
-object, or has a non-string value is ignored whole, with a warning on stderr
-naming the file and the problem; dictation carries on. `vinowhisper-doctor`
-reports `replacements` as absent, N entries, or invalid with the error.
+Matches case-insensitively on whole words, longest key first, collapsing internal whitespace runs and preserving surrounding punctuation (`"open vino."` → `"OpenVINO."`). Re-read on every dictation start; invalid JSON logs a warning to `stderr` and is ignored (`vinowhisper-doctor` reports status). Dictation only (excluded from captions to avoid interfering with stitcher anchors; unit-tested only).
 
-Captions are left out on purpose. They go through the stitcher, which compares
-words across cycles, and replacing words before stitching would interact with
-its normalisation and anchors. Not run on hardware or in the overlay; the
-Python side is unit-tested only.
+#### Personal vocabulary
 
-**A personal vocabulary, added 2026-11-10**, from [issue #161](https://github.com/karanshukla/vinoWhisper/issues/161).
-Replacements fix a word after the model got it wrong, and only when it gets it wrong
-the same way each time. `~/.config/vinowhisper/vocabulary.txt` lists the words to
-expect instead, one term per line:
+Added 2026-11-10 ([issue #161](https://github.com/karanshukla/vinoWhisper/issues/161)). List custom terms (one per line; blank lines and `#` comments ignored) in `~/.config/vinowhisper/vocabulary.txt`, via **Settings → Speech → Vocabulary**, or via **Recent dictations → Add to dictionary…**. Applies to dictation only on the next press.
 
 ```
-# names and jargon; blank lines and lines starting with # are skipped
+# names and jargon
 Kubernetes
 vinoWhisper
 Saoirse Ronan
 ```
 
-Edit the file, use the list under **Vocabulary** on the settings window's Speech
-page, or pick **Add to dictionary…** under the tray's Recent dictations, which opens
-that page. An edit applies to the next dictation. Dictation only: captions and file
-transcription do not use it.
-
-The list is used in two ways, and which you get depends on the device and model:
-
-| | Whisper on GPU or CPU | Whisper on the NPU | Canary, any device |
+| Mechanism | Whisper (GPU / CPU) | Whisper (NPU) | Canary (any device) |
 |---|---|---|---|
-| Spelling correction after the decode | yes | yes | yes |
-| Given to the decoder as a prompt | yes | no | no |
+| Post-decode spelling correction | Yes | Yes | Yes |
+| Decoder prompt (`hotwords` / step loop) | Yes | Yes (with step export; correction-only without) | No |
 
-**Spelling correction** (`vocabulary.correct`, in `vinowhisper-dictate`) runs
-everywhere. A word that is one letter off a listed term of five to seven letters, or
-up to two letters off a longer one, and starts with the same letter, is replaced by
-the term as you wrote it: "Creswell" becomes "Cresswell", "Sothey's" becomes
-"Southey's". It runs before `replacements.json`. Terms under five letters and terms
-of more than one word are matched exactly only, so they are never "corrected" into.
-A name the model splits into two words ("Cooper Netties") is out of its reach.
-It has no dictionary, so a real word that close to a term is rewritten too: with
-"Poyser" listed, "poser" becomes "Poyser", and with "Claude" listed, "clause" does.
-None turned up in the 12,961 words measured below, but a term that sits one letter
-from a word you use is better left to `replacements.json`.
+- **Spelling correction (`vocabulary.correct`):** Runs before `replacements.json`. Replaces single words sharing the same first letter within Levenshtein distance 1 (5–7 char terms) or 2 (8+ char terms), e.g., `"Creswell"` → `"Cresswell"`, `"Sothey's"` → `"Southey's"`. Short (<5 chars) and multi-word terms match exactly only. Because it has no English dictionary, nearby real words can also match (`"poser"` → `"Poyser"`, `"clause"` → `"Claude"`); move ambiguous terms to `replacements.json`. Uses `rapidfuzz` (lazy-imported) since 2026-11-16 (verified identical on 300,010 pairs and 3,000 generated sentences on Xeon).
+- **Decoder prompt:** `vinowhisper-dictate` sends `X-Vinowhisper-Vocabulary`, and the server reloads `vocabulary.txt` on change. Prompts pass as comma-separated `hotwords` (equivalent to `initial_prompt` for <30s audio in `context_tokens.cpp`), capped at 120 tokens (~30 names, max 100 terms of ≤64 chars; answer token limit is reduced accordingly within Whisper's 448 slots—899-token prompts returned `, Qu, Qu`).
+  - OpenVINO GenAI's `WhisperPipeline` rejects prompts on the NPU (`pipeline_static.cpp` assert, checked 2026.4.1.0, 2026-11-10). Since #178 (2026-11-11), when the custom fp16 step export (`whisper-small.en-step-ov-fp16` from `scripts/export_whisper.py`) exists and language is not `auto`, the NPU runs `whisper_step.StepWhisper` instead (see [models.md](models.md)). `vinowhisper-doctor` and the server share `vocabulary.unprompted` to report which mode is active.
+  - **Prompted-decode safety checks:** If a prompted decode outputs only listed terms (noise echo) or loops (zlib ratio > 2.0, e.g., barking returning `"Cebu"` 48x on NPU), it re-decodes without the prompt and keeps the plain result if dissimilar (`vocabulary.ECHO_SIMILARITY`).
+  - **NPU espeak check (2026-11-11):** 5 sentences, 14 rare names, 12-term list: 3/14 without prompt → 9/14 with prompt.
 
-The letter count is rapidfuzz's Levenshtein distance since 2026-11-16, in place of a
-hand-written one. Checked first on a cloud Xeon: 300,010 string pairs (ASCII,
-accented, emoji, combining marks, empty) gave the same count up to the limit, and
-`correct` returned the same text for 3,000 generated sentences. The one difference is
-past the limit, where the old function returned the true count and rapidfuzz returns
-limit + 1; nothing reads that number. It is imported at the first correction, so
-`import vinowhisper.vocabulary` and every `--help` work without it.
+**CPU benchmark (2026-11-10, 4-core Xeon, OpenVINO 2026.4.1, 700 LibriSpeech test-clean utterances / 85.7 min, 15 rare spoken names occurring 47 times + 5 unspoken tech terms):**
 
-**The decoder prompt** is Whisper's `hotwords`, and OpenVINO GenAI's NPU pipeline
-refuses it: `pipeline_static.cpp` asserts that both `hotwords` and `initial_prompt`
-are unset (read at 2026.4.1.0 and on master, 2026-11-10). That is a limit of
-OpenVINO's wrapper, not of the NPU. Since #178 (2026-11-11) the NPU gets the prompt
-anyway when our own export exists (`scripts/export_whisper.py`, read from
-`whisper-small.en-step-ov-fp16`): a dictation with a vocabulary goes through
-`whisper_step.StepWhisper`, our own decode loop, laid out the way
-`context_tokens.cpp` lays `hotwords`. Without the export, or if it fails to load
-(logged once), the NPU stays on correction only. So does the multilingual model
-with the language on auto: the loop writes the language token into the prompt itself,
-and auto has none. Captions never use it.
-`vinowhisper-doctor` reports `vocabulary` with which of the two is in use; it and
-the server read the same rule, `vocabulary.unprompted` (2026-11-11, before which the
-doctor said "given to dictation" for auto on the NPU while the server refused).
-
-A prompted decode is checked twice before it is typed. If it is only listed terms
-(#175), or a repetition loop (zlib ratio over 2.0, as captions check), it is decoded
-again without the prompt. The loop case was found on the NPU: barking alone came back
-as one listed name and then "Cebu" 48 times.
-
-Measured on the NPU 2026-11-11 (espeak, 5 sentences, 14 rare names, 12-term list):
-3 of 14 names right without the prompt, 9 of 14 with it.
-
-How the prompt is passed, where it is:
-
-- `vinowhisper-dictate` marks its requests with an `X-Vinowhisper-Vocabulary`
-  header and the server reads the file, again whenever it changes. Captions decode
-  every 0.7 s, so they would pay for the prompt on every window, and a term the
-  prompt talked the decoder into would be committed to a transcript that cannot
-  take it back.
-- **As `hotwords`, a comma-separated list.** `hotwords` and `initial_prompt` become
-  the same decoder tokens for audio up to 30 s (`context_tokens.cpp`: both go after
-  `<|startofprev|>`; `initial_prompt` only on the first 30 s chunk). Six utterances
-  decoded with each gave the same text, and every dictation piece is under 30 s.
-- **At most 120 tokens**, which is about 30 names (the test names took four tokens
-  each), of at most 100 terms of 64 characters. Terms past the token limit are left
-  out, in file order, and the server's log says how many were used. The prompt
-  shares Whisper's 448 decoder positions with the answer and OpenVINO GenAI does not
-  trim it: a prompt of 899 tokens returned `, Qu, Qu` with no error. The answer's
-  token limit is lowered by the prompt's length.
-- **A decode that is nothing but listed terms is checked.** On noise the prompted
-  decoder writes a term from the list ("Prynne,") where the plain one writes "you".
-  So such a decode is run again without the prompt, and if the two are not alike
-  (`vocabulary.ECHO_SIMILARITY`) the plain one is used. A term really spoken alone
-  survives when the plain decode sounds like it ("Cooper Netties"); that case has a
-  unit test and has not been tried with real audio.
-
-Measured 2026-11-10 on a CPU (whisper-small.en fp16 and Canary 1B v2 fp16, OpenVINO
-2026.4.1, a 4-core cloud Xeon), on 700 utterances of LibriSpeech test-clean (every
-second one of the first 1,400; 85.7 minutes). The vocabulary was 15 proper names
-from the reference text, picked by how rarely Whisper's tokenizer has seen them
-(three or more tokens each) and not by what a model got wrong, plus five terms that
-are never spoken (Kubernetes, vinoWhisper, OpenVINO, PipeWire, Wayland). The names
-are spoken 47 times.
-
-| Model and what the list does | Names right, of 47 | WER, utterances with a name | WER, the rest (12,961 words) |
+| Configuration | Spoken names right (of 47) | WER (name utterances) | WER (other 12,961 words) |
 |---|---|---|---|
 | Whisper, no list | 28 | 6.32% | 3.23% |
-| Whisper, correction only (the NPU's case) | 39 | | unchanged |
-| Whisper, prompt, 20 terms (80 tokens) | 47 | 4.30% | 3.36% |
-| Whisper, prompt, 59 terms (200 tokens) | 45 | 6.75% | 3.26% |
-| Canary, no list | 35 | | |
-| Canary, correction only | 45 | | |
+| Whisper, correction only | 39 | — | Unchanged |
+| Whisper, prompt (20 terms / 80 tokens) | 47 | 4.30% | 3.36% |
+| Whisper, prompt (59 terms / 200 tokens) | 45 | 6.75% | 3.26% |
+| Canary, no list (42 name utterances) | 35 | — | — |
+| Canary, correction only | 45 | — | — |
 
-Canary was run on the 42 utterances with a name only. The correction rows are the
-no-list transcripts passed through `vocabulary.correct`, so they say what the NPU
-would type without having run on one.
-
-What that says:
-
-- **Correction alone gets most of the way**, and costs nothing: across the 700
-  Whisper transcripts it changed 12 utterances, every one a listed name. The one
-  time it wrote a name the reference does not have, the reference has a typo
-  ("LEOCADI"). What it cannot reach is a name the model hears as other words.
-- **The prompt gets the rest**, 47 of 47, and is not free. Speech with none of the
-  terms gets slightly worse, because the prompt changes the decoder's path on about
-  one utterance in seven. Most of those are spelling ("gray"/"grey", "ten"/"10") in
-  both directions, and a few are damage: "utter a sigh" became "atturriSai", in the
-  camel case of the tech terms on the list.
-- **A longer prompt is worse, not better.** At 200 tokens two names were lost
-  again, the utterances with a name scored worse than with no list, and the mean
-  decode went from 0.80 s to 1.18 s. At 321 tokens (100 terms, 350 utterances) noise
-  produced runs of "impenetrable, impenetrable". That is why the limit is 120.
-- **Noise:** of 45 clips of white and brown noise, hum and half-second word
-  fragments, the 20-term prompt wrote a listed name on 7. With the check above, 0.
-- A term that is not spoken was never written into speech (0 of 700).
-
-**Tried and not adopted: boosting Canary's logits.** Canary's decode loop is ours,
-so pieces that carry on spelling a listed term can be given a bonus at each step.
-With a bonus of 4 or 8 on continuations it took the 47 names from 35 to 36 or 37,
-and a bonus on the first piece of a word turned "Southey" into "Southie": greedy
-decoding cannot take a piece back once the rest of the name fails to follow. The
-names Canary misses are ones it starts spelling differently, which is what
-correction after the fact fixes. Doing it properly needs a beam search.
-
-Not measured: anything on an NPU or a GPU, a microphone, real dictation, or the
-multilingual model. LibriSpeech is read audiobook speech, and the names are spelled
-the way the books spell them; your own names and jargon may behave differently. One
-corpus, one machine.
+Findings: correction alone fixed 12 utterances with zero regressions; 80-token prompting reached 47/47 while slightly raising non-name WER (3.23% → 3.36%, occasional style bleed like `"utter a sigh"` → `"atturriSai"`); 200-token prompts regressed accuracy and slowed decode (0.80s → 1.18s; 321 tokens looped on noise); the echo check reduced false name outputs on 45 noise clips from 7 to 0; unspoken terms never leaked into speech (0/700). Boosting Canary decoder logits (+4/+8 on continuations) was tested and rejected (35 → 36–37/47, broke greedy decoding like `"Southey"` → `"Southie"`). Not yet measured on live mic dictation or multilingual models.
 
 #### LLM cleanup (beta)
 
-Added 2026-10-11, local since 2026-10-27, off by default, from
-[issue #81](https://github.com/karanshukla/vinoWhisper/issues/81) and
-[#91](https://github.com/karanshukla/vinoWhisper/issues/91).
-Beta means: measured on one laptop, one microphone and one model, so the thresholds
-may move. Every failure types the raw transcript.
+Added 2026-10-11, local since 2026-10-27 ([issue #81](https://github.com/karanshukla/vinoWhisper/issues/81), [#91](https://github.com/karanshukla/vinoWhisper/issues/91); the earlier external API path and wallet key are removed).
 
-Turn it on in the settings window's Cleanup page (or set `VINOWHISPER_CLEANUP=1`) and
-the final transcript (never the live previews) goes to a small language model running
-on this machine, which drops fillers, applies self-corrections and applies spoken edits
-("scratch that", "delete that last word"; "literal" before the phrase keeps it as
-text). **Nothing leaves the machine.** Until 2026-10-27 this went to a hosted
-Anthropic-compatible endpoint with your API key; that path, the key and the wallet
-entry are gone.
+Uses **SmolLM3-3B** (Apache 2.0, trained on `en`, `fr`, `de`, `es`, `it`, `pt`), exported with channel-wise INT4 (`--group-size -1`) as [`arankays/SmolLM3-3B-int4-cw-ov`](https://huggingface.co/arankays/SmolLM3-3B-int4-cw-ov) and pinned in `vinowhisper/cleanup_model.json` (1.7 GB; managed via Settings → Cleanup or `vinowhisper-cleanup model fetch`).
 
-**The model is SmolLM3-3B** (Hugging Face, Apache 2.0, trained on en, fr, de, es, it
-and pt), exported to OpenVINO with INT4 channel-wise weights for the NPU and published
-as [`arankays/SmolLM3-3B-int4-cw-ov`](https://huggingface.co/arankays/SmolLM3-3B-int4-cw-ov).
-`vinowhisper/cleanup_model.json` pins its commit and the sha256 of every file. The
-Cleanup page downloads it (1.7 GB) with `vinowhisper-cleanup model fetch`, which checks
-each file before writing the revision marker; Verify re-hashes it, Delete removes it and
-its compiled cache. Without the download, cleanup stays off and the pill says so.
+**Model evaluation on NPU (2026-10-27, n=1, 30-dictation corpus in `scripts/cleanup_eval.py` + 550–2,800-token summaries):**
 
-Chosen 2026-10-27 against Gemma 4 E2B (what vinoPop runs), Qwen3-4B-Instruct-2507,
-Qwen3-1.7B, LFM2.5-1.2B and Phi-3.5-mini, on the NPU, with the 30-dictation corpus in
-`scripts/cleanup_eval.py` and summaries of 550-2800-token transcripts:
-
-| Model | Download | Decode | Cleanup: good / refused but wanted | Notes |
+| Model | Download | Decode speed | Cleanup (good / refused-but-wanted) | Notes |
 |---|---|---|---|---|
-| **SmolLM3-3B** | 1.6 GB | ~20 tok/s | 22 / 2, median 1.9s | |
-| Gemma 4 E2B | 4.5 GB | 9-12 tok/s | 19 / 1, median 1.8s | NPU driver error on a 2.8k-token prompt, twice |
-| Qwen3-4B-2507 | 2.1 GB | ~15 tok/s | 19 / 1, median 2.3s | Obeyed a planted instruction in a transcript |
-| LFM2.5-1.2B | 0.6 GB | ~37 tok/s | 9 / 10 | Answered fr/de/es in English |
-| Phi-3.5-mini | 2.0 GB | 10-14 tok/s | 11 / 6 | Leaks prompt tags |
-| Qwen3-1.7B (group-wise INT4) | 1.2 GB | | | Still compiling on the NPU after 10 minutes |
+| **SmolLM3-3B** | 1.6 GB | ~20 tok/s | 22 / 2, median 1.9s | Selected |
+| Gemma 4 E2B | 4.5 GB | 9–12 tok/s | 19 / 1, median 1.8s | NPU driver error twice on 2.8k-token prompt |
+| Qwen3-4B-2507 | 2.1 GB | ~15 tok/s | 19 / 1, median 2.3s | Obeyed planted instruction in transcript |
+| LFM2.5-1.2B | 0.6 GB | ~37 tok/s | 9 / 10 | Answered `fr`/`de`/`es` in English |
+| Phi-3.5-mini | 2.0 GB | 10–14 tok/s | 11 / 6 | Leaked prompt tags |
+| Qwen3-1.7B (group-wise INT4) | 1.2 GB | — | — | Still compiling on NPU after 10 min |
 
-One laptop, n=1 per cell. Use channel-wise (`--group-size -1`) exports on the NPU.
+**Server execution & safeguards:**
 
-**It runs in the server**, next to Whisper, because the server already holds models,
-already exits when idle, and dictation already talks to it. `POST /cleanup` takes
-`{"text", "budget_s"}`; `POST /cleanup/warm` starts the load and answers at once.
+- **Endpoints:** `POST /cleanup` (`{"text", "budget_s"}`) and `POST /cleanup/warm` (triggered on key press; cold compile ~17–25s, warm load from `~/.cache/vinowhisper/cleanup-cache` 4.5s; 1.8–2.7s per 1–2 sentence dictation on NPU, 2026-10-27). Uses greedy decoding, `/no_think`, no repetition penalty, `MAX_PROMPT_LEN=3072`, `MIN_RESPONSE_LEN=1024`.
+- **Idle unload:** Unloads after 5 idle minutes (`CLEANUP_IDLE_UNLOAD_S`), even while captions keep the server running (2026-10-27: NPU memory dropped 2,078 MB → 8 MB, RSS 1,474 MB → 1,059 MB; timestamp updated in `finally`).
+- **Timeouts:** Enforced on both client (`budget_s`, default 4s) and server streamer (capped at `CLEANUP_MAX_BUDGET_S` = 10s).
+- **Integrity re-hash:** On load, compares size, mtime, and inode against `.vinowhisper-verified` (0.00s unchanged; 1.27s warm re-hash for 1.7 GB, 2026-10-27). Mismatches block loading and prompt re-download.
+- **Validation:** Output must be an ordered word subsequence of the input (case/punctuation ignored) with no control characters, newlines, or unapproved punctuation (only `. , ! ? : ' " - – … ` may be newly added). Replacements run after cleanup. Not streamed; pill shows "Cleaning up with the model" (`Cleaning` event).
+- **Circuit breaker (#87):** Missing model or HTTP 400 disables cleanup until settings/model files change; 3 consecutive service errors (timeouts, 5xx, unreachable) pause cleanup for 10 minutes before probing again (refused model outputs do not trip it). Pill shows a 6s `Notice`. Reset by restarting the tray.
+- **CLI test helper:** `vinowhisper-cleanup "um so scratch that"` runs one cleanup through the server and prints wall time to `stderr`.
 
-- **Warm at the key press.** A first load compiles for ~17-25s; a load from the
-  compiled cache (`~/.cache/vinowhisper/cleanup-cache`) takes 4.5s. The key press
-  starts it, so it overlaps the speech, as the Whisper warm-up does.
-- **Unloaded after 5 idle minutes** (`CLEANUP_IDLE_UNLOAD_S`), even while captions keep
-  the server up. Measured 2026-10-27: the server's NPU memory went from 2,078 MB to 8 MB
-  and its RSS from 1,474 to 1,059 MB at the unload. The last-used time is set in a
-  `finally`, so a failed or cancelled run still unloads; vinoPop's did not (fixed there
-  the same day, after it held ~2.5 GB pinned for hours).
-- **The time limit is enforced on both sides.** The client types the raw text at
-  `budget_s` (default 4s), and the server's streamer cancels generation at the same
-  deadline. Without that, a transcript that talks the model into writing a poem kept it
-  generating, and the next dictation waited behind it.
-- **Measured 2026-10-27 through the server on the NPU:** 1.8-2.7s for one- or
-  two-sentence dictations, including French. Greedy decoding, `/no_think` (SmolLM3
-  reasons out loud by default, and that would be typed), no repetition penalty: the
-  answer is mostly a copy of the input, and a penalty pushes it to reword, which the
-  check refuses.
-- **NPU window:** `MAX_PROMPT_LEN=3072`, `MIN_RESPONSE_LEN=1024`, enough for the prompt
-  plus five minutes of dictation and its edited copy.
-- **No request holds the model longer than 10s** (`CLEANUP_MAX_BUDGET_S`). A request
-  that names no `budget_s`, or a longer one, gets that ceiling, so nothing else on the
-  socket can tie the model up and stall every dictation behind it. Before this, a
-  request without a budget could run to 1,024 tokens, about 50s.
-- **The files are re-hashed when they change.** The download checks every sha256; after
-  that, each load compares each file's size, mtime and inode with what they were when
-  the files last hashed clean (`.vinowhisper-verified`), and re-hashes everything if any
-  moved. A mismatch refuses the load and marks the model as not downloaded, so the
-  Cleanup page offers the download again. Measured 2026-10-27: 1.27s to re-hash the
-  1.7 GB model (warm page cache), 0.00s when nothing changed. This catches corruption
-  and careless edits; a program running as you could rewrite the stamp as well, which
-  is the same-user boundary `SECURITY.md` describes.
+**Configuration (`~/.config/vinowhisper/cleanup.json`, re-read every key press; env vars override; legacy `url`/`model` keys ignored):**
 
-The window writes `~/.config/vinowhisper/cleanup.json` (`enabled`, `budget_s`, `mode`),
-which `vinowhisper-dictate` re-reads at each key press, so no restart is needed. Files
-from before 2026-10-27 also name `url` and `model`; both are ignored. An environment
-variable beats the file:
-
-| Variable | File key | Default |
+| Environment variable | JSON key | Default |
 |---|---|---|
-| `VINOWHISPER_CLEANUP` | `enabled` | off |
-| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `4.0`, a hard deadline |
-| `VINOWHISPER_CLEANUP_MODE` | `mode` | `smart`, or `always` |
+| `VINOWHISPER_CLEANUP` | `enabled` | `false` |
+| `VINOWHISPER_CLEANUP_BUDGET_S` | `budget_s` | `4.0` (hard deadline) |
+| `VINOWHISPER_CLEANUP_MODE` | `mode` | `smart` (`smart` or `always`) |
 
-- **Deletion only.** The answer is used only if its words are an ordered
-  subsequence of the transcript's (case and punctuation ignored). Anything
-  else, an empty answer, a timeout or a server error types the raw
-  transcript. That also means "three" becoming "3" is refused: v1 trades
-  that for a check with no heuristics, and a model answering a dictated
-  question or obeying it cannot get past it.
-- **Characters are checked too.** Control characters, newlines and any
-  punctuation the speaker did not already produce are refused, so an answer
-  cannot add shell syntax to a terminal paste. Only `. , ! ? : ' " - – … ` may
-  appear that were not in the transcript.
-- **Replacements run after it**, on the cleaned text, so the check sees the
-  words Whisper wrote.
-- **Smart mode skips most requests.** `smart` (the default) sends only text with a
-  filler (um, uh, er), a cue (actually, sorry, wait, "I mean", "scratch that", "delete
-  that", "you know", literal, and the French, German and Spanish equivalents: euh, ähm,
-  "non attends", "nein warte", "streich das", "no espera", "borra eso"…) or an adjacent
-  repeated word, and types everything else at once with no `Cleaning` state. A
-  correction spoken with none of those words, like "three, four", goes through only in
-  `always`.
-- **Other languages.** The prompt asks for the same edits in the transcript's
-  language, with a French, a German and a Spanish example. The cue lists are merged
-  across languages because the language is `auto` here and a stray match only costs a
-  request.
-- **Not streamed.** The text is pasted once, after the whole answer has been checked.
-- The pill says "Cleaning up with the model" while the model runs, from the
-  `Cleaning` event.
-- **The cue words cover English, French, German and Spanish together**, because the
-  language is not known where they are checked (auto). A false hit costs one request,
-  and so does a word from another language that happens to match. A miss is only a
-  correction spoken with none of the words, which `always` mode still catches.
-- **Only service failures count against it.** A reason that is about the answer means
-  the model ran. Http errors, an unreachable server, timeouts and exceptions are the
-  server or the model failing.
-- **It turns itself off on errors** (#87), because each failed request holds the
-  typing back by up to the whole budget. A missing model (or an http 400) turns it off
-  until the settings change, and downloading the model counts as a change: whether the
-  model is on disk is part of the settings dictation reads. Three service errors in a
-  row (timeouts, 5xx, an unreachable server) pause it for 10 minutes; then one request
-  is let through, and if that fails too the pause starts again. An answer the checks
-  refuse is not an error. The pill shows why for 6 seconds ("LLM cleanup off: the
-  cleanup model isn't downloaded. Download it in Settings."), from a `Notice` record
-  sent after `Dictated`. The state is per `vinowhisper-dictate` process, so restarting
-  the tray clears it.
-- `vinowhisper-cleanup "um so scratch that"` runs one dictation through the server and
-  prints the wall time on stderr.
+`smart` mode checks a merged cue list across `en`, `fr`, `de`, and `es` (fillers, `actually`, `sorry`, `wait`, `"I mean"`, `"scratch that"`, `"delete that"`, `"you know"`, `literal`, `"non attends"`, `"nein warte"`, `"streich das"`, `"no espera"`, `"borra eso"`, or adjacent repeated words).
 
-**Room noise is not speech, added 2026-10-11.** Reported from real use: a
-held key or a hands-free tail over ambient noise typed sentences nobody said.
-Measured on the reporter's laptop: the room sits at 0.011-0.028 rms, the fixed
-gate was 0.002, `normalize()` lifted the clip x2.7 to speech level, and
-whisper-small.en and whisper-small each wrote a different sentence for every
-slice of the same 4s of noise ("When you do back your leg...", "you"). Two
-rules in `_Segmenter`, constants in `config.py`:
+#### Ambient room noise rejection and dictation diagnostics
 
-- **Stationary recording**: if the loudest 500ms is under 2.8x the quietest
-  100ms and under 0.04 rms, nothing in it is speech and nothing is decoded.
-- **A piece needs speech in it**: at least two 100ms chunks at 60% of the
-  recording's loudest level. A quiet remainder after a cut is not a second
-  utterance, and quiet is trimmed to 0.3s around the words.
+Added 2026-10-11 after ambient room noise (0.011–0.028 RMS lifted 2.7x by `normalize()`) caused Whisper hallucinations. `_Segmenter` enforces two rules (constants in `config.py`):
 
-Tuned on one room and one microphone, and the failure mode of being wrong is a
-dropped quiet word, so `VINOWHISPER_CLEANUP_DEBUG=1` prints the floor, speech
-level and verdict for each dictation (`gate: floor=... speech=...`). The tests
-use machine-generated noise with the measured swing; no recording of a person is
-kept in the repo.
+- **Stationary recording check:** Rejects recordings whose loudest 500 ms is both `<2.8x` the quietest 100 ms and `<0.04` RMS.
+- **Per-piece speech check:** Requires at least two 100 ms chunks at ≥60% of the recording's peak RMS, trimming quiet margins to 0.3s.
 
-**Debugging switches that keep what you said, off by default.**
-`VINOWHISPER_CLEANUP_DEBUG=1` prints the dictated text and the model's answer
-to the tray's stderr. `VINOWHISPER_DICTATE_AUDIO_DIR=<dir>` writes the raw and
-decoded audio of each dictation there as WAV, in a `0700` directory with `0600`
-files, newest ten dictations only; `scripts/decode_wav.py` replays them. Both
-put your voice or words on disk or in whatever captures stderr, so leave them
-unset except while chasing a bug, and delete the directory after.
+Opt-in debugging switches (off by default—these log or save your voice/text, so unset them after debugging):
 
-**Does the `pw-record` startup delay clip the first word? Not measured yet**
-([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59)). The 90-290ms
-above is when audio arrives, not whether speech is lost. Keeping the mic open
-for a pre-roll would hold Plasma's microphone indicator on permanently, so
-measure before deciding anything. `VINOWHISPER_DICTATE_TRACE=1` makes
-`vinowhisper-dictate` print one line per dictation to stderr (no text, no
-audio):
+- `VINOWHISPER_CLEANUP_DEBUG=1`: logs noise-gate verdicts (`gate: floor=... speech=...`), raw transcripts, and cleanup outputs to tray `stderr`.
+- `VINOWHISPER_DICTATE_AUDIO_DIR=<dir>`: saves raw and decoded WAVs for the newest 10 dictations (`0700` dir / `0600` files), replayable with `scripts/decode_wav.py`.
+- `VINOWHISPER_DICTATE_TRACE=1` ([issue #59](https://github.com/karanshukla/vinoWhisper/issues/59), 2026-10-07/08; logs timings only, no text or audio; forwarded with `[dictate]` prefix):
 
-    [vinowhisper] dictate-trace: first_chunk=190ms first_loud=390ms (chunk 3) first_rms=0.0004 threshold=0.002
+  ```
+  [vinowhisper] dictate-trace: first_chunk=190ms first_loud=390ms (chunk 3) first_rms=0.0004 threshold=0.002
+  [vinowhisper] dictate-release: tail_wait=250ms final_audio=2.4s behind_job=False queue_wait=0ms decode=480ms preview_stale=900ms release_to_text=790ms
+  ```
 
-`first_chunk` is the time from the `start` command to the first audio chunk,
-`first_loud` the time to the first chunk at or above `SILENCE_RMS_THRESHOLD`
-(and its position), `first_rms` the level of the first 100ms chunk. The example
-line only shows the format; it is not a measurement.
+  (Example format only, not a hardware measurement.) Run ~20 normal dictations with `VINOWHISPER_DICTATE_TRACE=1 vinowhisper-tray` to test whether `pw-record` startup clips the first word (`first_loud` at chunk 1 vs. chunk 3+) or whether preview reuse is worthwhile (`preview_stale < ~500 ms`).
 
-Added 2026-10-08: a second line per dictation, after the text is ready, for
-release-to-text latency:
+### Settings window (`vinowhisper-gui`)
 
-    [vinowhisper] dictate-release: tail_wait=250ms final_audio=2.4s behind_job=False queue_wait=0ms decode=480ms preview_stale=900ms release_to_text=790ms
+Runs with vsync disabled because KWin withholds frame callbacks from hidden windows, causing vsync swaps to block and trigger "Not Responding" (observed 2026-10-11; eframe 0.37 fixes Wayland via egui#5136, and disabling vsync covers X11 too).
 
-`tail_wait` is the wait for the kept tail audio, `final_audio` the uncut tail
-decoded on release, `behind_job` whether the decoder was busy or queued when it
-was submitted, `queue_wait` and `decode` that final job's wait and decode time,
-`preview_stale` the audio spoken since the last preview that covered the tail
-(`none` if there was no such preview), `release_to_text` the whole span from
-release. Format only, not a measurement. It decides whether reusing the preview
-at release is worth building: if `preview_stale` is usually under ~500ms and
-`decode` dominates, it is.
-
-To measure, on the laptop: start the overlay with the variable set
-(`VINOWHISPER_DICTATE_TRACE=1 vinowhisper-tray`; its stderr is the journal if
-it runs as a service; the overlay forwards the lines prefixed `[dictate]`), then do about 20 dictations the way you normally do,
-pressing the key and starting to speak at once. Collect the lines. If
-`first_loud` is usually chunk 1, speech is already under way when capture
-starts and the first word is probably clipped. If it is usually chunk 3 or
-later, there is headroom. Write the result here with the date; the instrument
-was added 2026-10-07 and has not been run on hardware.
-
-### The settings window
-
-`vinowhisper-gui` runs with vsync off. With vsync, a buffer swap waits on a
-frame callback that KWin holds back from a window it considers hidden, and
-the window stops answering pings ("Not Responding", seen 2026-10-11). It only
-redraws on input, so nothing is lost. eframe 0.37 skips the blocking swap on
-Wayland itself (egui#5136); turning vsync off keeps X11 covered too.
-
-About's Updates row runs whichever updater the install has: the release
-installer leaves itself as `~/.local/bin/vinowhisper-upgrade`, which installs a
-release's wheel, tray and this window; a release's Flatpak bundle installs the
-next one with `vinowhisper-flatpak-update`; a checkout has neither, so About
-links to the release.
+The About page's **Updates** row runs `~/.local/bin/vinowhisper-upgrade` on release installs, `vinowhisper-flatpak-update` on release Flatpaks, or links to GitHub Releases on source checkouts.
 
 ### Screen readers
 
-The pill is a click-through layer surface with no accessibility tree, so a
-screen reader never hears it (#98). Failures and warnings, the states that need
-hearing, go out as a desktop notification too, which screen readers read aloud.
-That happens only while a screen reader is running, since everyone else already
-sees the pill, and the notification never carries the dictated words, only the
-message (`tray/src/announce.rs`).
+Because the dictation pill is a click-through layer-shell surface with no accessibility tree, `tray/src/announce.rs` mirrors errors and warnings as desktop notifications while a screen reader is active (#98). Dictated text is never sent.
 
 ## Where it works
 
-The box is a **wlr-layer-shell** surface on the *overlay* layer. That is what
-lets it sit above fullscreen windows without a window rule or keep-above
-hint, and it is a Wayland protocol that not every compositor offers:
+The overlay uses Wayland's `wlr-layer-shell` protocol (*overlay* layer) so it floats above fullscreen windows without window rules:
 
-| Desktop | Overlay | Tray | Shortcut | Dictation types via | Status |
+| Desktop | Overlay | Tray | Shortcut | Dictation typing | Status |
 |---|---|---|---|---|---|
-| KDE Plasma 6.7 (Wayland) | yes | yes | portal | remote-desktop portal | **Tested on hardware, 2026-09-12; dictation 2026-09-21; portal typing on 6.8.2, 2026-11-14** |
-| Hyprland | layer-shell: yes | needs an SNI tray | bind in `hyprland.conf` ([above](#without-a-shortcuts-portal)) | the portal, if its xdg-desktop-portal offers RemoteDesktop; else clipboard only | untested |
-| Sway, niri, COSMIC | layer-shell: yes | needs an SNI tray | none: bind the commands ([above](#without-a-shortcuts-portal)) | nothing: no remote-desktop portal, so the text goes on the clipboard | Sway 1.9 typed through a virtual keyboard until 2026-11-14; niri, COSMIC untested |
-| GNOME | **no layer-shell** | AppIndicator extension | portal (48+) | | will not start; use the terminal |
-| X11 sessions | no | | | | will not start; use the terminal |
+| KDE Plasma 6.7 / 6.8 (Wayland) | Yes | Yes | Portal | `RemoteDesktop` portal | **Tested on hardware** (overlay 2026-09-12; dictation 2026-09-21; portal typing 6.8.2 2026-11-14) |
+| Hyprland | Yes | Needs SNI tray | Bind in `hyprland.conf` ([above](#without-a-shortcuts-portal)) | Portal if `RemoteDesktop` enabled; else clipboard only | Untested |
+| Sway, niri, COSMIC | Yes | Needs SNI tray | Bind commands ([above](#without-a-shortcuts-portal)) | None (no `RemoteDesktop` portal) | Sway 1.9 virtual-keyboard worked until 2026-11-14; niri/COSMIC untested |
+| GNOME | **No (`wlr-layer-shell` unsupported)** | AppIndicator extension | Portal (48+) | — | Refuses to start; use `vinowhisper-caption` |
+| X11 sessions | No | — | — | — | Refuses to start; use `vinowhisper-caption` |
 
-Until 2026-11-14 the clipboard was `ext-data-control-v1` (or the older
-`zwlr_data_control_manager_v1`), which every compositor in the table offers. KWin hides
-both from Flatpak apps, so it moved into the portal session with typing.
+(Before 2026-11-14, clipboard used `ext-data-control-v1` / `zwlr_data_control_manager_v1`; KWin 6.8 hides both from Flatpak apps, so clipboard moved into the `RemoteDesktop` portal session.)
 
-On a compositor without layer-shell it exits with a message that says so,
-rather than falling back to a normal window that cannot stay on top.
-`vinowhisper-caption` in a terminal works everywhere.
-
-It renders at the display's fractional scale (`wp_fractional_scale_v1` with
-viewporter), so text stays sharp at 125% or 150%. A compositor missing either
-gets the next whole-number scale shrunk down, which shows as slightly soft
-text. It lands on whichever output the compositor picks, usually the focused
-one, keeps clear of panels rather than sliding under them, and is recreated if
-the compositor withdraws it (usually because its output went away). It cannot
-be dragged; Position is top or bottom only.
+On unsupported compositors, `vinowhisper-tray` exits with an explicit error instead of falling back to a regular window. Text renders at fractional display scale via `wp_fractional_scale_v1` + `wp_viewporter` (falling back to integer scale otherwise), stays clear of panels, recreates automatically if an output disconnects, and supports top or bottom placement (not draggable).
 
 ## How it fits together
 
@@ -1008,94 +326,36 @@ vinowhisper-tray ──spawns──> vinowhisper-caption --json ──HTTP──
       └── $XDG_RUNTIME_DIR/vinowhisper-tray.sock (show/hide/toggle/dictate/quit)
 ```
 
-- **The wire format is `events.to_dict`, verbatim.** `--json` writes one
-  ASCII-escaped object per event, plus an `Error` record when the CLI gives
-  up, since a GUI has no terminal to show stderr on.
-  `tests/test_caption.py` names every field `tray/src/protocol.rs` reads, so
-  renaming one fails a Python test rather than leaving the overlay silently
-  blank.
-- **Only the fields it draws are read.** Extra fields are ignored, and an
-  unknown record or a stray line on stdout costs that one line rather than
-  the session, so the Python events can grow without a new GUI release. The
-  fixtures in `protocol.rs` were captured from `JsonRenderer`, not written by
-  hand, so they pin the real wire format.
-- **The surface spans the whole output width** and the box is centred in it.
-  Being click-through makes the empty sides free, and no output size has to be
-  known before the compositor picks an output.
-- **Redraws follow what is on screen, not events.** The caption process sends
-  an event every half second even in silence, and one that changes nothing
-  visible draws nothing, since every frame also makes the compositor repaint.
-  The once-a-second timer runs only while "Starting, Ns" is showing, so a
-  hidden overlay has no timer at all. The tray is updated only when its menu
-  or tooltip actually changed, since each update is a D-Bus round trip.
-- **The tray decides nothing.** Each choice goes to the main loop as a command,
-  and the main loop answers with a fresh view. Registration is assumed rather
-  than checked, since at login the overlay can start before Plasma's tray.
-- **Stopping is Ctrl+C.** The GUI sends SIGINT, so the Python side flushes its
-  last pending words and stops `pw-record` exactly as it would in a terminal.
-  It gets 4s before SIGKILL. The child also carries a parent-death signal, so
-  a crashed or killed GUI never leaves captioning running with no one
-  watching.
-- **One instance per session.** A second launch sends its command to the
-  first over the socket and exits, which is how `vinowhisper-tray toggle`
-  works from any keybinding tool, and why a double-clicked launcher never
-  starts two. A socket file left by a killed instance is detected by trying to
-  connect, and `--hidden` only pings, so an autostart that finds an instance
-  running leaves it alone.
-- **The socket is private.** It lives in `$XDG_RUNTIME_DIR`. Without one it
-  falls back to `/tmp/vinowhisper-tray-<uid>/`, a directory it creates 0700
-  and refuses to use if another user owns it, it is a symlink, or anyone else
-  can enter it: `/tmp` is shared, and a name there that another user made
-  first would let them stop the overlay starting. A connection from another
-  uid (`SO_PEERCRED`) gets no answer.
+- **Wire protocol:** `--json` serializes `events.to_dict` as ASCII-escaped JSON lines (plus `Error` records on fatal exits). `tests/test_caption.py` verifies every field consumed by `tray/src/protocol.rs`, and `protocol.rs` fixtures are captured from `JsonRenderer`. Unknown fields and stray lines are ignored for forward compatibility.
+- **Rendering & power:** The click-through surface spans the full output width with the box centered inside. Only visual changes trigger Wayland repaints or D-Bus tray updates, and the 1s timer runs only while "Starting, Ns" is displayed.
+- **Process lifecycle:** Stopping captions sends `SIGINT` (4s grace before `SIGKILL`) so pending words flush cleanly; `PR_SET_PDEATHSIG` ensures child processes exit if the tray crashes.
+- **Single-instance socket:** Secondary invocations forward their command over `$XDG_RUNTIME_DIR/vinowhisper-tray.sock` (fallback `/tmp/vinowhisper-tray-<uid>/`, `0700`, verified not symlinked and owned by current UID; `SO_PEERCRED` rejects other UIDs). Stale sockets are detected by probing, and `--hidden` exits quietly if an instance is already running.
 
 ## Why Rust
 
-Asked for 2026-09-12: something native and fast that installs without a pile
-of dependencies. The first candidate was PySide6. `PySide6-Essentials` is only
-two wheels, but measured 232MB installed. System PyGObject cannot be imported
-from the project's Python 3.13 venv (Fedora 44's is built for 3.14). Tkinter
-has neither a tray nor Wayland. The Rust binary is 6.3MB, links only libc,
-and draws its own text with no GPU context, since it redraws a couple of times
-a second at most. The shapes are hand-drawn too: antialiased rounded
-rectangles and circles from a signed-distance function, into Wayland's
-premultiplied ARGB8888 buffer. That is all a caption box and a tray icon need,
-not enough to justify a 2D graphics library.
+Evaluated 2026-09-12: `PySide6-Essentials` required 232 MB installed, Fedora 44's system PyGObject was built for Python 3.14 (incompatible with the Python 3.13 venv), and Tkinter lacks Wayland and tray support. The Rust overlay is a 6.3 MB libc-only binary that rasterizes text on CPU (`cosmic-text`) and draws antialiased rounded rectangles/circles via signed-distance functions directly into Wayland premultiplied `ARGB8888` buffers without a GPU context or 2D graphics library.
 
 ## The icon
 
-The mark is the overlay itself: three voice bars in the listening dot's green
-become a word, above a confirmed line that ends in a pending one, in the box's
-own colour. It is drawn as data in `tray/src/icon.rs`. The launcher SVG, the
-tray's fallback pixmaps and the copies in `docs/assets/` all come from it;
-`VINOWHISPER_BLESS_ICONS=1 cargo test` regenerates the assets, and a test fails
-when they are stale.
-
-The tray version is the same composition redrawn on Breeze's 16px grid in
-one-pixel lines, so it sits with the panel's other icons. Its outline and text
-follow the panel's text colour through KDE's `current-color-scheme`
-stylesheet, while the voice bars stay green so the tray matches the start
-menu. The outline is the box minus its inset under the even-odd rule rather
-than a stroke, so it lands on whole pixels.
+Defined procedurally in `tray/src/icon.rs` (three green voice bars above confirmed and pending caption lines inside the caption box). Launcher SVGs, tray fallback pixmaps, and `docs/assets/` copies are generated from it (`VINOWHISPER_BLESS_ICONS=1 cargo test`; a test fails if stale). The 16px Breeze-style tray icon uses 1px even-odd outlines and KDE's `current-color-scheme` stylesheet so strokes adapt to panel color while keeping green voice bars.
 
 ## Troubleshooting
 
-Run it from a terminal to see its log. Lines from the caption process are
-prefixed `[caption]`.
+Run `vinowhisper-tray` from a terminal to view logs (caption output is prefixed `[caption]`).
 
-| Symptom | Cause |
+| Symptom | Cause and fix |
 |---|---|
-| "no global shortcut (... An app id is required)" | No launcher. It writes one on first run; if it could not, run `vinowhisper-tray --install` |
-| "vinowhisper-caption was not found" | Not on `PATH` for a desktop-launched app. `vinowhisper-tray --install --caption /path/to/vinowhisper-caption` bakes the path into the launcher |
-| Box says "not reachable" | The server, not the GUI: `vinowhisper-doctor` |
-| No tray icon | No StatusNotifierItem host (GNOME without the AppIndicator extension). The shortcut and commands still work |
-| "does not offer wlr-layer-shell" | GNOME or X11. See the table above |
-| Box shows raw error text | The caption process exited without an `Error` record, so the box shows its last stderr lines. Run `vinowhisper-caption` in a terminal for the rest |
-| Text in an unexpected font | fontconfig names a sans-serif that is not installed. It falls back to the first installed of Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans and Liberation Sans |
-| Dictation: "vinowhisper-dictate was not found" | Older install. `pip install -U vinowhisper`, then `vinowhisper-setup` links it |
-| Dictation: a "Remote control" notification | KDE announces each portal session. One is kept open between dictations; Settings → Speech → Keep typing access sets how long (0 keeps it open) |
-| "no global shortcut" in the log | No GlobalShortcuts portal (Sway, niri, COSMIC) or one that leaves the key to you (Hyprland). Bind the commands [in the compositor](#without-a-shortcuts-portal) |
-| Dictation: "Not typed" | Typing was refused or failed. The text is on the clipboard when the message says so, and in Recent dictations either way. After refusing the portal dialog, restart the overlay to be asked again |
-| Dictation: a press does nothing | A press while the last one is still being transcribed is ignored. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every key and state change |
-| Old behaviour after an upgrade | The tray that was running is still the old binary, and its dictation child the old Python. `vinowhisper-tray restart` quits it and starts the installed one in the tray (captions off); the installers and `vinowhisper-setup` run it themselves since 1.6.2, and it refuses outside a Wayland session (over ssh) rather than leave no tray (2026-11-13) |
-| Old icon after an upgrade | Plasma's icon cache. `rm ~/.cache/icon-cache.kcache`, then log out and in or restart plasmashell |
+| `no global shortcut (... An app id is required)` | Missing `.desktop` launcher; run `vinowhisper-tray --install` |
+| `vinowhisper-caption was not found` | Not on desktop `PATH`; run `vinowhisper-tray --install --caption /path/to/vinowhisper-caption` |
+| Box shows `not reachable` | Server issue rather than overlay; run `vinowhisper-doctor` |
+| No tray icon | Missing StatusNotifierItem host (e.g., GNOME without AppIndicator); shortcuts and CLI still work |
+| `does not offer wlr-layer-shell` | GNOME or X11 (see [Where it works](#where-it-works)); use `vinowhisper-caption` |
+| Box displays raw stderr text | Caption process exited without an `Error` event; run `vinowhisper-caption` in a terminal |
+| Unexpected caption font | Configured `sans-serif` not installed; falls back to Inter, Noto Sans, Cantarell, Ubuntu, DejaVu Sans, or Liberation Sans |
+| Dictation: `vinowhisper-dictate was not found` | Outdated install; run `pip install -U vinowhisper && vinowhisper-setup` |
+| Dictation: "Remote control" notification | KDE announces each new portal session; raise **Settings → Speech → Keep typing access** (`0` keeps it open) |
+| `no global shortcut` in log | Compositor lacks `GlobalShortcuts` (Sway/niri/COSMIC) or ignores triggers (Hyprland); bind commands [in the compositor](#without-a-shortcuts-portal) |
+| Dictation: `Not typed` | Portal refused or failed; recover text from clipboard (if shown) or **Recent dictations**; restart tray to re-prompt after refusal |
+| Dictation key press ignored | Previous dictation is still transcribing; inspect with `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` |
+| Old behavior after upgrade | Running tray/dictate binary is stale; run `vinowhisper-tray restart` (automated since 1.6.2; refuses outside Wayland/over SSH since 2026-11-13) |
+| Old icon after upgrade | Stale Plasma icon cache; run `rm ~/.cache/icon-cache.kcache` and re-login or restart `plasmashell` |

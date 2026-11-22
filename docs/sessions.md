@@ -1,171 +1,68 @@
-# Saved sessions and their summaries
+# Saved sessions and summaries
 
-Issue #123, built 2026-10-28. Recording stays opt-in: only sessions captioned with
-**Save transcripts** on (or `vinowhisper-caption --transcript` into a directory)
-are kept, and only those are summarised.
+Added 2026-10-28 (issue #123). Recording is opt-in: only caption sessions run with **Save transcripts** enabled (or `vinowhisper-caption --transcript` pointing to a directory) are bundled and summarised.
 
-## What happens after a session
+## Session lifecycle
 
-1. While captions run, the transcript is written live to
-   `~/.local/share/vinowhisper/transcripts/YYYY-MM-DD-HHMMSS.txt`, as before
-   ([terminal.md](terminal.md)). The file holds an `flock` until the session ends.
-2. When it ends, `vinowhisper-caption` turns it into
-   `YYYY-MM-DD-HHMMSS.vwsession` (below) and removes the `.txt`. A transcript
-   written to a named file (`--transcript notes.txt`, appended to across
-   sessions) is never bundled.
-3. It then asks the server (`POST /summaries`) to summarise. The server
-   summarises in the background, newest session first, and only once no
-   caption or dictation request has reached it for 20 s (`summary.QUIET_S`). If
-   one arrives mid-summary, the model is cancelled at its next token and that
-   chunk runs again later, so captions and dictation never wait behind a
-   summary. The server does not idle-exit while summaries are queued.
-4. The summary is written into the bundle (temp file, then rename), the model
-   is unloaded as soon as the queue is empty, and the tray posts one desktop
-   notification for everything that finished together. "Open" goes to the
-   summary in the settings window.
+1. **Live capture:** Words are written to `~/.local/share/vinowhisper/transcripts/YYYY-MM-DD-HHMMSS.txt` ([terminal.md](terminal.md)) while holding an `flock` lock.
+2. **Bundling:** When the session ends, `vinowhisper-caption` packages the `.txt` into `YYYY-MM-DD-HHMMSS.vwsession` and removes the raw `.txt`. Transcripts appended to an explicit file path (`--transcript notes.txt`) are never bundled.
+3. **Background summarisation:** The client sends `POST /summaries` to the server, which processes queued sessions newest-first after 20s without any caption or dictation requests (`summary.QUIET_S`). If a live caption or dictation request arrives mid-summary, generation cancels on the next token and resumes that chunk later. The server stays alive while summaries are queued.
+4. **Completion:** The summary is written atomically (temp file + rename), the summarisation model unloads as soon as the queue empties, and the tray posts one desktop notification for the batch with an **Open** action leading to the summary in the sessions window.
 
-If the session never ended (crash, power loss), the next server start bundles
-the leftover `.txt` and summarises it. Transcripts saved before this feature are
-left alone: the sessions window offers to bundle and summarise them (backfill).
-What counts as "before" is the first time the summariser ran, recorded in
-`~/.local/state/vinowhisper/sessions.json`, along with failure counts and the
-sessions whose summary was deleted on purpose (they are not summarised again).
+Leftover `.txt` files from crashes or power loss are bundled and summarised on the next server start. Older transcripts saved before this feature first ran (tracked in `~/.local/state/vinowhisper/sessions.json`, alongside retry counts and intentionally deleted summaries) are left untouched until you backfill them from the sessions window.
 
-**Summarise saved sessions automatically** (settings window, Sessions page,
-`~/.config/vinowhisper/summaries.json`, `{"auto": true}` by default) pauses the
-automatic runs. Summarising one session by hand still works when it is off.
+Automatic summarisation is controlled by **Summarise saved sessions automatically** in Settings → Sessions (`~/.config/vinowhisper/summaries.json`, `{"auto": true}` by default). Manual per-session summarisation still works when automatic runs are disabled.
 
-## From a file: `vinowhisper-transcribe`
+## Transcribing audio and video files (`vinowhisper-transcribe`)
 
-Issue #162, built 2026-11-09. A recording you already have (a voice memo, a downloaded
-lecture, a call) becomes a session without playing it:
+Added 2026-11-09 (issue #162). Convert existing recordings (voice memos, lectures, calls) into `.vwsession` bundles without playing them back:
 
-```
+```bash
 vinowhisper-transcribe FILE [--model …] [--language …] [--task …] [-o DIR] [--json]
 ```
 
-or **Import audio or video…** in the sessions window, which opens the desktop's file dialog,
-runs the same command with `--json` and shows how far it has got, with Cancel. The
-result is an ordinary bundle in the transcripts folder, so the summary, export,
-Open in… and Read aloud work on it as on any session.
+You can also click **Import audio or video…** in the sessions window to run the same command with progress display and cancellation. Imported sessions support summaries, export, Open in…, and Read aloud identically to live sessions.
 
-- **Decoding** is `ffmpeg` (16 kHz mono float, first audio stream, so video files
-  work), else `gst-launch-1.0` with `decodebin`. With neither, only 16-bit 16 kHz WAV
-  is read, and anything else fails with the install command for the distro. The
-  doctor's `file decoder` line and setup's optional step name the package. The audio
-  is streamed, never held whole in memory. Both decoders have been run (2026-11-09:
-  WAV, mp3 and mp4, and a file name with quotes, a backslash and `!` through
-  GStreamer). GStreamer needs its libav plugin for AAC and most video files.
-- **No overlap and no stitching.** Captions decode overlapping windows because they
-  have a latency target; a file has none. The file is cut into pieces of 15 to 29.5 s
-  (`FILE_PIECE_MIN_S`, `MAX_WINDOW_S`), each cut at the quietest 0.3 s in that span,
-  so each second is decoded once and a cut falls in a pause when the audio has one.
-  The cut needs no threshold. Stretches under `SILENCE_RMS_THRESHOLD` (digital
-  silence) are skipped, and so is sound with nobody speaking in it (below); quiet
-  speech is always sent. Each piece is normalised like a caption window and cleaned
-  like a dictation (repeat loops, `[BLANK_AUDIO]`).
-- **Non-speech counts as silence** (#180, 2026-11-11). Silero VAD
-  (`vinowhisper/vad.py`, MIT, the 1.3 MB `silero_vad_openvino_16k.onnx` pinned by
-  commit and sha256 in `vad_model.json`, fetched on first import into the models
-  folder) scores each 32 ms on the CPU. A 100 ms frame it scores under 0.5 is cut and
-  trimmed like silence, and 3.1 s without speech (the 2.5 s paragraph gap plus both
-  0.3 s pads) ends a piece, so the gap is seen between two pieces. Before this, a dog
-  barking or bells between two talks were loud, the talks merged into one paragraph,
-  and the next stamp was 7 s late. If the detector cannot be fetched or loaded, the
-  import goes on with a warning and breaks on silence only; the warning is in the
-  `Ready` record's `warnings` (2026-11-11), so `--json` carries it. The detector is
-  built after the file and the server are checked, so a mistyped path does not start
-  the download. If its inference fails part-way through a file, it is dropped for the
-  rest of that file with one warning on stderr. `--json` also carries both as
-  `{"event": "Warning", "message": …}` records, and the sessions window shows them
-  as an "Import note" with the import's result (2026-11-11).
-  Non-speech frames are scaled down (x1e-4), not zeroed. At zero every pause ties,
-  the cut lands at the earliest one, and pieces shrink: 63 against 52 on the reading
-  below, with three lines (33 words) dropped at the extra boundaries.
-- **Stamps** are positions in the file. A paragraph starts after 2.5 s without
-  speech or at a sentence end past 70 words, as in captions. The model gives no word
-  times, so a break inside a piece is stamped by where its words fall in the piece,
-  which can be a few seconds off. A paragraph after a pause is stamped where its
-  speech starts less the 0.3 s pad, so it reads up to a second early.
+- **Audio decoding:** Uses `ffmpeg` (extracting the first audio stream as 16 kHz mono float, so video files work), falling back to `gst-launch-1.0` with `decodebin` (requires GStreamer's `libav` plugin for AAC and most video). Without either, only 16-bit 16 kHz WAV is supported and other formats print your distro's install command (also shown in `vinowhisper-doctor` and `vinowhisper-setup`). Audio is streamed rather than loaded whole into RAM (both decoders verified 2026-11-09 on WAV, MP3, MP4, and filenames containing quotes, backslashes, and `!`).
+- **Chunking without overlap:** Files have no live-latency requirement, so they are split into 15–29.5s pieces (`FILE_PIECE_MIN_S`, `MAX_WINDOW_S`) at the quietest 0.3s window in that span, normalized like captions, and post-processed like dictation (repeat loops, `[BLANK_AUDIO]`). Digital silence below `SILENCE_RMS_THRESHOLD` is skipped.
+- **Non-speech filtering via Silero VAD (#180, 2026-11-11):** `vinowhisper/vad.py` uses MIT-licensed `silero_vad_openvino_16k.onnx` (1.3 MB, commit/SHA-256 pinned in `vad_model.json`, downloaded on first import after validating file/server) on CPU to score 32 ms frames. 100 ms frames scoring below 0.5 are treated like silence, and 3.1s without speech (2.5s paragraph gap + two 0.3s pads) forces a piece boundary so pauses with background noise (barking, bells) still split paragraphs cleanly. Non-speech frames are scaled by `1e-4` rather than zeroed so pause cuts do not tie at the earliest point (zeroing increased pieces from 52 to 63 and dropped 33 words on the 19-minute reading below). If VAD fails to fetch, load, or run mid-file, import continues using RMS silence only and reports a warning (`Ready.warnings` and `{"event": "Warning", "message": …}` in `--json`, shown as an "Import note" in the UI).
+- **Timestamps:** Paragraph breaks occur after 2.5s without speech or at sentence ends past 70 words. Breaks inside a piece estimate their timestamp proportionally by word position (within a few seconds); breaks after a pause are stamped at speech start minus the 0.3s pad (up to 1s early).
+  - **Why Whisper segment timestamps are not used:** Tested on the NPU (2026-11-11, 19-minute *Pride and Prejudice* LibriVox reading): timestamp mode took 106s vs. 65s, raised WER from 6.9% to 8.6%, hallucinated phrases (including repeating "the book of" 24 times), and still stamped the first segment at `0.00` after 10s of barking.
 
-  **Why not Whisper's segment timestamps.** They were built first and measured
-  on the NPU (2026-11-11, 19 min of the LibriVox Pride and Prejudice reading): 106 s
-  against 65 s and 8.6% WER against 6.9%. Timestamp mode decoded differently: it
-  inserted phrases nobody said, and once repeated "the book of" 24 times. Its first
-  segment in a piece also starts at 0.00 even after ten seconds of barking, so the
-  stamps needed a guess anyway.
-
-  | Measured on the NPU, 2026-11-11 | Time | WER | Paragraphs |
+  | NPU VAD benchmark (2026-11-11) | Time | WER | Paragraphs |
   |---|---|---|---|
-  | Reading, 19 min, no detector | 67.0 s | 6.9% | 42 |
-  | Reading, 19 min, with detector | 73.3 s | 6.9% | 42 |
-  | espeak, 3 talks at 0:00, 0:26, 1:04, barking and bells between | 2.5 s | | 3, stamped 0:00, 0:25, 1:03 (was 2) |
+  | 19-min LibriVox reading, no VAD | 67.0s | 6.9% | 42 |
+  | 19-min LibriVox reading, with Silero VAD | 73.3s | 6.9% | 42 |
+  | `espeak` (3 talks at 0:00, 0:26, 1:04 + synth barks/bells) | 2.5s | — | 3, stamped 0:00, 0:25, 1:03 (was 2) |
 
-  The noise in that file is synthesized (square-wave barks, sine bells), not
-  recorded; the issue's own mp4 from linuxlab has not been re-run. The detector
-  takes about 7 s of one CPU core per 19 min of audio.
-- **The flags check, they do not switch.** The server holds one speech model. If
-  `--model`, `--language` or `--task` differ from what it is running, the command
-  stops and says to change it under Settings → Speech; it never transcribes French
-  with the English model. Without flags it uses whatever the server runs.
-- **Captions and dictation go first.** Each piece is marked
-  `X-Vinowhisper-Priority: background`, and the server holds it while a caption or
-  dictation decode is in flight, for at most 5 s (`BACKGROUND_YIELD_S`): bounded,
-  because captions decode back to back and a strict priority would starve the file.
-  While either has been used in the last 10 s (`/health`'s `live_active`), the file is
-  cut into 6 to 12 s pieces instead, so a caption cycle waits behind at most one
-  caption window's decode. The pieces grow back when captions stop. Measured on the
-  recording below with every piece short (2026-11-09, CPU): 57 pieces, 34.9 s against
-  25.7 s, and 7.0% WER against 7.4%, so it costs time and no accuracy.
-  Summaries wait for an import as they do for captions.
-- **Cancelling saves nothing.** Nothing is written until the whole file is decoded.
-  A file with no speech saves nothing either. Closing the sessions window cancels
-  an import it started.
-- **A piece is tried three times.** If a request fails, the command waits for the
-  server (a restarted one loads its model first) and sends the piece again. If the
-  server came back with another model or language, it stops instead of mixing two.
-- **The file is hashed before decoding**, so moving or deleting it during a long
-  import does not lose the transcript.
-- `-o DIR` saves somewhere else; such a session is not listed or summarised.
+  Silero VAD uses ~7s of one CPU core per 19 minutes of audio. (Noise clip used synthetic square-wave barks and sine bells; the issue's original `linuxlab` MP4 has not been re-run.)
+- **Flag checking:** `--model`, `--language`, and `--task` verify that the running server matches instead of silently switching models or transcribing in the wrong language.
+- **Background priority:** Pieces send `X-Vinowhisper-Priority: background`, yielding to live captions/dictation for up to 5s (`BACKGROUND_YIELD_S`). While `/health` reports `live_active` (live use within the last 10s), pieces shrink to 6–12s so live cycles wait behind at most one short decode (tested 2026-11-09 on CPU: 57 short pieces took 34.9s vs. 25.7s at 7.0% vs. 7.4% WER). Summaries yield to file imports as well.
+- **Retries, hashing, and cancellation:** The input file is hashed before decoding so moving or deleting it mid-import does not break saving. Each piece retries up to 3 times if the server restarts (aborting if the server restarts with a different model/language). Cancelling, closing the sessions window, or importing silent audio writes nothing. `-o DIR` writes outside the managed transcripts folder (excluded from listing/auto-summary).
 
-**Measured on a CPU, not yet on the NPU** (2026-11-09, n=1: a 4-core cloud Xeon at
-2.3 GHz, OpenVINO 2026.4.1, the prebuilt `OpenVINO/whisper-small.en-fp16-ov`). 8.5
-minutes of LibriSpeech (73 utterances from one reader, 1,150 words, joined with
-0.4 s gaps):
+**CPU benchmark (2026-11-09, n=1; not yet benchmarked on NPU):** 4-core cloud Xeon 2.3 GHz, OpenVINO 2026.4.1, prebuilt `OpenVINO/whisper-small.en-fp16-ov`, 8.5 minutes of LibriSpeech (73 utterances, 1,150 words, 0.4s gaps):
 
-| File | Time | Speed | Pieces | WER |
+| Input file | Time | Speed | Pieces | Raw WER |
 |---|---|---|---|---|
-| mp3, 64 kbit/s | 25.7 s | 20x real time | 23, of 10 to 28 s | 7.4% |
-| mp4 video, AAC | 25.4 s | 20x real time | 23, of 16 to 29 s | 6.5% |
+| MP3 (64 kbit/s) | 25.7s | 20x real time | 23 (10–28s) | 7.4% |
+| MP4 video (AAC) | 25.4s | 20x real time | 23 (16–29s) | 6.5% |
 
-The WER is raw word matching against LibriSpeech's spelled-out text, so most of it
-is spelling ("mister" for "Mr", "Kaliko" for "Calico", quote marks). The real
-misses were about 15 words, including the last five of the file. No error sat at
-a cut. The NPU should be faster again; that run still needs the laptop.
+Raw WER reflects spelling differences against LibriSpeech's normalized text ("mister" vs. "Mr", "Kaliko" vs. "Calico", quotes); actual errors totaled ~15 words (including the final 5 words), with zero errors at piece boundaries.
 
-## The bundle: `.vwsession`
+## Bundle format (`.vwsession`)
 
-A zip with a fixed layout, like `.odt` and `.epub`:
+A standard zip container modeled on `.odt`/`.epub`:
 
 ```
-mimetype           application/vnd.vinowhisper.session+zip   first entry, stored, no extra field
-transcript.txt     the transcript exactly as captured, header line included
-summary.md         absent until summarised
-attestation.json   provenance
+mimetype           application/vnd.vinowhisper.session+zip   (first entry, uncompressed, no extra field)
+transcript.txt     exact captured transcript including header line
+summary.md         present once summarised
+attestation.json   provenance metadata and file hashes
 ```
 
-Entry times are fixed (1980-01-01), so the bytes depend only on the content. Bundles
-are 0600, and temp files are `.<name>.<random>.tmp`, never ending in `.vwsession`.
+Zip entry timestamps are fixed to `1980-01-01` for deterministic output. Bundles are created with mode `0600` via temp files named `.<name>.<random>.tmp`.
 
-vinoSearch reads these (karanshukla/vinoSearch#143, #145) and depends on:
-mimetype stored and first; `format == "vinowhisper-session/1"` (it refuses anything
-else); entries found by name; `session.started` RFC 3339 with an offset;
-`session.duration_s` an integer; `files["summary.md"].made_by == "ai-generated-summary"`;
-paragraph stamps matching `^\[(\d{2,}):(\d{2})\] ` (minutes keep counting past an
-hour: `[61:05]`). `tests/test_bundle.py` pins all of this, and
-`tests/fixtures/session_v1*.vwsession` are the fixtures vinoSearch copies
-(`VINOWHISPER_BLESS_FIXTURES=1` regenerates them). Change the layout only with a
-new `format`.
+`vinoSearch` consumes `.vwsession` bundles (`karanshukla/vinoSearch#143`, `#145`) and relies on: uncompressed first `mimetype` entry, `format == "vinowhisper-session/1"`, named entries, RFC 3339 `session.started` with timezone offset, integer `session.duration_s`, `files["summary.md"].made_by == "ai-generated-summary"`, and paragraph timestamps matching `^\[(\d{2,}):(\d{2})\] ` (minutes continue past 60, e.g., `[61:05]`). All invariants are pinned by `tests/test_bundle.py` and fixture files `tests/fixtures/session_v1*.vwsession` (regenerated with `VINOWHISPER_BLESS_FIXTURES=1`). Breaking layout changes require bumping `format`.
 
 ### Attestation
 
@@ -185,121 +82,45 @@ new `format`.
 }
 ```
 
-It says how each file was made, in C2PA's spirit (the summary is marked
-AI-generated), and its hashes show an edit made afterwards
-(`vinowhisper-session verify`). It is unsigned: anyone can write the same JSON, so
-it is provenance, not proof. Bundled leftovers and backfilled transcripts carry
-`null` where something isn't known (language, model revision).
+Attestation records provenance (marking summaries as AI-generated) and SHA-256 digests verifiable with `vinowhisper-session verify`. It is unsigned provenance, not cryptographic proof. Crash-recovered or backfilled transcripts set unknown fields (such as `language` or `revision`) to `null`.
 
-A session made from a file has one more key, and its `source` is the file's name;
-`started` is when it was imported, and `duration_s` is the audio's length:
+Additional optional fields inside `session` (backwards-compatible with `vinowhisper-session/1`):
 
-```json
-"session": {"started": "…", "duration_s": 2530, "source": "lecture.mp3", "language": "en",
-            "task": "transcribe",
-            "file": {"name": "lecture.mp3", "sha256": "…", "bytes": 40481234}}
-```
+- **`file` (imported files only):** Sets `source` to the filename, `started` to import time, `duration_s` to audio duration, and adds:
 
-`file` is absent on a live session. It is an addition inside `session`, so the
-format stays `vinowhisper-session/1`.
+  ```json
+  "file": {"name": "lecture.mp3", "sha256": "…", "bytes": 40481234}
+  ```
 
-With the language on auto and Whisper as the model, a session, live or from a
-file, also records `"heard_language": "fr"`: the language most of its words were
-heard in, counted per word across windows (#189, 2026-11-13). It is absent when
-nothing was detected, which is every session not on auto.
+- **`heard_language` (#189, 2026-11-13):** Present on Whisper `--language auto` sessions (live or imported), recording the majority detected language weighted by word count across windows (e.g., `"heard_language": "fr"`).
+- **`playing` ([#156](https://github.com/karanshukla/vinoWhisper/issues/156), 2026-11-09, live system audio only):** Records active audio sources in order first observed:
 
-A live session of system audio also names what was sending it
-([#156](https://github.com/karanshukla/vinoWhisper/issues/156), 2026-11-09), in the
-order first seen:
+  ```json
+  "playing": [{"app": "Mozilla Firefox", "title": "How NPUs work - YouTube", "artist": "Some Channel"},
+              {"app": "Some Game"}]
+  ```
 
-```json
-"session": {"…": "…", "source": "system audio",
-            "playing": [{"app": "Mozilla Firefox", "title": "How NPUs work - YouTube",
-                         "artist": "Some Channel"},
-                        {"app": "Some Game"}]}
-```
+  `vinowhisper/playing.py` queries playing MPRIS players on the session bus via `busctl` (no extra dependency) and running PipeWire output streams (filtered to `--target` when set). It stores only `app`, `title`, and `artist` (control characters stripped, capped at 200 characters, max 12 entries), excluding track URLs, cover art paths, and IDs. Sampling runs off the caption loop at most once every 30s on word commit. `playing` is omitted on mic sessions, files, crash recoveries, or when no session bus is present. In summaries, `_Playing: …_` is inserted directly by code from the attestation—the LLM never sees page titles. Tested 2026-11-09 with two fake MPRIS players on a live session bus; pairing real Chrome/Firefox MPRIS `Identity` against PipeWire `application.name` has not yet been tested on hardware.
 
-`vinowhisper/playing.py` asks the session bus for MPRIS players whose
-`PlaybackStatus` is `Playing` (through `busctl`, which systemd ships, so no new
-dependency) and PipeWire for output streams that are running. A player gives its
-name, title and artist; an app making sound with no player gives its name alone.
-With `--target`, only that application counts.
+## How summaries are generated
 
-- **Only `app`, `title` and `artist` are kept**, each cleaned of control characters
-  and cut at 200. The track's URL, its art and its id are never read into the entry:
-  a URL can carry a private link or a token, and the art is a path under your home.
-  A title is still a title: a session of a video named after something private says
-  so. Browsers hide titles from private windows themselves.
-- It is sampled when words are committed, at most every 30 s, off the caption
-  loop's thread, so it names what was being captioned and a slow player cannot hold
-  a cycle up. At most 12 entries.
-- `playing` is absent when nothing was seen, on microphone sessions, on files, with no
-  session bus, and on a transcript bundled after a crash. Like
-  `file`, it is an addition inside `session`.
-- The sessions window shows it beside the source, an export carries it as
-  `playing`, and a summary states it in a `_Playing: …_` line above the closing
-  line. That line is written by the code from the attestation. The model never
-  sees it: a title is not something it heard, and it is text a web page chose.
+`vinowhisper/summary.py` uses SmolLM3-3B inside the transcription server (the same model used for dictation cleanup; see [tray.md](tray.md)):
 
-Checked 2026-11-09 against two fake MPRIS players on a real session bus (one
-playing, one paused): the playing one was named, the paused one was not, and the
-URL stayed out. **Not yet run on the laptop**: whether Chrome's and Firefox's
-`Identity` match their PipeWire `application.name` closely enough to pair up
-(matching is "one name contains the other") needs real browsers.
+- **Chunking:** Splits on `[MM:SS]` paragraph boundaries into ~7,000-character chunks (`CHUNK_CHARS`, fitting inside `MAX_PROMPT_LEN=3072`; oversized paragraphs split at word boundaries retaining their timestamp).
+- **Code-assembled structure:** Asking SmolLM3 for a full formatted summary in one pass caused it to invent headings, omit timestamps, and drop the first half of a 16-minute dual-topic session (2026-10-30). Instead, each chunk generates bullet points (prefilled with `-`), code selects points spread across all chunks (at least 1 per chunk, aiming for ≥8 total), and separate short passes generate the `# title` (≤8 words, prefilled with `#`) and overview (≤3 sentences).
+- **Decoding parameters:** `repetition_penalty=1.05` and `CHUNK_TOKENS=400`. Without repetition penalty, greedy decoding looped (#121, 2026-10-30); at `1.1`, it hallucinated details and only covered the first half of chunks.
+- **Name and number filtering:** Drops any bullet introducing a proper name or number absent from its source chunk (unless all bullets in the chunk would be dropped). Incorrect claims built from valid names can still pass.
+- **Prompt isolation:** Transcript text is wrapped in `<transcript>` / `<notes>` tags (with internal closing tags stripped) and treated strictly as data; summaries are only displayed and indexed, never typed or executed.
+- **Timestamps and language:** Model-generated timestamps are stripped; each bullet receives the timestamp of the highest word-overlap paragraph in its chunk. Summary language follows the session language (or English for `translate` sessions).
+- **Footer and retries:** Summaries end with `_Playing: …_` (if recorded) and a note stating the summary is machine-written and the transcript is authoritative. Transient failures retry up to `MAX_FAILURES` (3) before notifying; a missing model pauses the queue without counting a failure.
 
-## How a summary is made
+## Sessions window and `vinowhisper-session` CLI
 
-`vinowhisper/summary.py`, SmolLM3-3B in the server, the model dictation cleanup
-uses ([tray.md](tray.md), "LLM cleanup").
+Open the sessions window with `vinowhisper-gui --sessions`, from Settings → Sessions, or by enabling **Show saved sessions in the app menu** (writes `~/.local/share/applications/io.github.karanshukla.vinowhisper.sessions.desktop`, removed by `vinowhisper-tray --uninstall`).
 
-- **Chunked at `[MM:SS]` paragraphs**, about 7,000 characters each
-  (`CHUNK_CHARS`), which leaves room for the prompt inside `MAX_PROMPT_LEN=3072`.
-  A paragraph longer than that is split at word boundaries and keeps its stamp.
-- **The shape is assembled here, not asked of the model.** Asked for the whole shape
-  in one pass, SmolLM3 wrote its own headings and numbered lists, left the stamps
-  out, and on a 16-minute session with two topics kept only the second (2026-10-30).
-  So each chunk becomes bullet points (its answer is prefilled with `-`), the code
-  picks key points spread across every chunk, and the title (prefilled with `#`) and
-  the overview are written from those points in separate short passes.
-- `repetition_penalty=1.05`: without it, greedy decoding looped on a long summary
-  in #121, and on bullet points again on 2026-10-30. At 1.1 it reworded enough to
-  bring in things the transcript never said, and covered only about the first half
-  of a chunk (`CHUNK_TOKENS` is 400 for the same reason).
-- **Names and numbers are checked.** A point naming something, or giving a number,
-  that its chunk doesn't contain is dropped, unless every point in the chunk would
-  go. A wrong claim made of real names gets through.
-- **The text is data.** It goes in between `<transcript>` (or `<notes>`) tags, with
-  any closing tag inside it removed, and the prompt says never to obey it. The
-  summary is only displayed and indexed, never typed, run or pasted.
-- **Stamps come from the transcript.** Anything the model wrote that looks like a
-  stamp is removed, and each point gets the stamp of the paragraph in its chunk that
-  shares the most words with it.
-- **Language** follows the session's: French captions get a French summary, and
-  `translate` sessions get English ones.
-- **Shape:** a `# title` of at most eight words, up to three sentences, at least eight
-  key points where the session offers them (never fewer than one per chunk, so a long
-  session's middle is kept), each ending in `[MM:SS]`, and a closing line saying it is
-  machine-written and that the transcript is the record. The date, length and model
-  are in the attestation. When the attestation names what was playing, a
-  `_Playing: …_` line sits above the closing one (see "Attestation").
-- One failure is retried quietly on the next run. After three (`MAX_FAILURES`) the
-  session stops being retried and the notification says so. A missing model stops
-  the queue without counting a failure; the sessions window says to download it.
+The window lists bundles, supports file import, displays transcripts and summaries (clicking key-point timestamps jumps to the transcript paragraph), and drives `vinowhisper-session`:
 
-## The sessions window and `vinowhisper-session`
-
-Saved sessions have a window of their own, `vinowhisper-gui --sessions`, the way
-vinoSearch's search window is its own (`vinosearch-settings --search`). The settings
-window's **Sessions** page keeps the summary setting and a button that opens it, and
-**Show saved sessions in the app menu** adds it to the app list as *vinoWhisper Sessions*.
-That switch writes `~/.local/share/applications/io.github.karanshukla.vinowhisper.sessions.desktop`
-(`Exec=vinowhisper-gui --sessions`), off until turned on, the way vinoSearch adds its search
-window; the file being there is the setting, and `vinowhisper-tray --uninstall` removes it.
-The window lists every bundle (date, length, source, title or state), and **Import audio or video…** adds one from a file (above). From there you can read the transcript or the summary (key points link to their stamp in the
-transcript), summarise again, delete the summary, delete the session, show it in
-the file manager, export it, copy the part on screen, or have vinoSpeak read it aloud. It drives `vinowhisper-session`:
-
-```
+```bash
 vinowhisper-session list [--json]
 vinowhisper-session show BUNDLE [--part transcript|summary|attestation]
 vinowhisper-session export BUNDLE [--part both|summary|transcript] [--format md|txt|odt]
@@ -308,166 +129,74 @@ vinowhisper-session summarise|delete-summary|delete|verify BUNDLE...
 vinowhisper-session backfill
 ```
 
-### Export
+Open a specific bundle or timestamp externally (used by `vinoSearch`, notifications, and file managers):
 
-`export` writes the summary, the transcript or both (the default) to a file outside
-the bundle. The logic is in the CLI so the window stays thin and anything else can use it.
-
-| `--format` | What's in it |
-|---|---|
-| `md` (default) | YAML frontmatter from the attestation (`date`, `duration`, `source`, `language`, `model`, `summary_model`, `vinowhisper_session`, `tags`), a `# title`, then `## Summary` and `## Transcript` |
-| `txt` | The same text with no markup: a `Label: value` header block, then `SUMMARY` and `TRANSCRIPT` |
-| `odt` | An OpenDocument text file (headings, paragraphs, a bulleted list), written by hand with `zipfile` like the bundle; the facts are also in `meta.xml` as custom properties. Opens in LibreOffice, Word and Google Docs |
-
-Without `--format` the format comes from `-o`'s extension, else `md`.
-
-- **What leaves keeps its marks.** `[MM:SS]` stamps stay in every format, and the summary's
-  "Machine-written summary" line is always kept. The transcript's header line is dropped:
-  the frontmatter or header block says the same.
-- **`-o`** is a file, or a directory to name it in; without it, `$XDG_DOCUMENTS_DIR/vinoWhisper/`
-  (from `user-dirs.dirs`, `~/Documents` when that is unset or points at `$HOME`). The name is
-  `<YYYY-MM-DD> <summary title>.<ext>` for the summary, with ` (transcript)` or
-  ` (summary and transcript)` after it for the other parts, and `<YYYY-MM-DD> Transcript.<ext>`
-  without a summary. Characters a file system or a file manager could trip on (`/`, `\`, `:`,
-  `*`, `?`, `"`, `<`, `>`, `|`, control and bidi characters) become spaces, and it is capped at
-  200 bytes. `--print-path` prints where it would write and writes nothing.
-- **Nothing is replaced without `--force`.** Into a directory a taken name gets ` (2)`, ` (3)`;
-  a named file that exists is an error. The file is written to a temp file and renamed (a hard
-  link when not forcing, so two exports cannot race onto one name), mode 0644: it leaves the
-  private store on purpose.
-- `--part summary` on a session with no summary is an error; `--part both` exports the
-  transcript and says so (`"summary_missing": true` with `--json`).
-- **Export is read-only**: nothing is recorded in the bundle or `sessions.json`.
-- **`--reuse`** (into a directory) keeps an earlier export of this session instead of
-  numbering a new one: `"state": "unchanged"` when its bytes are what export would write
-  now, `"edited"` when they differ. Which session a file came from is read from its
-  `vinowhisper_session` frontmatter key, `Session:` line or `meta.xml` property (LibreOffice
-  keeps that on save, checked 2026-10-29), so another session's file with the same name is
-  never taken; it gets a ` (2)` of its own.
-- `--json` prints `{"path", "parts", "summary_missing", "state"}` for the sessions window.
-
-Not supported: SRT/VTT (the bundle has one start stamp per paragraph, no end or word times,
-so cues would be guesses; it needs segment times in a `vinowhisper-session/2`), DOCX (ODT
-opens in Word), and exporting many sessions at once.
-
-In the window, **Export…** is in each card's More menu and in the viewer's header. It asks
-for the part (in the viewer it starts on the tab you're reading) and the format, then
-opens the desktop's save dialog through the FileChooser portal. Without a portal it saves into
-`$XDG_DOCUMENTS_DIR/vinoWhisper/` and says where, with a Show in folder button. **Copy** in
-the viewer's header puts the part on screen on the clipboard, as `vinowhisper-session show`
-prints it.
-
-### Open in…
-
-The viewer's header has an **Open in…** split button: the main half opens the part on screen
-in the app picked last ("Open in word processor" to start with), the arrow picks the other
-one. The card's More menu has both (the summary, or the transcript when there is none).
-
-| Entry | Exports |
-|---|---|
-| Word processor | `odt` |
-| Text editor | `md` |
-
-1. It exports with `--reuse` into `$XDG_DOCUMENTS_DIR/vinoWhisper/`, a kept file rather than a
-   temp file, because people edit it. A copy that differs from the session (edited, or
-   summarised since) is opened as it is, never written over, and the notice says so;
-   **Export…** writes a fresh one.
-2. It opens the file through the OpenURI portal with `ask` set, so GNOME and KDE show their
-   own app chooser, Flatpak apps work, and the desktop remembers the pick. With no portal it
-   runs `xdg-open`, and the MIME defaults decide.
-
-There is no app list of our own. The last entry picked is `open_in` in `gui.json`
-(`"word_processor"` or `"text_editor"`). Obsidian wants the file inside a vault, which this
-doesn't do; **Export…** to the vault's folder does.
-
-Opening a session from elsewhere (vinoSearch, a notification, a file manager):
-
-```
+```bash
 vinowhisper-gui --open <bundle>[#transcript[@MM:SS]|#summary]
 vinowhisper-gui <bundle>.vwsession
 ```
 
+Legacy `--page sessions --open <bundle>` is still accepted (`--page sessions` alone opens Settings → Sessions). The fragment splits on the last `#` only for the three recognized suffixes so filenames containing `#` still open. `@MM:SS` scrolls to and highlights the matching paragraph.
+
+### Exporting sessions
+
+| `--format` | Output contents |
+|---|---|
+| `md` (default) | YAML frontmatter (`date`, `duration`, `source`, `language`, `model`, `summary_model`, `vinowhisper_session`, `tags`), `# title`, `## Summary`, and `## Transcript` |
+| `txt` | Plain text `Label: value` header block, `SUMMARY`, and `TRANSCRIPT` |
+| `odt` | OpenDocument Text file written via `zipfile` with headings, bullet list, and custom `meta.xml` properties (opens in LibreOffice, Word, Google Docs) |
+
+- If `--format` is omitted, it is inferred from `-o`'s extension (default `md`).
+- `[MM:SS]` timestamps and the "Machine-written summary" footer are always preserved; the raw transcript header line is omitted because metadata moves to frontmatter/headers.
+- Without `-o`, files write to `$XDG_DOCUMENTS_DIR/vinoWhisper/` (falling back to `~/Documents`) named `<YYYY-MM-DD> <summary title>.<ext>` (with ` (transcript)` or ` (summary and transcript)` for other parts, or `<YYYY-MM-DD> Transcript.<ext>` if unsummarised). Unsafe filesystem/control/bidi characters become spaces; filenames cap at 200 bytes. `--print-path` prints the resolved path without writing.
+- Existing files are never overwritten without `--force`: directory targets append ` (2)`, ` (3)`, etc. (written atomically via temp file + hard link/rename, mode `0644`); explicit existing file targets error.
+- `--part summary` errors if no summary exists; `--part both` falls back to transcript and sets `"summary_missing": true` in `--json` (`{"path", "parts", "summary_missing", "state"}`). Export is read-only and never modifies the bundle or `sessions.json`.
+- `--reuse` (with a directory target) reuses an existing export belonging to the same session (identified via `vinowhisper_session` frontmatter, `Session:` header, or `meta.xml` custom property—preserved by LibreOffice on save, checked 2026-10-29), returning `"state": "unchanged"` or `"edited"`.
+- **Not supported:** SRT/VTT (bundles lack word/segment end times; requires a future `vinowhisper-session/2`), DOCX (use ODT), and batch export.
+- In the UI, **Export…** opens the FileChooser portal (or saves to `$XDG_DOCUMENTS_DIR/vinoWhisper/` without a portal), and **Copy** copies the visible tab (`vinowhisper-session show`).
+
+### Open in…
+
+The viewer header includes an **Open in…** split button (remembering your last pick in `gui.json` as `open_in`: `"word_processor"` or `"text_editor"`):
+
+| Option | Format |
+|---|---|
+| Word processor | `odt` |
+| Text editor | `md` |
+
+It exports with `--reuse` into `$XDG_DOCUMENTS_DIR/vinoWhisper/` (preserving user edits rather than overwriting) and launches via the `OpenURI` portal with `ask=true` (falling back to `xdg-open` without a portal). For Obsidian vaults, use **Export…** directly into the vault folder.
+
 ### Read aloud
 
-When `vinospeak` is on `PATH` (looked up once, when the window opens), the viewer's tab row
-has **Read aloud** and each card's More menu has the same. It runs
-`vinospeak --file BUNDLE --part summary|transcript` (karanshukla/vinoSpeak#42): the tab being
-read in the viewer, the summary (or the transcript, without one) from a card. Without
-vinoSpeak there is no button and no prompt to install it.
+If `vinospeak` is on `PATH` when the window opens, the viewer and card menus display **Read aloud**, invoking `vinospeak --file BUNDLE --part summary|transcript` (`karanshukla/vinoSpeak#42`). Clicking **Stop**, navigating away, or closing the window sends `SIGTERM` to `vinospeak`'s process group (`PR_SET_PDEATHSIG` handles crashes); only one reading runs at a time. Older `vinospeak` builds without `--part` display an update notice.
 
-- While it reads the button is **Stop**, which sends SIGTERM to vinoSpeak's process group, so
-  whatever it plays through stops too. Going back to all sessions, opening another session or
-  closing the window stops it as well, and `PR_SET_PDEATHSIG` ends it if the window crashes.
-  One reading at a time.
-- If vinoSpeak exits non-zero, its last line on stderr is shown. An older vinoSpeak that
-  refuses `--part` gets "this vinoSpeak can't read sessions yet. Update vinoSpeak to read them."
+## File type association
 
-`--page sessions --open <bundle>` is still read and opens the same window: vinoSearch
-and notifications posted by older trays send it. `--page sessions` alone is the settings
-page.
+On first start, the tray registers `~/.local/share/mime/packages/io.github.karanshukla.vinowhisper-session.xml` (`*.vwsession` + zip `mimetype` magic at offsets 30 and 38, icon `io.github.karanshukla.vinowhisper`), adds `MimeType=application/vnd.vinowhisper.session+zip;` and `%f` to the settings `.desktop` entry, and runs `update-mime-database` and `update-desktop-database`. `--export-desktop` emits the same XML for packagers.
 
-The fragment is split off at the last `#` only when it is one of those three forms,
-so a path containing `#` still opens. `@MM:SS` scrolls to the paragraph holding that
-time and highlights it. The text is read by `vinowhisper-session show` and shown in
-the window, so nothing is extracted to a temp file.
+## Summary benchmarks (2026-10-30)
 
-## File type
+Measured on Wildcat Lake NPU, SmolLM3-3B, v1.1.1 with code-assembled structure (long transcripts from LibriVox *Pride and Prejudice* decoded in 12s windows; n=1 per length):
 
-On its first start the tray writes
-`~/.local/share/mime/packages/io.github.karanshukla.vinowhisper-session.xml`
-(`*.vwsession`, plus magic on the `mimetype` entry at offsets 30 and 38, icon
-`io.github.karanshukla.vinowhisper`) and adds
-`MimeType=application/vnd.vinowhisper.session+zip;` and `%f` to the settings
-window's desktop entry, then runs `update-mime-database` and
-`update-desktop-database`. `--export-desktop` writes the same XML for packagers.
-
-## Measured on the laptop, 2026-10-30
-
-Wildcat Lake NPU, SmolLM3-3B, version 1.1.1 plus the assembled shape. The long
-transcripts are a LibriVox reading of Pride and Prejudice decoded through the
-server in 12 s windows, so n=1 per length and not the user's usual content.
-
-| Session | Chunks | Total | Per chunk |
+| Session length | Chunks | Total time | Time per chunk |
 |---|---|---|---|
-| 13 s (real) | 1 | 10 s | |
-| 35 s (real) | 1 | 14 s | |
-| 16 min (real) | 3 | 66 s | 11-24 s |
-| 30 min | 4 | 87 s | 11-24 s |
-| 60 min | 8 | 181 s | 11-24 s |
+| 13s (live) | 1 | 10s | — |
+| 35s (live) | 1 | 14s | — |
+| 16 min (live) | 3 | 66s | 11–24s |
+| 30 min | 4 | 87s | 11–24s |
+| 60 min | 8 | 181s | 11–24s |
 
-Comparing settings on the 30-minute session, points reached this far through a chunk
-on average (last point's stamp, by time):
+Chunk coverage comparison on the 30-minute session (average fraction of chunk reached by the final bullet's timestamp):
 
-| `CHUNK_TOKENS` | `repetition_penalty` | Reach | Notes |
+| `CHUNK_TOKENS` | `repetition_penalty` | Chunk reach | Notes |
 |---|---|---|---|
-| 256 | 1.1 | 0.46 | 65 s, "£100k", "London" and "Lizzy" not in their chunk |
-| 400 | 1.1 | 0.56 | 85 s |
-| 256, chunks of 3,500 | 1.1 | 0.79 | 103 s, more names from outside the chunk |
-| 400 | 1.05 | 0.76 | 77 s, plainer points, one name from outside |
+| 256 | 1.1 | 0.46 | 65s; hallucinated "£100k", "London", "Lizzy" not in chunk |
+| 400 | 1.1 | 0.56 | 85s |
+| 256 (3,500-char chunks) | 1.1 | 0.79 | 103s; more out-of-chunk names |
+| 400 | 1.05 | 0.76 | 77s; plainer bullets, one out-of-chunk name |
 
-- **Faithful in topic, not in every detail.** Stamps pointed at the right paragraph
-  in all four checked. Of nine points on the 60-minute session, about three are
-  wrong or garbled ("Miss Bingley abused Jane" when it was Elizabeth). The name check
-  stopped "Apple Watch" and "Android 11" (a transcript saying "Android 17" and "the 11
-  Pro") reaching the 16-minute summary, but its overview still merged two topics into
-  "the Android Wear OS version of the Pixel Watch". The overview and title are written
-  from the points and aren't checked. The footer's "check it at the time stamps" is
-  needed.
-- **Sharing the NPU:** Whisper resident, SmolLM3 summarising and vinoSearch queries
-  (one during that run, eleven during another, no failures) gave no
-  `Failed to register command queue: -16`, or any other `intel_vpu` line, in the
-  kernel log. vinoSearch's service showed about 3 MB resident, so this was light.
-- **Memory:** `drm-resident-memory` peaked at 2.2 GB summarising, 2.4 GB with Whisper
-  in the same server, and fell to 86 MiB (Whisper) as soon as the queue was empty.
-  Measured before the move to 400 tokens, which does not change the model loaded.
-- **Captions interrupting a summary do not stutter:** the first 12 s decode took
-  0.77 s against 0.65-0.96 s beforehand, and seven more took 0.62-0.79 s. The session
-  restarted from its first chunk once the 20 s of quiet had passed.
-- **On screen:** the "Summary ready" notification is sent with its title and an Open
-  action (seen on the session bus). An `ActionInvoked` signal sent by hand, what Plasma
-  sends on a click, opens that session's summary in the sessions window. The window is
-  right in light and dark; one already open when the desktop switches theme follows it
-  on its next focus. `.vwsession` files have their icon in Dolphin, and `xdg-open` on
-  one opens the window.
-
-Not checked: pressing Open with a real pointer.
+- **Accuracy:** Timestamps pointed to the right paragraph in all 4 spot-checked cases. On the 60-minute session, ~3 of 9 bullets mixed up details (e.g., "Miss Bingley abused Jane" instead of Elizabeth). Name filtering blocked "Apple Watch" and "Android 11" (from "Android 17" + "11 Pro") on the 16-minute session, though the unchecked overview merged topics into "Android Wear OS version of the Pixel Watch".
+- **NPU sharing:** Concurrent resident Whisper, SmolLM3 summarisation, and `vinoSearch` queries (1 in one run, 11 in another; ~3 MB resident) produced zero `Failed to register command queue: -16` or `intel_vpu` kernel warnings.
+- **NPU memory:** `drm-resident-memory` peaked at 2.2 GB summarising (2.4 GB with Whisper loaded) and dropped back to 86 MiB (Whisper only) once the queue emptied (measured prior to the 400-token bump).
+- **Caption preemption:** Interrupting an active summary caused no caption stutter (first 12s decode 0.77s vs. 0.65–0.96s baseline; next seven 0.62–0.79s); the interrupted summary restarted after 20s idle.
+- **Desktop integration:** Verified light/dark theme switching, Dolphin `.vwsession` icon, `xdg-open`, and D-Bus `ActionInvoked` opening the summary from the notification (not yet clicked with a physical pointer).

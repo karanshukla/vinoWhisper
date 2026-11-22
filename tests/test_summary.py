@@ -471,6 +471,28 @@ def test_the_session_command_lists_shows_and_declines(tmp_path, monkeypatch, cap
     assert summary.load_state()["declined"] == []
 
 
+def test_session_list_and_show_strip_terminal_escape_sequences(tmp_path, monkeypatch, capsys):
+    from vinowhisper import config, session
+
+    monkeypatch.setattr(config, "TRANSCRIPT_DIR", tmp_path)
+    path = _bundle(tmp_path)
+    bundle.set_summary(
+        bundle.read(path),
+        "# Evil \x1b]52;c;Y2FsYw==\x07Title\r\n\nBody\twith\n\x1b[2Jansi.\n",
+        "NPU",
+    )
+    assert session.main(["list"]) == 0
+    listed = capsys.readouterr().out
+    assert "\x1b" not in listed and "\x07" not in listed
+    assert "Evil Title" in listed
+
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    assert session.main(["show", str(path), "--part", "summary"]) == 0
+    shown = capsys.readouterr().out
+    assert "\x1b" not in shown and "\x07" not in shown
+    assert "Body\twith\nansi." in shown
+
+
 def test_progress_names_the_session_being_summarised_then_clears(tmp_path):
     path = _bundle(tmp_path)
     seen = []

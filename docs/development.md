@@ -1,73 +1,50 @@
 # Development
 
-How the repo is built, tested and released, and why the build config looks the
-way it does. [CONTRIBUTING.md](../CONTRIBUTING.md) is the short version.
+How vinoWhisper is built, tested, packaged, and released. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the quick-start workflow.
 
-## Two environments
+## Two Python environments
 
 ```bash
-uv sync --extra export        # the real one: OpenVINO, the export tooling, Python <3.14
+uv sync --extra export        # full runtime + export toolchain (Python <3.14)
 
 uv venv
-uv pip install --group dev    # tests and lint only, ~5 seconds, what CI uses
+uv pip install --group dev    # tests and linting only (~5s; used by CI)
 ```
 
-The `dev` group is installable on its own on purpose. CI has no NPU, no audio
-server and no reason to download ~400MB of OpenVINO wheels to run tests that
-are not allowed to import it. Nothing under `tests/` imports `openvino`,
-which is what keeps the split honest. `transcriber.py` and `server.py` import
-it lazily, so they are tested with a fake pipeline; `flask` and `werkzeug` are
-in the dev group for `tests/test_server.py`.
+The `dev` group intentionally excludes OpenVINO (~400 MB) so unit tests run quickly in CI without hardware:
 
-`requests` is in the dev group even though no test talks to the server:
-`vinowhisper.caption` imports it at module scope through `client.py`, so
-`tests/test_caption.py` cannot be collected without it. It is ~100KB of pure
-Python.
+- Nothing under `tests/` imports `openvino`. `transcriber.py` and `server.py` import it lazily so tests can inject a fake pipeline.
+- `flask` and `werkzeug` are in `dev` for `tests/test_server.py`.
+- `requests` (~100 KB pure Python) is in `dev` because `vinowhisper.caption` imports `client.py` at module scope, which `tests/test_caption.py` needs during collection.
+- Pytest uses `pythonpath = ["."]` to import directly from the source tree without installing the package (which would pull in OpenVINO).
 
-Pytest imports the package from the source tree (`pythonpath = ["."]`) rather
-than from an install, because installing the project would pull in the
-OpenVINO stack the dev group exists to avoid.
-
-Coverage is branch coverage of the whole package, nothing omitted, so the
-figure counts what needs an NPU or an audio server too (`replay.py` is the
-largest such gap). CI fails under the floor in `ci.yml`, posts the per-file
-table to the job summary and uploads `coverage.xml`. The Rust jobs run their
-tests under `cargo llvm-cov` and upload `lcov.info` the same way.
+Coverage measures full-package branch coverage with no omissions, including hardware-only paths (`replay.py` is the largest gap). CI enforces the threshold in `ci.yml`, posts per-file results to the job summary, and uploads `coverage.xml`. Rust jobs measure coverage with `cargo llvm-cov` and upload `lcov.info`.
 
 ## Running your own build
 
-A checkout can be the install. Three pieces, each redeployed differently:
+You can run directly from a git checkout across all three components:
 
-| Piece | Where it runs from | After a change |
+| Component | Installed location | Redeploy after edits |
 |---|---|---|
-| Python commands (`caption`, `dictate`, `server`, `doctor`, `replay`, `setup`) | `.venv`, an editable install, linked into `~/.local/bin` | `uv sync --extra export`, then start a fresh process |
-| `vinowhisper-tray` | a binary in `~/.local/bin` | rebuild, copy, restart the tray |
-| `vinowhisper-gui` (settings window) | a binary in `~/.local/bin` | rebuild, copy; it starts fresh each time it opens |
+| Python CLIs (`caption`, `dictate`, `server`, `doctor`, `replay`, `setup`) | Editable `.venv`, symlinked into `~/.local/bin` | `uv sync --extra export`, then start a fresh process |
+| `vinowhisper-tray` | Binary in `~/.local/bin` | Rebuild, install atomically, restart tray |
+| `vinowhisper-gui` (settings & sessions window) | Binary in `~/.local/bin` | Rebuild and install atomically (launches fresh each time) |
 
 ### Python
 
 ```bash
 uv sync --extra export
-uv run vinowhisper-setup     # links the commands into ~/.local/bin
+uv run vinowhisper-setup     # symlinks commands into ~/.local/bin
 ```
 
-After that an edit is live in the next process that starts, with no reinstall.
-Which process matters:
+Edits take effect on the next process start:
 
-- **The stitcher and the capture loop run in `vinowhisper-caption`**, not the
-  server. The tray spawns a fresh one on every show, so hide and show the
-  overlay.
-- **The idle dictation child is long-lived.** The tray keeps one
-  `vinowhisper-dictate --json` running to hide Python's import time, so a
-  change to `dictate.py` needs a tray restart (below).
-- **Server changes need the server stopped**: `vinowhisper-server --stop`,
-  and the next request starts the new code. Check
-  `pgrep -af vinowhisper-caption` first: stopping it kills a live caption
-  session, and the next request pays the model load again.
-- **`pyproject.toml` changes** (a new entry point, a dependency) need
-  `uv sync` again, and a new command needs `vinowhisper-setup` to link it.
+- **Stitcher and capture (`vinowhisper-caption`):** The tray spawns a fresh process whenever captions are shown—hide and show the overlay.
+- **Dictation (`vinowhisper-dictate --json`):** The tray keeps one idle process running to avoid Python startup latency, so edits to `dictate.py` require restarting the tray.
+- **Server (`vinowhisper-server`):** Run `vinowhisper-server --stop` so the next request starts the updated code (check `pgrep -af vinowhisper-caption` first, as stopping kills active captions and incurs a model reload).
+- **`pyproject.toml` changes:** Re-run `uv sync`, and re-run `vinowhisper-setup` if you added a new CLI entry point.
 
-### The tray and the settings window
+### Tray and settings window (Rust)
 
 ```bash
 cargo build --release --locked --manifest-path tray/Cargo.toml
@@ -78,223 +55,113 @@ for b in tray gui; do
 done
 ```
 
-Install through a `.part` file and `mv` rather than copying over the binary:
-the running tray holds the old file open, and writing into it in place fails
-with "Text file busy". The rename swaps it atomically, and the running process
-keeps the old inode until it exits.
-
-Then restart the tray:
+Install via a `.part` file and atomic `mv` so overwriting the running `vinowhisper-tray` binary does not fail with `Text file busy`. Then restart the tray:
 
 ```bash
-pgrep -af vinowhisper-caption           # a running session dies with the tray
+pgrep -af vinowhisper-caption           # active caption session exits with the tray
 vinowhisper-tray quit
 setsid -f vinowhisper-tray >/dev/null 2>&1
 ```
 
-Only one tray runs per session (it holds
-`$XDG_RUNTIME_DIR/vinowhisper-tray.sock`), so a second one started without
-`quit` forwards its request to the old binary and exits. The caption and
-dictation children die with it (`PR_SET_PDEATHSIG`), so nothing is left
-running the old code.
+Only one tray runs per session (bound to `$XDG_RUNTIME_DIR/vinowhisper-tray.sock`); launching a second without `quit` forwards its command to the running instance and exits. Child caption and dictation processes exit automatically via `PR_SET_PDEATHSIG`.
 
-These are glibc builds, not the release's static musl one. That is fine on the
-machine that built them. `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` logs every
-dictation key and state change to stderr, not the text.
+Local builds link glibc (unlike the static musl release asset), which works on the machine that built them. Run `VINOWHISPER_TRAY_TRACE=1 vinowhisper-tray` to log dictation key and state transitions to `stderr` (never dictated text).
 
-### Checking it took
+### Verifying your active install
 
 ```bash
-ls -l ~/.local/bin/vinowhisper-*        # symlinks into .venv; tray and gui dated by the last copy
+ls -l ~/.local/bin/vinowhisper-*        # Python symlinks into .venv; tray/gui timestamps
 pgrep -af 'vinowhisper-(tray|caption|dictate)'
 ```
 
-A change that does not show up is nearly always the old process still
-running: a tray that was never restarted, or a server holding the old module.
+If a change does not appear, an older tray or server process is almost always still running.
 
 ## Checks
 
 ```bash
 uv run poe check      # ruff check, ruff format --check, mypy, pytest
 uv run poe fix        # ruff --fix and ruff format
-uv run poe security   # the same Bandit scan the Bandit workflow runs
+uv run poe security   # Bandit scan matching bandit.yml
 ```
 
-**mypy is not pinned to `python_version = "3.11"`.** numpy's stubs use
-3.12-only syntax (`type X = ...`), and mypy parses them against the target
-version, so pinning 3.11 while running on 3.12 fails inside numpy before it
-checks any code here. The 3.11 floor is enforced by `requires-python` and
-ruff's `target-version` instead. `openvino_genai` ships no stubs, and CI runs
-without it installed, hence `ignore_missing_imports`.
+- **mypy `python_version`:** Not pinned to `3.11` because NumPy's type stubs use Python 3.12 syntax (`type X = ...`), which fails under `python_version = "3.11"`. Python 3.11 compatibility is enforced by `requires-python` and Ruff's `target-version`. `ignore_missing_imports` is enabled because `openvino_genai` ships no stubs and is absent in CI.
+- **Bandit skips:** Configured in `[tool.bandit]`:
 
-**Bandit skips three checks**, each because the finding is this tool's job
-rather than a defect in it:
-
-| Check | Why it is skipped |
+| Check | Rationale |
 |---|---|
-| B404 | Flags `import subprocess` itself, in a program whose purpose is to drive pw-record, parec, pactl, optimum-cli and its own server |
-| B603 | Every call site passes a literal argv list with no shell. The variable parts (PipeWire node names from pw-dump, a `--target` the user typed) arrive as single argv elements |
-| B607 | pw-record, parec and pactl live in different places on different distros. They are found with `shutil.which` before use, and hardcoding `/usr/bin` would break the fallbacks |
+| `B404` | Flags `import subprocess`, which is core to invoking `pw-record`, `parec`, `pactl`, `optimum-cli`, and the local server |
+| `B603` | Every subprocess call passes a literal `argv` list with `shell=False`; dynamic values (PipeWire nodes, `--target`) are single elements |
+| `B607` | Tools like `pw-record`, `parec`, and `pactl` live in varying paths across distros and are resolved with `shutil.which` |
 
-B602 (`shell=True`) stays on. There is no shell anywhere in this codebase, and
-if one appears it should fail the scan.
+`B602` (`shell=True`) remains enabled and must stay clean.
 
 ## Accessibility
 
-The settings window builds eframe with its `accesskit` feature, so it exposes a
-tree over AT-SPI; with default features off it was dropped, and Orca saw an
-empty window (found 2026-10-23). What the tests in `gui/` hold it to, with
-`egui_kittest` reading the same AccessKit tree headless:
+`vinowhisper-gui` enables eframe's `accesskit` feature so it exposes an AT-SPI accessibility tree (disabling default features previously dropped it, leaving Orca with an empty window; found 2026-10-23). `gui/` tests verify the AccessKit tree headlessly with `egui_kittest`:
 
-- every page is a `Tab` with its name and a selected state, reachable with Tab
-  and opened with Enter or Space;
-- every field, list and number is named after its form label (`labelled_by`),
-  and nothing that takes focus is nameless (egui's own scroll bar included);
-- section titles are headings, and the model's download status and the reload
-  refusal are polite live regions;
-- the theme clears WCAG 2.2 contrast in both schemes: 4.5:1 for text, 3:1 for
-  field edges, focus and the current-page tint (the shared `vino-ui` crate's theme test, computed, not eyed);
-- at double zoom (Ctrl++) the sidebar folds into tabs and every control stays;
-  at 1.5x and 3x no control runs past the window's edge;
-- the desktop's text size sets the zoom (#99): GNOME's `text-scaling-factor`
-  (Settings portal, else `gsettings`), on Plasma a forced font DPI over 96 or
-  else the general font's size over 10pt, clamped to 1x-3x. It's re-read when
-  the window regains focus and applied only if it changed, so Ctrl + and - stick.
+- Every page is a focusable `Tab` with name and selected state, navigable via `Tab` and activated with `Enter`/`Space`.
+- Every control, list, and numeric field is linked to its label (`labelled_by`), with no nameless focusable widgets (including egui scrollbars).
+- Section titles expose heading roles; model download status and reload refusals expose polite live regions.
+- Light and dark themes pass WCAG 2.2 contrast ratios programmatically in the shared `vino-ui` crate (4.5:1 for text; 3:1 for field borders, focus rings, and active-page tints).
+- At 2x zoom (`Ctrl++`), the sidebar collapses into tabs without losing controls; at 1.5x and 3x, no control clips past the window edge.
+- Desktop text scaling sets initial zoom (#99): reads GNOME `text-scaling-factor` (Settings portal or `gsettings`) or Plasma forced font DPI (>96) / general font size (>10pt), clamped to 1x–3x. Re-checked on focus gain and applied only if changed so manual `Ctrl+`/`Ctrl-` adjustments persist.
 
-The dictation pill is a click-through layer surface with no accessibility
-tree, so while a screen reader runs (`org.a11y.Status.ScreenReaderEnabled`)
-the tray also sends its failures, the clipboard fallback and cleanup notices as
-a desktop notification (#98). The live words and routine states (recording,
-transcribing, typed) are never sent, and nothing is sent when no screen reader
-is running.
+Because the dictation pill is a click-through layer-shell surface with no accessibility tree, when a screen reader is active (`org.a11y.Status.ScreenReaderEnabled`) the tray mirrors failures, clipboard fallbacks, and cleanup notices as desktop notifications (#98). Live words and routine states (recording, transcribing, typed) are never sent.
 
-The tray's icon never changes, so state lives in words: the tooltip carries
-the captions' state and, while dictating, the dictation's, never the dictated
-text. `tray.rs` tests that every menu item has a label, on/off items are
-checkmarks or radio items, and every state reads differently.
+The tray icon stays visually static while state is communicated in the tooltip (caption state and active dictation state, never dictated text). `tray.rs` tests verify menu item labels, check/radio states, and distinct state descriptions.
 
-Checked 2026-10-23 on headless sway with AT-SPI enabled (`python3-pyatspi`):
-the tree, names and roles come through. Not checked: Orca speaking it, GNOME
-or Plasma's tray hosts, and the overlay, which is a click-through layer-shell
-surface with no accessibility tree at all (its state, not its text, is in the tooltip).
-accesskit_atspi_common 0.14 reports disabled buttons as sensitive; that is
-upstream.
+Verified 2026-10-23 on headless Sway with AT-SPI (`python3-pyatspi`): tree structure, names, and roles came through. Not tested: Orca speech output, GNOME/Plasma tray hosts, or the overlay itself (which has no accessibility tree). `accesskit_atspi_common` 0.14 reports disabled buttons as sensitive (upstream bug).
 
 ## Packaging
 
-`[tool.setuptools] packages = ["vinowhisper"]` is explicit because flat-layout
-auto-discovery refuses to build when it sees more than one top-level directory
-that could be a package (confirmed 2026-08-03 with `systemd/`, since removed;
-`tray/`, `gui/` and `settings/` are still there).
+`[tool.setuptools] packages = ["vinowhisper"]` is set explicitly because flat-layout auto-discovery fails when multiple top-level directories exist (`tray/`, `gui/`, `settings/`, and formerly `systemd/`; confirmed 2026-08-03).
 
-These data files ride in the wheel:
+Data files bundled inside the wheel:
 
-- **`model_digests.json`**: `integrity.load_pins()` treats a missing file as
-  "nothing pinned" rather than crashing, so dropping it from `package-data`
-  would degrade silently. `tests/test_integrity.py` checks it is declared and
-  readable.
-- **`model_sources.json`**: the Hugging Face commit and per-file sha256 the
-  export is made from. Missing, the wizard refuses to export rather than
-  fetch unchecked. `tests/test_source.py` checks it is declared. Hand-edited,
-  from the Hub API's LFS sha256 and the files' own bytes, never from a guess.
-  `tests/test_integrity.py` also fails when `uv.lock`'s export toolchain moves
-  away from the NPU pin, so drift shows up in CI rather than on install.
-- **`tray_release.json`** and **`gui_release.json`**: exist only in a release
-  build. `release.yml` writes them (the sha256s of the tray and settings window
-  binaries on the GitHub Release) with `scripts/pin_tray_release.py` just
-  before `uv build`, then checks the wheel carries both. A checkout has none, and `overlay.availability()` then refuses
-  to download, which is the point.
+- **`model_digests.json`:** `integrity.load_pins()` falls back to "unpinned" if missing, so `tests/test_integrity.py` verifies it is packaged and readable, and fails if `uv.lock`'s export toolchain drifts further from the NPU pin.
+- **`model_sources.json`:** Pinned Hugging Face commit and per-file SHA-256 hashes (hand-maintained from Hub LFS digests and file bytes). Missing it causes setup to refuse exporting; verified by `tests/test_source.py`.
+- **`tray_release.json` and `gui_release.json`:** Generated only during release builds by `scripts/pin_tray_release.py` before `uv build` (verified in `release.yml`). Absent in source checkouts so `overlay.availability()` refuses unpinned downloads.
 
-`openvino-tokenizers` is listed directly even though `openvino-genai` pulls it
-in. The NPU pipeline hard-depends on it, and a transitive-only dependency is
-one upstream packaging change from disappearing.
+`openvino-tokenizers` is declared directly (even though `openvino-genai` pulls it in) because the NPU static pipeline hard-depends on it.
 
-### The Flatpak
+### Flatpak packaging
 
-`packaging/flatpak/io.github.karanshukla.vinowhisper.yml` builds the bundle from
-the checkout it sits in ([install.md](install.md#flatpak) has the commands).
-What is not obvious from reading it:
+`packaging/flatpak/io.github.karanshukla.vinowhisper.yml` builds the Flatpak bundle from the checkout (see [install.md](install.md#flatpak) for build commands). Key implementation details:
 
-- **It brings its own Python 3.13**, a pinned python-build-standalone tarball.
-  The 26.08 runtime's is 3.14, which `requires-python` excludes because the
-  export cannot run on it.
-- **`requirements.txt` is generated** from `uv.lock` by
-  `scripts/flatpak_requirements.py` (`uv export`, plus the locked setuptools to
-  build the package itself), and pip installs it with `--require-hashes`. Re-run
-  the script after `uv lock`; `tests/test_flatpak.py` fails while a version in
-  it differs from the lock.
-- **Nothing is stripped, manifest-wide.** flatpak-builder's debug-info split
-  (`eu-strip`) rewrote the standalone `python3.13` so that it no longer started
-  ("no version information available", then a symbol lookup error), and it did
-  so although that module alone set `no-debuginfo` (found 2026-11-14,
-  flatpak-builder 1.4.2). The top-level `build-options` turn it off for every
-  module; cargo strips the Rust binaries itself.
-- **The whole Python tree is compiled to bytecode in the manifest.** The
-  standalone tarball ships none and `/app` is read-only once installed, so a
-  module left uncompiled is compiled again at every start. flatpak-builder
-  rewrites the `.pyc` timestamps to match what ostree checks out, which is why
-  they stay valid.
-- **`flatpak-spawn` is killed once what it started answers** (the server in
-  `launch.ensure`, the tray in `restart`). It otherwise lives as long as its
-  child and keeps the launching command's sandbox, and any pipe on it, open:
-  `flatpak run --command=vinowhisper-transcribe … | grep` did not return until
-  the server idled out. SIGKILL, because it forwards the signals it can catch.
-- The Rust module comes before the Python package in the manifest, so a Python
-  change rebuilds in seconds from flatpak-builder's cache.
-- **The Intel driver modules are vinoSearch's**, version for version, so the
-  two Flatpaks carry one NPU stack. Change them together.
-- **pip and cargo fetch at build time** (`--share=network`), each against a lock
-  with hashes, so this is not a Flathub-style offline manifest.
-- The app id is the tray's `APP_ID`. The portal keys the global shortcuts by
-  it, and Flatpak exports only files named for it, which is why the session
-  MIME package is renamed to `<id>.xml` in the manifest.
+- **Bundled Python 3.13:** Uses a pinned `python-build-standalone` tarball because `org.freedesktop.Platform` 26.08 ships Python 3.14, which cannot run Whisper export.
+- **Locked `requirements.txt`:** Generated from `uv.lock` via `scripts/flatpak_requirements.py` (`uv export` + locked `setuptools`) and installed with `pip --require-hashes`. Re-run after updating `uv.lock`; `tests/test_flatpak.py` enforces parity.
+- **Global `no-debuginfo`:** `flatpak-builder` 1.4.2's `eu-strip` corrupted standalone `python3.13` even when `no-debuginfo` was set per-module (found 2026-11-14). Top-level `build-options` disable stripping manifest-wide; Cargo strips the Rust binaries itself.
+- **Bytecode precompilation:** The entire Python tree is compiled to `.pyc` during build because `/app` is read-only (`flatpak-builder` aligns `.pyc` timestamps with ostree).
+- **`flatpak-spawn` cleanup:** `launch.ensure` and `restart` send `SIGKILL` to `flatpak-spawn` once the spawned server or tray answers; otherwise `flatpak-spawn` stays alive and holds calling pipes open until the server idles out (e.g., `flatpak run --command=vinowhisper-transcribe … | grep`; `SIGKILL` is required because `flatpak-spawn` forwards catchable signals).
+- **Build cache order:** Rust modules build before Python so Python edits rebuild in seconds.
+- **Shared Intel driver modules:** Version-matched with `vinoSearch` so both Flatpaks share one NPU stack; update them together.
+- **Network build:** `pip` and `cargo` fetch hash-verified locks at build time (`--share=network`), so the manifest is not Flathub-offline.
+- **App ID & exports:** Uses the tray's `APP_ID` so global shortcut portal entries carry over; the session MIME package is renamed to `<id>.xml` as required by Flatpak export rules.
 
-Release or source: every command's `--version`, the doctor and the About page say the
-number in a release and `dev` in a source build, so a tool that asks (vinoPilot) never
-has to guess from where it was installed. The Rust binaries are stamped at build time:
-`release.yml` and the Flatpak runner set `VINOWHISPER_VERSION` (`settings/src/version.rs`;
-the build fails if it is not the crates' version). The Python package decides at runtime
-(`vinowhisper/version.py`): an install from a local directory, editable or not, from git, or
-a checkout run in place is `dev` (PEP 610 `direct_url.json`); a wheel, from PyPI or a
-release URL or path, is the version. The Flatpak installs the package from a directory, so
-its release build writes `/app/lib/vinowhisper/release-version`, and a local Flatpak build,
-which has no stamp, says `dev`. Overlay pins and `pip install` requirements keep using the
-package's own number (`vinowhisper.__version__`).
+**Version reporting (`release` vs. `dev`):** `--version`, `vinowhisper-doctor`, and Settings → About report the version number for release builds and `dev` for source builds (so tools like `vinoPilot` can distinguish them). Rust binaries stamp `VINOWHISPER_VERSION` at build time (`settings/src/version.rs` enforces a match with `Cargo.toml`). Python inspects PEP 610 `direct_url.json` at runtime (`vinowhisper/version.py`: directory/git installs report `dev`, wheels report the version; release Flatpak builds write `/app/lib/vinowhisper/release-version`). Overlay pins and `pip` constraints always use `vinowhisper.__version__`.
 
-`packaging/flatpak/smoke.sh` runs the installed bundle: every command's
-`--help`, one version across the tray and the Python package, OpenVINO finding
-the CPU from the bundled Python, the exported menu entries, and a client
-starting the server in a sandbox of its own. `flatpak.yml` runs it on the
-bundle it just built.
+`packaging/flatpak/smoke.sh` (run by `flatpak.yml`) verifies every CLI's `--help`, version parity across Rust and Python, OpenVINO CPU enumeration, exported desktop entries, and cross-sandbox server startup.
 
-The code that differs inside the sandbox reads `/.flatpak-info`
-(`vinowhisper/sandbox.py`, `settings/src/sandbox.rs`): the shared runtime
-directory, the server and the tray restarted as sandboxes of their own with
-`flatpak-spawn`, start at login through the Background portal, the update
-command, and setup's export venv. One build serves both, so none of it is
-behind a feature flag.
+Sandbox-specific behavior is gated on `/.flatpak-info` (`vinowhisper/sandbox.py`, `settings/src/sandbox.rs`): shared runtime dir, `flatpak-spawn` for server/tray restarts, Background portal autostart, updater command, and export venv path.
 
-## The overlay's dependencies
+## Overlay Rust dependencies
 
-Every crate in `tray/Cargo.toml` is pure Rust, so the binary links nothing but
-libc and installs as one file on any distro (see [tray.md](tray.md#why-rust)).
+All crates in `tray/Cargo.toml` are pure Rust so the binary links only libc (see [tray.md](tray.md#why-rust)):
 
-| Crate | Does |
+| Crate | Purpose |
 |---|---|
-| smithay-client-toolkit | Wayland: layer-shell, shm buffers, the event loop. Pure-Rust backend, so no libwayland, and no xkbcommon since nothing reads the keyboard |
-| cosmic-text | Shaping, wrapping and glyph rasterising. Finds fonts by parsing fontconfig's files, not by linking libfontconfig |
-| ksni | The tray icon (StatusNotifierItem over D-Bus) |
-| vino-ui | Without egui (`default-features = false`): the menu icons every vinoPilot tray shares |
-| ashpd | Global shortcuts, and typing a dictation (xdg-desktop-portal) |
-| rustix | Signals, the child's parent-death signal, the memfd that carries a keymap to the compositor, and the tray's idle timerfd |
+| `smithay-client-toolkit` | Pure-Rust Wayland client (`wlr-layer-shell`, SHM buffers, event loop; no `libwayland` or `xkbcommon`) |
+| `cosmic-text` | Text shaping, wrapping, glyph rasterization, and direct fontconfig file parsing (no `libfontconfig`) |
+| `ksni` | StatusNotifierItem tray icon over D-Bus |
+| `vino-ui` | Shared tray menu icons (`default-features = false`, without egui) |
+| `ashpd` | Global shortcuts and dictation typing/clipboard via `xdg-desktop-portal` |
+| `rustix` | Signals, `PR_SET_PDEATHSIG`, keymap `memfd`, and `CLOCK_BOOTTIME` `timerfd` |
 
-`rust-version = "1.95"` is what vino-ui needs (it's set per crate, so the
-egui-less build needs it too; cosmic-text 0.19 alone would be 1.89), the same
-as the settings window's; CI's `msrv` job builds with it.
+`rust-version = "1.95"` is set by `vino-ui` (matching `gui/`; `cosmic-text` 0.19 alone requires 1.89) and checked by CI's `msrv` job.
 
 ## Shell completion
 
-`vinowhisper-setup` installs `scripts/vinowhisper-completion.bash`. By hand,
-with no root:
+`vinowhisper-setup` installs `scripts/vinowhisper-completion.bash`. To install manually without root:
 
 ```bash
 mkdir -p ~/.local/share/bash-completion/completions
@@ -305,154 +172,62 @@ for c in server replay doctor setup; do
 done
 ```
 
-bash-completion loads a file lazily on the first Tab for a command of the same
-name, which is why it is one symlink per command rather than a line in
-`.bashrc`. It completes `vinowhisper-caption ...`, not `uv run
-vinowhisper-caption ...`: there the command word is `uv`, and uv's own
-completion owns the line.
-
-`--target` completion runs `vinowhisper-caption --list-targets` off `PATH`, so
-the pw-dump parse stays in one place. `COMP_WORDS[0]` is not used because it
-can be a relative path that no longer resolves. It costs ~0.2s of Python
-startup per Tab, only on `--target`.
+`bash-completion` lazy-loads completions by command name, which requires one symlink per command. Completions apply to `vinowhisper-*` directly, not `uv run vinowhisper-*` (where `uv` owns completion). Completing `--target` invokes `vinowhisper-caption --list-targets` from `PATH` (~0.2s Python startup per Tab press; avoids `COMP_WORDS[0]` in case of relative paths).
 
 ## Conventions
 
-- **Comments are the last resort.** Extract, name, or pin a rule with a test
-  pair first, and cite the test from the code it governs; see
-  [comment-style.md](comment-style.md). The Doc Links CI job checks the
-  citations. No module, class or function docstrings in `vinowhisper/`, no
-  `//!` or item docs in `tray/src/`. Rationale, measurements and gotchas go in
-  the matching `docs/` page.
-- **Measured claims carry a date.** "Measured 2026-08-07: the sink monitor
-  reads 0.98x of the app's level while muted" is worth keeping. "The monitor
-  is pre-mute" on its own is how the project spent a week believing the
-  opposite of the truth.
-- **A failure names its fix.** Every error path tries to print the command
-  that resolves it, in the local distro's package names
-  (`distro.remediation`).
-- **Tests are for the logic, not the hardware.** Anything under `tests/` runs
-  with no NPU, no audio server and no OpenVINO. If a change can only be
-  verified on the laptop, say so in the PR rather than faking a test.
-- **`test_characterization_*` pins a known oddity on purpose.** `--target`
-  refused on PulseAudio rather than reinterpreted, the sink monitor being
-  pre-volume and pre-mute, `Live.update()` needing `refresh=True`. These are
-  correct and look like bugs cold. If one goes red, the question is whether
-  the behaviour was supposed to change, not which assertion to update.
+- **Minimal comments:** Extract helpers, name clearly, or pin invariants with tests before commenting, and cite governing tests from code ([comment-style.md](comment-style.md), verified by Doc Links CI). No module/class/function docstrings in `vinowhisper/` or `//!`/item docs in `tray/src/`. Put design rationale and measurements in `docs/`.
+- **Dated measurements:** Always attach dates to measured hardware or benchmark claims.
+- **Actionable errors:** Error paths print distro-specific fix commands via `distro.remediation`.
+- **Hardware-free unit tests:** Everything in `tests/` runs without an NPU, audio server, or OpenVINO.
+- **Characterization tests (`test_characterization_*`):** Pin counter-intuitive intentional behaviors (e.g., refusing `--target` on PulseAudio, pre-mute sink monitors, `Live.update(refresh=True)`). Review carefully before modifying assertions.
 
-## CI
+## CI workflows
 
-| Workflow | Runs | What it is for |
+| Workflow | Trigger | Purpose |
 |---|---|---|
-| `ci.yml` | every push and PR | `uv lock --check`, ruff, mypy, pytest with coverage on 3.11 to 3.13, the built wheel's commands (`scripts/smoke_wheel.sh`), shellcheck, the Rust crates' `cargo` checks and coverage, a build at each crate's `rust-version`, and Doc Links (every test a comment cites exists) |
-| `bandit.yml` | pushes and PRs to main, and Mondays | The Bandit scan, into Security > Code scanning, then the same scan as a gate. Config is `[tool.bandit]`, so `poe security` matches it |
-| `audit.yml` | Mondays, and on changes to `uv.lock` or a `Cargo.lock` | pip-audit on the locked runtime and dev set, and on the export extra as a warning only (`transformers<5.4` carries two advisories whose fixes break the NPU export; see CLAUDE.md); `cargo audit` on the three Cargo locks |
-| `deps-canary.yml` | Mondays, and on changes to `pyproject.toml` or `uv.lock` | The full dependency set, which nothing on the PR path installs |
-| `release.yml` | a `v*` tag | Build (the tray binary runs `--version` and must be static; the wheel goes through `smoke_wheel.sh`), PyPI, GitHub Release, then the Flatpak bundle |
-| `flatpak.yml` | PRs that touch `packaging/flatpak/` or the workflow; called by `release.yml`; by hand with a tag | Builds the Flatpak bundle, installs it and runs `packaging/flatpak/smoke.sh`. With a tag it builds that tag and attaches `vinowhisper-x86_64.flatpak` and its `.sha256` to the release |
+| `ci.yml` | Push, PR | `uv lock --check`, Ruff, mypy, pytest + coverage (Python 3.11–3.13), wheel smoke test (`scripts/smoke_wheel.sh`), `shellcheck`, Rust tests/coverage/MSRV, Doc Links citation check |
+| `bandit.yml` | Push/PR to `main`, Mondays | Bandit security scan uploaded to GitHub Code Scanning and enforced as a gate (matches `poe security`) |
+| `audit.yml` | Mondays, lockfile changes | `pip-audit` on runtime/dev deps (warning-only on `export` extra due to `transformers<5.4` advisories); `cargo audit` on all three Cargo locks |
+| `deps-canary.yml` | Mondays, `pyproject.toml`/`uv.lock` changes | Verifies the full OpenVINO/export dependency set not installed by PR CI |
+| `release.yml` | `v*` tag push | Builds static musl tray + wheel (`smoke_wheel.sh`), publishes to PyPI, creates GitHub Release, triggers Flatpak bundle |
+| `flatpak.yml` | `packaging/flatpak/` PRs, `release.yml`, manual dispatch | Builds, installs, and smoke-tests (`packaging/flatpak/smoke.sh`) the Flatpak bundle; attaches `.flatpak` and `.sha256` on tag builds |
 
-3.14 is left out of the test matrix on purpose, for the reason in
-[install.md](install.md). shellcheck runs on every script in `scripts/`; the
-installer and the export script are the first thing a new user runs. The overlay's tests
-need no compositor, tray or portal: they draw into memory, bind scratch
-sockets and write into temp dirs, the same bargain `tests/` makes about the
-NPU.
+Python 3.14 is excluded from the matrix (see [install.md](install.md)). `shellcheck` validates every script in `scripts/`. Overlay tests run headlessly in memory using temporary directories and scratch sockets.
 
-**The dependency canary** exists because PR CI installs only the dev group, so
-nothing there would notice the real set breaking. A failure is usually
-optimum or transformers moving, a new OpenVINO stable breaking the import or
-plugin load, or a yanked transitive release. It has three steps, kept separate
-so the failures stay distinguishable:
+**Dependency canary (`deps-canary.yml`)** runs three separate steps to isolate breakages:
 
-1. `uv sync --extra export`, not `--frozen`, since resolving from scratch is
-   part of the test, then import OpenVINO and enumerate devices (no inference,
-   the runner has no NPU).
-2. `optimum-cli env`. A resolve can succeed on a toolchain that cannot export:
-   satisfying a raised transformers cap by backtracking optimum to a pre-5.x
-   release still resolves, and `optimum-cli` then dies on import. Dependabot
-   #24 did exactly that and went green on step 1. `env` is the cheapest
-   subcommand that imports the whole command tree.
-3. `uv lock --upgrade --dry-run`: "the lock no longer installs" and "nothing
-   newer resolves either" are different problems.
+1. `uv sync --extra export` (without `--frozen`) followed by OpenVINO import and device enumeration.
+2. `optimum-cli env` (catches valid resolves that fail on import, such as backtracking `optimum` to a pre-5.x release—as happened in Dependabot #24).
+3. `uv lock --upgrade --dry-run` (separates lockfile breakage from unresolvable upgrades).
 
-Before 2026-08-31 it had a sharper job: the project pinned OpenVINO nightly
-wheels, which upstream prunes on its own schedule.
+(Before 2026-08-31 this job primarily caught pruned OpenVINO nightly wheels.)
 
-## Commits and releases
+## Commits, documentation site, and releases
 
-Conventional commits (`feat:`, `fix:`, `docs:`, `ci:`, ...). `CHANGELOG.md` is
-generated from them with git-cliff, so the prefix decides the section.
+Commits follow Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`, etc.) for `git-cliff` changelog generation:
 
 ```bash
-uv run bump-my-version bump minor                       # writes the version, commits, tags vX.Y.Z
-git cliff -c cliff.toml --tag vX.Y.Z -o CHANGELOG.md    # then hand-edit
+uv run bump-my-version bump minor                       # updates versions, commits, tags vX.Y.Z
+git cliff -c cliff.toml --tag vX.Y.Z -o CHANGELOG.md    # review and edit changelog
 git push --follow-tags
 ```
 
-`git cliff --unreleased` previews what is pending. The version lives in
-`pyproject.toml`, `tray/Cargo.toml` and `tray/Cargo.lock`, and bump-my-version
-moves all three. They cannot differ: the overlay is downloaded from the
-release tagged with the Python package's version, and
-`tests/test_packaging.py` fails if they drift.
+Preview unreleased entries with `git cliff --unreleased`. `bump-my-version` updates `pyproject.toml`, `tray/Cargo.toml`, and `tray/Cargo.lock` together (`tests/test_packaging.py` fails if versions diverge).
 
-This documentation is published at docs.vinowhisper.com, built by Starlight
-from `site/`. `docs/` stays the source: `site/scripts/sync-docs.mjs` copies it
-into a gitignored directory, adds the title from each file's H1 and rewrites
-relative links, so a page needs nothing site-specific. `cd site && npm ci &&
-npm run dev` previews it, and the `site` CI job runs the build.
+**Docs site (`docs.vinowhisper.com`):** Built with Astro Starlight from `site/`. `docs/` remains the source of truth; `site/scripts/sync-docs.mjs` copies pages into a gitignored build directory, extracts frontmatter titles from each file's H1, and rewrites relative links. Preview locally with `cd site && npm ci && npm run dev`; CI verifies builds in the `site` job.
 
-Pushing the tag runs `release.yml`:
+**Release pipeline (`release.yml` on `v*` tag):**
 
-1. **tray** builds the overlay once for `x86_64-unknown-linux-musl`, so the one
-   binary is fully static (static-pie, 6.0MB, measured 2026-09-12). It never
-   goes to PyPI.
-2. **build** checks the tag matches `pyproject.toml`, pins the overlay's
-   sha256 into the package, builds the sdist and wheel, checks the wheel
-   carries the pin, runs `twine check --strict` (a rejected PyPI upload
-   cannot be retried under the same version), and cuts the release notes out
-   of `CHANGELOG.md`. The changelog is the single source of release prose
-   because it is hand-edited, and re-deriving notes from commits would drop
-   those edits.
-3. **pypi** publishes the same bytes with Trusted Publishing.
-4. **github-release** attaches the wheel, sdist, overlay binary and
-   `SHA256SUMS`.
-5. **flatpak** (`flatpak.yml`) builds the bundle from the tag, installs it, runs
-   the smoke test and attaches `vinowhisper-x86_64.flatpak` with its own
-   `.sha256`, the two names the Flatpak's Update button downloads. It runs
-   last and separately, so a failed bundle build leaves the release and PyPI as
-   they are; re-run it from the Actions tab (Flatpak → Run workflow) with the
-   tag. The bundle is not in `SHA256SUMS`, which is written before it exists.
+1. **`tray`:** Builds the static musl `x86_64-unknown-linux-musl` binary (static-pie, 6.0 MB, measured 2026-09-12). Not uploaded to PyPI.
+2. **`build`:** Verifies tag matches `pyproject.toml`, pins binary SHA-256 digests into the wheel, builds sdist/wheel, verifies pins, runs `twine check --strict`, and extracts release notes from hand-edited `CHANGELOG.md`.
+3. **`pypi`:** Publishes wheel/sdist via PyPI Trusted Publishing (OIDC).
+4. **`github-release`:** Creates the release (`gh release create --verify-tag` with `GH_REPO` set, since the job has no checkout—fixing the v0.3.0 issue) and attaches wheel, sdist, binaries, and `SHA256SUMS`.
+5. **`flatpak` (`flatpak.yml`):** Builds, smoke-tests, and attaches `vinowhisper-x86_64.flatpak` and `.sha256` (outside `SHA256SUMS`, which is already generated). If this step fails, PyPI and the GitHub Release remain intact and the Flatpak workflow can be re-run manually with the tag.
 
-The split is about permissions. `build` holds no token, `pypi` holds only
-`id-token: write`, and only `github-release` can write to the repo. PyPI goes
-before the GitHub Release on purpose: a PyPI version can never be re-uploaded,
-so if that step fails the tag can be deleted and re-cut, which a published
-release pointing at a missing PyPI version would not allow.
+**Release safeguards:**
 
-**Trusted Publishing** means no API token exists anywhere. GitHub mints a
-short-lived OIDC token that PyPI trusts because the project's publisher
-config names this repo, `release.yml` and the `pypi` environment. Renaming
-either breaks the upload by design, so change the publisher config on PyPI
-first. The `pypi` environment is also where a required reviewer would go.
-
-Only a pushed `v*` tag publishes. There is no manual trigger (it had never
-been used, and a run from a branch could not pass the tag check anyway), and
-`pypi` and `github-release` also check `github.ref`, so adding a trigger later
-cannot publish from a branch by accident. `gh release create --verify-tag`
-fails if the tag is missing rather than creating one at the default branch's
-HEAD.
-
-The tools the release and the Bandit scan run are pinned to exact versions:
-`twine`, `bandit` (in `bandit.yml` and `poe security` alike) and the Rust
-toolchain that builds the overlay. Nothing bumps them automatically; change
-them in a reviewed commit.
-
-Renovate auto-merges only the `dev` dependency group, and only after a
-release has been public for seven days. Cargo crates and Actions always wait
-for review, since crates ship inside the overlay binary and Actions run with
-the release's tokens. Runtime Python dependencies are not touched by Renovate
-at all.
-
-`github-release` has no checkout, so `gh` is told the repo through `GH_REPO`.
-Without it `gh` exits with "not a git repository", which is how v0.3.0 had to
-be released by hand after its PyPI upload had already gone through.
+- **Minimal job permissions:** `build` has no token, `pypi` holds only `id-token: write`, and only `github-release` can write to the repo. PyPI runs before GitHub Release so a failed PyPI upload allows deleting and re-cutting the tag.
+- **Trusted Publishing:** Uses short-lived GitHub OIDC tokens bound to this repo, `release.yml`, and the `pypi` environment (no stored API tokens). Update PyPI publisher settings before renaming the workflow or environment.
+- **Tag-only publishing:** No `workflow_dispatch` trigger; `pypi` and `github-release` also verify `github.ref`.
+- **Pinned tooling and Renovate:** `twine`, `bandit` (`bandit.yml` and `poe security`), and the release Rust toolchain are pinned to exact versions. Renovate auto-merges only `dev` Python dependencies after a 7-day stability window; Cargo crates and GitHub Actions require manual review, and runtime Python dependencies are excluded from Renovate.
