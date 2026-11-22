@@ -3,8 +3,6 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from rapidfuzz import fuzz
-
 MIN_WORDS = 3
 MATCH = 90.0
 KEEP_S = 20.0
@@ -32,6 +30,8 @@ class EchoDedup:
         self._forget()
         if len(words) < MIN_WORDS:
             return False
+        from rapidfuzz import fuzz
+
         mine = _normal(words)
         recent = " ".join(text for _, text in self._them)
         return bool(recent) and fuzz.partial_ratio(mine, recent) >= MATCH
