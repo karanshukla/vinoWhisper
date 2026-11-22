@@ -598,9 +598,9 @@ followed), `echo_worker.py` re-decides every 3 s and saves the filter per (sink,
 The tray passes `echo_cancel` from `gui.json` as `--echo-cancel`; the settings window asks
 `vinowhisper-caption --echo-status`. Details, the benchmark and the open items: `docs/echo.md`.
 
-- **The v1.2 IR is not on the Hub yet.** `vinowhisper/echo_model.json` has the sha256 and sizes but
-  `revision: null`; a machine without the files in `~/.local/share/vinowhisper/models/vinoecho/` has
-  echo cancellation off with that reason. Upload `v12s_T2.xml/.bin`, set the revision, done.
+- **The v1.2 IR is on the Hub** (`arankays/localvqe-v1.2-ov`, pinned in
+  `vinowhisper/echo_model.json`; the served files hash to the pins, checked 2026-11-22). Bump the
+  revision and the hashes together. Not yet fetched through `source.fetch` on a clean machine.
 - **Nothing here ran on the NPU or with real speakers.** linuxlab checked the port against
   LocalVQE's `daf_cli` (corr 0.999999999 on speech) and ran the whole path on fake devices. The
   voice recordings in `~/aecbench/clips_real` and `real_raw` are Karan's: never fixtures.

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "LocalVQE v1.2 (Apache-2.0) as a streaming OpenVINO IR, two 16 ms hops per call, fp32: echo/export/export_v12.py. It decides where your voice is for the speech gate (the 2.7K filter's weights ship in the wheel). Hashed 2026-11-22 from the export linuxlab ran. Unpublished: set `revision` to the Hub commit once these files are uploaded to `repo`; until then a machine without the files has echo cancellation off with a reason.",
+  "note": "LocalVQE v1.2 (Apache-2.0) as a streaming OpenVINO IR, two 16 ms hops per call, fp32: echo/export/export_v12.py. It decides where your voice is for the speech gate (the 2.7K filter's weights ship in the wheel). Hashed 2026-11-22 from the export linuxlab ran, uploaded to the Hub the same day (the files served from `resolve/<revision>/` hash to these values). Bump `revision` and re-hash together.",
   "repo": "arankays/localvqe-v1.2-ov",
   "revision": "77410f4ca117643e1e09d965406a83890f3b9a77",
   "base": "localai-org/LocalVQE@7f61cd05095d",

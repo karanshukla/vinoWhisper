@@ -227,7 +227,7 @@ class _Lane:
     last_commit_at_s: float = 0.0
     recorder: Recorder | EchoRecorder | None = None
 
-    def started(self) -> Recorder:
+    def started(self) -> Recorder | EchoRecorder:
         if self.recorder is None:
             raise RuntimeError("the lane's recorder has not been started")
         return self.recorder

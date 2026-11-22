@@ -52,10 +52,10 @@ The 2.7K filter state (not the audio history) is saved at session end, and when 
 - **Text dedup** (`echo_text.py`): a `you` line of at least three words that fuzzy-matches what `them` said in the last 20 s is dropped, kept in the event as `Cycle.dropped` so a replay still accounts for it.
 - **Headphones hint** (`echo_meter.py`): when over the last 10 s their voice is audibly in the mic while the v1.2 gate says you are silent, for at least half of 5 s or more of far-end speech, a `Hint` event says so, at most once per 5 minutes. The thresholds are guesses, not measured: tune them on the laptop.
 
-## The gate model is unpublished
+## The gate model
 
-`vinowhisper/echo_model.json` pins `v12s_T2.xml` and `.bin` by sha256 (hashed 2026-11-22 from the export linuxlab ran) but names no Hub revision yet. Until the files are uploaded to the pinned repo and its `revision` is set, a machine without them has echo cancellation off with the reason "unavailable: the echo gate model is not published yet". `echo/export/` rebuilds them (`export_v12.py`; needs torch, einops, pyyaml, a LocalVQE checkout and the v1.2 checkpoint; never shipped).
+`vinowhisper/echo_model.json` pins `v12s_T2.xml` and `.bin` by sha256 (hashed 2026-11-22 from the export linuxlab ran) at a commit of [`arankays/localvqe-v1.2-ov`](https://huggingface.co/arankays/localvqe-v1.2-ov) on Hugging Face, with LocalVQE's Apache-2.0 LICENSE and a model card crediting its commit. The files served from that revision hash to the pinned values (checked 2026-11-22). They download on first use, like the speech detector's; if that fails the session runs with echo cancellation off and says why. `echo/export/` rebuilds them (`export_v12.py`; needs torch, einops, pyyaml, a LocalVQE checkout and the v1.2 checkpoint; never shipped).
 
 ## Not here
 
-Ruled out: linking `liblocalvqe.so` (a C++ build in the Flatpak, a third language), WebRTC AEC3, DTLN-aec, fdaf-aec, pyaec, NKF (no licence), PipeWire's `module-echo-cancel` (it changes the user's audio graph) and a hand-written energy gate in place of v1.2. Mic-only captions and dictation hear what is playing too; both could take the monitor as a reference only, which is not in #216. Open: HDMI on real hardware, a real call of several minutes, and the Hub upload above.
+Ruled out: linking `liblocalvqe.so` (a C++ build in the Flatpak, a third language), WebRTC AEC3, DTLN-aec, fdaf-aec, pyaec, NKF (no licence), PipeWire's `module-echo-cancel` (it changes the user's audio graph) and a hand-written energy gate in place of v1.2. Mic-only captions and dictation hear what is playing too; both could take the monitor as a reference only, which is not in #216. Open: HDMI on real hardware and a real call of several minutes.

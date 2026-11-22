@@ -66,3 +66,13 @@ def test_the_shipped_pin_names_both_files_with_real_hashes():
     assert pin is not None
     assert set(pin.sha256) == {"v12s_T2.xml", "v12s_T2.bin"}
     assert all(len(digest) == 64 for digest in pin.sha256.values())
+
+
+def test_the_shipped_pin_names_a_published_revision():
+    pin = echo_model.pinned()
+
+    assert pin is not None
+    assert len(pin.revision) == 40
+    assert pin.url("v12s_T2.xml").startswith(
+        f"https://huggingface.co/{pin.model_id}/resolve/{pin.revision}/"
+    )
