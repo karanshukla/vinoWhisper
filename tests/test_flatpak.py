@@ -155,7 +155,7 @@ def test_setup_in_the_flatpak_skips_what_the_bundle_carries(tmp_path, monkeypatc
     assert wizard.Wizard(assume_yes=True).run_all() == 0
     assert ran[-1] == "setup_server"
     assert wizard.main(["--gui"]) == 0
-    assert "Flatpak carries" in capsys.readouterr().out
+    assert "Flatpak already bundles" in capsys.readouterr().out
 
 
 def test_the_export_extra_goes_in_a_venv_of_the_apps_own_data(tmp_path, monkeypatch):

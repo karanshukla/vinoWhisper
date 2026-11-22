@@ -19,10 +19,10 @@ impl SettingsWindow {
         }
         .normalised();
         self.speech_note = Some(if self.whisper_present() {
-            "Canary was deleted, so the speech model is Whisper again.".into()
+            "Canary was deleted. Switched the active speech model back to Whisper.".into()
         } else {
-            "Canary was deleted and Whisper is not exported, so captions and dictation are \
-             off. Run vinowhisper-setup to export a model."
+            "Canary was deleted and Whisper is not installed, so captions and dictation are \
+             disabled. Run vinowhisper-setup to export a model."
                 .into()
         });
         true
@@ -54,8 +54,8 @@ impl SettingsWindow {
         self.multilingual = false;
         if self.speech.model == SpeechModel::Whisper {
             self.speech_note = Some(
-                "Whisper was deleted, so dictation and captions are off. Run vinowhisper-setup \
-                 to export it again."
+                "Whisper was deleted, so captions and dictation are disabled. Run \
+                 vinowhisper-setup to export it again."
                     .into(),
             );
         }
@@ -125,29 +125,33 @@ impl SettingsWindow {
         widgets::group_label(ui, &status.label);
         widgets::group(ui, |ui| {
             let help = match (tool, confirm) {
-                (Tool::Cleanup, false) => "Checked against pinned sha256s.".to_owned(),
+                (Tool::Cleanup, false) => "Verified against pinned SHA-256 checksums.".to_owned(),
                 (Tool::Cleanup, true) => format!(
-                    "Deletes the model and its compiled cache ({on_disk}). Dictation is typed \
-                     as you said it until you download it again."
+                    "Deletes the model and its compiled cache ({on_disk}). Dictation will be typed \
+                     without cleanup until you download it again."
                 ),
-                (_, false) => "INT8 for the NPU, fp16 for CPU and GPU, checked against pinned \
-                               sha256s. CC-BY-4.0, by NVIDIA."
-                    .to_owned(),
+                (_, false) => {
+                    "INT8 for NPU, fp16 for CPU and GPU. Verified against pinned SHA-256 \
+                     checksums. Licensed under CC-BY-4.0 by NVIDIA."
+                        .to_owned()
+                }
                 (_, true) if self.speech.model == SpeechModel::Canary => {
                     if self.whisper_present() {
                         format!(
-                            "Deletes Canary ({on_disk}). It is the speech model, so Whisper \
-                             takes over."
+                            "Deletes Canary ({on_disk}). Because it is the active speech model, \
+                             Whisper will be used instead."
                         )
                     } else {
                         format!(
-                            "Deletes Canary ({on_disk}). It is the speech model and Whisper is \
-                             not exported, so captions and dictation stay off until \
-                             vinowhisper-setup exports a model."
+                            "Deletes Canary ({on_disk}). Because Whisper is not installed, \
+                             captions and dictation will remain disabled until you run \
+                             vinowhisper-setup."
                         )
                     }
                 }
-                (_, true) => format!("Deletes Canary ({on_disk}). Download it again to use it."),
+                (_, true) => {
+                    format!("Deletes Canary ({on_disk}). You can download it again later.")
+                }
             };
             let row = Row::new("Download").help(&help);
             let row = if confirm {
@@ -158,7 +162,7 @@ impl SettingsWindow {
             row.show(ui, |ui, _| {
                 if confirm {
                     if ui
-                        .add(Button::destructive("Delete the model").small())
+                        .add(Button::destructive("Delete model").small())
                         .clicked()
                     {
                         confirm = false;
@@ -226,7 +230,7 @@ impl SettingsWindow {
                 return;
             }
             Row::new("Compiled cache")
-                .help("Built on first load. Deleting the model clears it too.")
+                .help("Generated on first load and removed when you delete the model.")
                 .show(ui, |ui, _| {
                     ui.label(model::size(status.cache_bytes));
                 });
@@ -247,17 +251,17 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             let confirm = self.confirm_delete_whisper;
             let help = match (confirm, in_use) {
-                (false, _) => "Built for this machine by vinowhisper-setup. Captions and \
-                               dictation run on it."
-                    .to_owned(),
+                (false, _) => {
+                    "Exported for this device by vinowhisper-setup for captions and dictation."
+                        .to_owned()
+                }
                 (true, true) => format!(
-                    "Deletes every Whisper export and its source download ({all}). vinoWhisper \
-                     stops, and dictation and captions stay off until you run vinowhisper-setup \
-                     again."
+                    "Deletes all Whisper exports and the source download ({all}). Captions and \
+                     dictation will stop until you run vinowhisper-setup again."
                 ),
                 (true, false) => format!(
-                    "Deletes every Whisper export and its source download ({all}). Canary keeps \
-                     running; to use Whisper again, run vinowhisper-setup."
+                    "Deletes all Whisper exports and the source download ({all}). Canary will \
+                     continue running. Run vinowhisper-setup to use Whisper again."
                 ),
             };
             let row = Row::new("Exported model").help(&help);
@@ -308,12 +312,11 @@ impl SettingsWindow {
                 let size = model::size(status.source_bytes);
                 let help = if confirm {
                     format!(
-                        "Deletes the {size} download. Captions and dictation keep working; a \
-                         new export downloads it again."
+                        "Deletes the {size} source download. Captions and dictation will continue \
+                         working; future exports will re-download it if needed."
                     )
                 } else {
-                    "What the export was built from. Only a new export reads it, so deleting \
-                     it is safe."
+                    "Original model files used to build the export. Safe to delete once exported."
                         .to_owned()
                 };
                 let row = Row::new("Source download").help(&help);
@@ -325,7 +328,7 @@ impl SettingsWindow {
                 row.show(ui, |ui, _| {
                     if confirm {
                         if ui
-                            .add(Button::destructive("Delete the download").small())
+                            .add(Button::destructive("Delete source").small())
                             .clicked()
                         {
                             self.confirm_delete_source = false;

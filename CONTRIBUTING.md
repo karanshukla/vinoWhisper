@@ -25,7 +25,7 @@ uv sync --extra export
 uv run vinowhisper-setup --dry-run
 ```
 
-The overlay (`tray/`) and settings window (`gui/`) are standard Cargo projects—run `cargo test` in either directory. To install and run your local build, see [Running your own build](docs/development.md#running-your-own-build).
+The overlay (`tray/`) and settings window (`gui/`) are standard Cargo projects; run `cargo test` in either directory. To install and run your local build, see [Running your own build](docs/development.md#running-your-own-build).
 
 ## Before pushing
 

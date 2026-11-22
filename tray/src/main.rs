@@ -31,59 +31,54 @@ pub const APP_ID: &str = "io.github.karanshukla.vinowhisper";
 const USAGE: &str = "\
 Usage: vinowhisper-tray [OPTIONS] [COMMAND]
 
-A floating overlay and tray icon for vinoWhisper: live captions, and
-dictation into the focused window. Runs vinowhisper-caption --json and
-vinowhisper-dictate --json and draws what they say.
+Floating caption overlay and system tray app for vinoWhisper, providing live
+captions and voice dictation into the focused window.
 
-Commands go to the running instance, starting one if there is none:
-  show        show the overlay and start captioning (the default)
+Commands are forwarded to the running instance (starting one if needed):
+  show        show the overlay and start captioning (default)
   hide        hide the overlay and stop captioning
-  toggle      one or the other: bind this to a key if your desktop has
-              no global-shortcuts portal
-  dictate     start dictating from the microphone, or stop and type what
-              was said: the tap half of the dictation key, for desktops
-              with no global-shortcuts portal
+  toggle      show or hide the overlay (bind this if your compositor lacks a
+              global shortcuts portal)
+  dictate     start dictating from the microphone, or stop and type the result
+              (single-key tap mode for compositors without a shortcuts portal)
   dictate-press, dictate-release
-              the hold half: bound to a key's press and release (sway:
-              bindsym, and bindsym --release), holding it talks and
-              letting go types
-  quit        stop everything, tray icon included
-  reload      re-read the settings files, after changing them by hand or
-              in vinowhisper-gui (it sends this itself). Exits 1 when a
-              language change is refused because dictation is running
-  shortcuts   print the bound shortcuts as JSON, for vinowhisper-gui
+              hold-to-talk key press and release commands (e.g. sway bindsym /
+              bindsym --release); holding records and releasing types
+  quit        stop captioning and exit the tray app
+  reload      reload settings files after manual edits (sent automatically by
+              vinowhisper-gui); exits 1 if dictation is active during a
+              language switch
+  shortcuts   print portal-bound shortcuts as JSON (used by vinowhisper-gui)
   configure-shortcut
-              open the desktop's dialog for changing them
+              open the desktop's shortcut configuration dialog
   summaries-ready
-              notify about finished session summaries (the server sends
-              this itself)
-  restart     quit the running instance and start this binary in its
-              place, in the tray: installers run it after replacing the
-              binary. Starts nothing when none is running
+              post desktop notifications for completed session summaries (sent
+              by the server)
+  restart     stop the running instance and start this binary in the tray
+              (used by installers; does nothing if not running)
 
 Options:
-  --hidden          start in the tray, captions off (for autostart)
-  --source SOURCE   'output' (system audio, the default) or 'mic', this run only
-  --caption PATH    the vinowhisper-caption to run, when it is not on PATH
-  --install         add a launcher entry and icon for this binary
-  --autostart       start in the tray at login (with --install, or alone for
-                    a packaged copy whose launcher came with the package)
-  --uninstall       remove what --install and --autostart added
+  --hidden          start in the tray with captions hidden (for autostart)
+  --source SOURCE   'output' (system audio, default), 'mic', or 'both' for this run
+  --caption PATH    path to vinowhisper-caption if it is not on PATH
+  --install         install desktop launcher entries and icons for this binary
+  --autostart       enable starting in the tray at login (with --install, or
+                    alone for packaged installs)
+  --uninstall       remove launchers, icons, and autostart entries
   --export-desktop DIR
-                    for packagers: write the launcher and icon under DIR
-                    (a buildroot's /usr/share), naming the command, not a path
+                    for packagers: write launchers and icons under DIR (e.g. a
+                    buildroot's /usr/share) using bare command names
   -V, --version     print the version
   -h, --help        print this help
 
-Two global shortcuts are requested from the desktop portal: captions,
-preferring Meta+Alt+C, and dictation, preferring Meta+H (the dictation key
-on laptops that have one). Hold the dictation key to talk and release to
-type, or tap it to start and tap again to finish. The text is typed through
-the remote-desktop portal, which asks permission once; a session stays open
-between dictations and closes after typing_idle_minutes. Change either shortcut
-from vinowhisper-gui (Shortcuts) or in your desktop's shortcut settings,
-where they are listed under vinoWhisper. Settings are kept in
-$XDG_CONFIG_HOME/vinowhisper/gui.json and language.json.";
+Two global shortcuts are requested via xdg-desktop-portal: captions (default
+Meta+Alt+C) and dictation (default Meta+H). Hold the dictation shortcut to
+speak and release to type, or tap to start and tap again to finish. Text is
+typed through the RemoteDesktop portal, which prompts once for permission and
+keeps the session open for typing_idle_minutes. Change shortcuts in
+vinowhisper-gui (Shortcuts) or in your desktop's keyboard shortcut settings
+under vinoWhisper. Settings are stored in $XDG_CONFIG_HOME/vinowhisper/gui.json
+and language.json.";
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
@@ -286,10 +281,10 @@ fn run_restart_sandboxed() -> ExitCode {
     let _ = helper.kill();
     let _ = helper.wait();
     if !started {
-        eprintln!("vinowhisper-tray: started the new build but it is not answering");
+        eprintln!("vinowhisper-tray: started the new build, but it did not respond");
         return ExitCode::FAILURE;
     }
-    println!("restarted vinowhisper-tray, in the tray (captions are off until shown)");
+    println!("Restarted vinowhisper-tray in the tray (captions hidden).");
     ExitCode::SUCCESS
 }
 
@@ -314,8 +309,8 @@ fn run_restart() -> ExitCode {
     };
     if !has_wayland_session() {
         eprintln!(
-            "vinowhisper-tray: no Wayland session here, so the running tray was left alone; \
-             quit it from its menu and start it again to use this version"
+            "vinowhisper-tray: no Wayland session detected; left the running tray alone. Quit it \
+             from the tray menu and start it again to use this version."
         );
         return ExitCode::FAILURE;
     }
@@ -351,12 +346,13 @@ fn run_restart() -> ExitCode {
     let started = restart::wait_until(restart::START_WAIT, || ipc::send(Request::Ping).is_ok());
     if !started {
         eprintln!(
-            "vinowhisper-tray: started {} but it is not answering; run it by hand to see why",
+            "vinowhisper-tray: started {}, but it did not respond; run it directly to inspect \
+             the output",
             exe.display()
         );
         return ExitCode::FAILURE;
     }
-    println!("restarted vinowhisper-tray, in the tray (captions are off until shown)");
+    println!("Restarted vinowhisper-tray in the tray (captions hidden).");
     ExitCode::SUCCESS
 }
 

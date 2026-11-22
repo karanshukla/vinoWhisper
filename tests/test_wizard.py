@@ -646,7 +646,7 @@ def test_link_binaries_names_the_missing_entry_point_and_writes_nothing(venv_bin
         (
             "outcome",
             False,
-            f"vinowhisper-replay not next to {venv_bin / 'python'} — run `uv sync` first",
+            f"vinowhisper-replay not found next to {venv_bin / 'python'}; run `uv sync` first",
         )
     ]
 
@@ -707,7 +707,7 @@ def test_link_binaries_unlinks_what_is_there_before_it_links_and_warns_about_pat
         (
             "outcome",
             True,
-            "linked, but <tmp>/local/bin is not on your PATH — add it",
+            "linked, but <tmp>/local/bin is not on your PATH (add it to your shell profile)",
         ),
     ]
 
@@ -910,7 +910,7 @@ def test_install_overlay_builds_with_cargo_when_there_is_no_pin_and_installs_the
     built = wizard.overlay.built_binary(wizard.overlay.TRAY)
     assert transcript.play(wizard.Wizard(assume_yes=True).install_overlay) == [
         ("say", f"  $ {' '.join(build)}"),
-        ("ask", "build it with cargo? (minutes, the first time)", True),
+        ("ask", "build with cargo? (takes a few minutes the first time)", True),
         ("run", build, None),
         ("install_binary", str(built), _TRAY),
         *_tray_commands(_TRAY, restart=True),
@@ -931,7 +931,7 @@ def test_install_overlay_leaves_the_tray_unbuilt_on_no(monkeypatch, tmp_path, tr
     build = wizard.overlay.build_argv(wizard.overlay.TRAY)
     assert transcript.play(wizard.Wizard().install_overlay) == [
         ("say", f"  $ {' '.join(build)}"),
-        ("ask", "build it with cargo? (minutes, the first time)", False),
+        ("ask", "build with cargo? (takes a few minutes the first time)", False),
         ("outcome", None, "not built; `vinowhisper-setup --gui` builds it any time"),
     ]
 
@@ -1193,7 +1193,7 @@ def test_check_model_offers_the_export_extra_and_goes_on_once_it_is_installed(
     played = transcript.play(wizard.Wizard(assume_yes=True).check_model)
     assert played[:6] == [
         ("say", "  No npu export at <tmp>/npu-export."),
-        ("say", "  Exporting needs optimum, the optional `export` extra (it brings torch)."),
+        ("say", "  Model export requires the optional `export` extra (optimum and CPU torch)."),
         ("say", "  $ uv sync --extra x"),
         ("ask", "install it?", True),
         ("run", ["uv", "sync", "--extra", "x"], None),
@@ -1209,10 +1209,10 @@ def test_check_model_stops_at_the_export_extra_when_it_is_declined(
     _model_fakes(monkeypatch, transcript, tmp_path, cli=None)
     assert transcript.play(wizard.Wizard().check_model) == [
         ("say", "  No npu export at <tmp>/npu-export."),
-        ("say", "  Exporting needs optimum, the optional `export` extra (it brings torch)."),
+        ("say", "  Model export requires the optional `export` extra (optimum and CPU torch)."),
         ("say", "  $ uv sync --extra x"),
         ("ask", "install it?", False),
-        ("outcome", None, "install the export extra, then re-run this"),
+        ("outcome", None, "install the export extra, then re-run vinowhisper-setup"),
     ]
 
 
@@ -1320,7 +1320,7 @@ def test_the_server_summary_mentions_removed_units_only_when_there_were_some():
 
 def test_the_missing_commands_summary_names_each_and_the_interpreter():
     assert wizard.missing_commands_summary(["a", "b"], "/v/python") == (
-        "a, b not next to /v/python — run `uv sync` first"
+        "a, b not found next to /v/python; run `uv sync` first"
     )
 
 

@@ -11,7 +11,7 @@ Audio capture uses one of two backends, selected automatically:
 
 When `pactl` is available (including via `pipewire-pulse`), it is used to query the default sink and mute state; otherwise PipeWire's `default.audio.sink` metadata is used. On systems with both stacks installed, set `VINOWHISPER_CAPTURE_BACKEND=pipewire` or `VINOWHISPER_CAPTURE_BACKEND=pulseaudio` to override automatic detection.
 
-Per-distro package mappings live in [`vinowhisper/distro.py`](../vinowhisper/distro.py) and are shared by `vinowhisper-setup` and `vinowhisper-doctor`:
+Per-distro package mappings are defined in [`vinowhisper/distro.py`](../vinowhisper/distro.py) and are shared by `vinowhisper-setup` and `vinowhisper-doctor`:
 
 | Family | Covered | Confidence |
 |---|---|---|

@@ -79,7 +79,7 @@ impl SessionsWindow {
     pub(super) fn open_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {
         if state.opening {
             ui.add_space(12.0);
-            a11y::live(&widgets::small(ui, "Waiting for the app to open."));
+            a11y::live(&widgets::small(ui, "Opening file…"));
             return;
         }
         let Some(result) = &state.opened else {
@@ -91,8 +91,8 @@ impl SessionsWindow {
                 let path = &opened.exported.path;
                 let text = if opened.exported.state == "edited" {
                     format!(
-                        "Opened {} as it is: it differs from the session (edited, or summarised \
-                         again), so it wasn't replaced. Export… writes a fresh copy.",
+                        "Opened existing file {} without overwriting it because it differs from \
+                         the current session. Use Export… to write a fresh copy.",
                         path.display()
                     )
                 } else {
@@ -109,7 +109,7 @@ impl SessionsWindow {
                     dismissed
                 })
             }
-            Err(why) => widgets::notice(ui, Tone::Error, &format!("Couldn't open it: {why}")),
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Could not open file: {why}")),
         };
         if dismissed {
             self.state.lock().unwrap().opened = None;

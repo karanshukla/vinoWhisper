@@ -1,29 +1,11 @@
 # The terminal captions
 
-`vinowhisper-caption` prints confirmed words into the terminal's own
-scrollback, so the transcript survives quitting and native search and
-selection work on it. Only the status bar at the bottom redraws.
+`vinowhisper-caption` prints confirmed words directly into the terminal's scrollback buffer, so the transcript persists after you quit and works with native terminal search and text selection. Only the status bar at the bottom redraws in place.
 
-That is why it uses Rich and not Textual. A word is never revised once
-printed, so the transcript belongs in scrollback and only one line needs a
-live region, which is `rich.live.Live`. Textual owns the screen, so the
-transcript would live in a widget that is gone on quit and cannot be piped.
+This is why vinoWhisper uses Rich rather than Textual. Confirmed words are never revised once printed, so only the single status line needs a live region (`rich.live.Live`). A full-screen TUI framework like Textual would trap the transcript inside a widget that disappears on exit and cannot be piped cleanly.
 
-- **Paragraphs are inferred.** A pause well above a normal gap between
-  sentences starts a new paragraph, and so does a sentence end once a
-  paragraph is about a screenful long. Sentence ends skip common abbreviations
-  and initialisms ("U.S.", "F.B.I."); a miss only delays the break to the next
-  sentence.
-- **`--transcript [PATH]` saves the words to a file as well** (issue #36,
-  added 2026-10-07), whichever renderer is showing them, `--json` included.
-  It is off unless asked for, because it writes whatever was playing to disk.
-  With no PATH it writes to `$XDG_DATA_HOME/vinowhisper/transcripts/`. A
-  directory gets a new `YYYY-MM-DD-HHMMSS.txt` per session (local time), which
-  becomes a `YYYY-MM-DD-HHMMSS.vwsession` bundle when the session ends and is
-  then summarised in the background ([sessions.md](sessions.md)); a path
-  that is not a directory is a file and is appended to, with a new header each
-  session. A path that does not exist yet and has no extension is taken as a
-  directory.
+- **Paragraphs are inferred automatically.** A pause longer than a normal inter-sentence gap starts a new paragraph, as does a sentence ending once a paragraph reaches roughly a screenful of text. Sentence detection skips common abbreviations and initialisms ("U.S.", "F.B.I."); any missed abbreviation simply delays the paragraph break until the next sentence.
+- **`--transcript [PATH]` saves confirmed text to disk** (issue #36, added 2026-10-07), regardless of which renderer is active (including `--json`). It is disabled by default because it records whatever audio is playing. Omitting `PATH` writes to `$XDG_DATA_HOME/vinowhisper/transcripts/`. When given a directory, each session creates a new `YYYY-MM-DD-HHMMSS.txt` file (local time) that is bundled into `YYYY-MM-DD-HHMMSS.vwsession` at session end and summarised in the background ([sessions.md](sessions.md)). When given a file path, transcripts are appended with a new session header. A nonexistent path with no file extension is treated as a directory.
 
   ```
   vinoWhisper transcript, 2026-09-29 14:02, system audio, NPU
@@ -33,47 +15,17 @@ transcript would live in a widget that is gone on quit and cannot be piped.
   [01:12] Next paragraph after a real pause ...
   ```
 
-  One line per paragraph, no hard wrapping. Paragraphs break by the rules
-  above (`paragraphs.ParagraphBreaker`, shared with the status bar). The stamp is
-  the time since the model was ready, when the paragraph's first word was
-  confirmed, which runs about two cycles behind the speech. Only confirmed and
-  flushed words are written, never the dimmed pending ones, so the file is
-  append-only for the same reason scrollback is. It is flushed after every
-  cycle. The file is created at the first word, so a session with no speech
-  leaves nothing behind. Ctrl+C and hiding the overlay (SIGINT) flush the
-  tail; a SIGTERM or a kill loses what was still pending, a couple of seconds.
-  Files are 0600 in a 0700 directory it creates. Nothing deletes them: a
-  minute of speech is about 1KB. Dictation is not written.
-- **The level meter spans -60 to 0 dBFS.** The silence gate, 0.002 rms, sits
-  at about -54 dBFS.
-- **Resizing does not rewrap old lines.** Lines already in scrollback keep the
-  width they were printed at, the standing cost of using scrollback rather
-  than a widget.
-- **`--plain`, `--debug` and a piped stdout** print plain lines without the
-  status bar, so redirecting to a file works.
+  Each paragraph is written on one line without hard wrapping, using the same break rules (`paragraphs.ParagraphBreaker`) as the status bar. Timestamps measure elapsed time since the model became ready when the paragraph's first word was confirmed (about two decode cycles behind speech). Only confirmed and flushed words are written (never dimmed pending words), so the file is append-only and flushed after every cycle. The file is created only when the first word arrives, so silent sessions create no file. `Ctrl+C` and hiding the overlay (`SIGINT`) flush pending words; `SIGTERM` or `SIGKILL` drops the last few seconds of pending text. Files are created with mode `0600` inside `0700` directories and are not automatically deleted (one minute of speech is roughly 1 KB). Dictation is never written to transcript files.
+- **The level meter spans -60 to 0 dBFS.** The `0.002` RMS silence gate corresponds to roughly -54 dBFS.
+- **Resizing does not rewrap previous lines.** Lines already printed to scrollback retain the width they were wrapped at, which is an inherent trade-off of writing to terminal scrollback instead of a TUI widget.
+- **`--plain`, `--debug`, and piped stdout** emit plain lines without the status bar so output can be redirected to files or pipes.
 
 ## Calls: `--source both` (issue #118, added 2026-11-22)
 
-`--source both` captions the microphone and the system audio at once, as two
-lanes: `you` (mic) and `them` (what is playing). Each lane has its own capture,
-speech detector and stitcher, since LocalAgreement-2 works per stream. The
-server runs one transcription at a time (`transcriber.py` holds a lock), so the
-loop does the same: the lane with more unheard audio goes first, and a silent
-lane costs nothing.
+`--source both` captions the microphone and system audio simultaneously in two lanes: `you` (microphone) and `them` (system audio). Each lane has its own capture stream, speech detector, and stitcher, since LocalAgreement-2 operates per stream. Because the server processes one transcription at a time (`transcriber.py` holds a lock), the caption loop schedules whichever lane has more un-transcribed audio first; an inactive lane incurs no decode cost.
 
-- Every `Cycle` and `Silence` event carries a `lane` field (`""` for one
-  source), and `Flushed(lane, words)` carries each lane's held-back words
-  before `Stopped`.
-- The terminal and transcript start a labelled paragraph when the speaker
-  changes (`[01:12] you: ...`). The overlay (2026-11-22) stacks the lanes
-  instead: `them` above `you`, two lines each, no grey pending words (one lane
-  decodes at a time, so a lane's pending tail sat there and kept changing). The
-  box grows to four lines on the first lane event. The `you` lane going quiet is
-  never reported as "no signal".
-- `--record DIR` writes `audio-you.wav` and `audio-them.wav` next to one
-  `events.jsonl`. `vinowhisper-replay --restitch` redoes each lane;
-  `--sweep` needs `--lane you|them`.
-- Not decided here: the mic hears the speakers, so without headphones their
-  words appear in both lanes. Echo cancellation is [echo.md](echo.md) (#216).
-- Whether to save transcripts by default in this mode is left to the
-  existing `save_transcripts` setting.
+- Every `Cycle` and `Silence` event includes a `lane` field (`""` for single-source sessions), and `Flushed(lane, words)` emits each lane's held-back words before `Stopped`.
+- Both the terminal and saved transcripts start a labeled paragraph whenever the speaker changes (`[01:12] you: ...`). The overlay (2026-11-22) stacks the two lanes instead: `them` above `you`, two lines each, with grey pending words disabled (because decoding alternates between lanes, a pending tail would stay visible and keep shifting). The overlay expands to four lines on the first two-lane event, and silence on the `you` lane is never reported as "no signal".
+- `--record DIR` writes `audio-you.wav` and `audio-them.wav` alongside a single `events.jsonl`. `vinowhisper-replay --restitch` processes each lane independently, while `--sweep` requires `--lane you|them`.
+- When using speakers without headphones, the microphone picks up playback audio and remote speech appears in both lanes. See [echo.md](echo.md) (#216) for echo cancellation.
+- Transcript saving in two-lane mode follows the existing `save_transcripts` setting.

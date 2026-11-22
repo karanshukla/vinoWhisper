@@ -32,7 +32,7 @@ impl App {
         let Some(dictator) = &mut self.dictator else {
             let why = if self.dictate_program.is_none() {
                 format!(
-                    "{} was not found; update vinoWhisper (pip install -U vinowhisper)",
+                    "{} was not found. Update vinoWhisper (pip install -U vinowhisper).",
                     session::DICTATE
                 )
             } else {
@@ -68,7 +68,7 @@ impl App {
                 };
                 if !self.portal.type_text(text) {
                     self.dictation
-                        .pasted(Err("the portal thread is gone".into()));
+                        .pasted(Err("desktop portal connection closed".into()));
                 }
             }
             None => {}

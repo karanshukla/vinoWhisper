@@ -10,17 +10,17 @@ mod window;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-vinowhisper-gui: the vinoWhisper settings window
+vinowhisper-gui: vinoWhisper settings and saved sessions window
 
 Usage: vinowhisper-gui [--page shortcuts|captions|speech|cleanup|sessions|about]
        vinowhisper-gui --sessions
        vinowhisper-gui --open <bundle.vwsession>[#transcript[@MM:SS]|#summary]
        vinowhisper-gui --version
 
---sessions opens the saved sessions window, and --open opens it on one session.
+--sessions opens the saved sessions window, and --open opens a specific session.
 
 Arguments meant for the tray (toggle, --hidden, dictate-*, quit, --install) are
-passed on to vinowhisper-tray, so launchers written before the split keep working.
+forwarded to vinowhisper-tray for compatibility with older launchers.
 ";
 
 fn main() -> ExitCode {

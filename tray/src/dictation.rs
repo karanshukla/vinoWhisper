@@ -221,7 +221,7 @@ impl Dictation {
                 pasted: Some(Err(why)),
                 ..
             } => format!("not typed: {why}"),
-            Phase::Nothing => "heard nothing".to_owned(),
+            Phase::Nothing => "no speech detected".to_owned(),
             Phase::Failed(message) => format!("failed: {message}"),
         };
         Some(format!("Dictation {text}"))
@@ -463,7 +463,7 @@ impl Dictation {
                 });
             }
             Phase::Listening { live: false, .. } => {
-                (Tone::Dim, "Starting the microphone".to_owned(), None)
+                (Tone::Dim, "Starting microphone…".to_owned(), None)
             }
             Phase::Listening { text, .. } => (Tone::Good, preview(text), Some(self.level)),
             Phase::Transcribing => (Tone::Warn, self.transcribing_text(), None),
@@ -475,7 +475,7 @@ impl Dictation {
                 pasted: Some(Err(why)),
                 ..
             } => (Tone::Warn, not_typed(why), None),
-            Phase::Nothing => (Tone::Dim, "Heard nothing".to_owned(), None),
+            Phase::Nothing => (Tone::Dim, "No speech detected".to_owned(), None),
             Phase::Failed(message) => (Tone::Bad, message.clone(), None),
         };
         let words = matches!(
@@ -504,7 +504,7 @@ impl Dictation {
 
     fn transcribing_text(&self) -> String {
         if self.cleaning {
-            return "Cleaning up with the model".to_owned();
+            return "Cleaning up…".to_owned();
         }
         match &self.device {
             Some((device, true)) => format!("Transcribing on {device}"),
@@ -795,7 +795,7 @@ mod tests {
         assert_eq!(d.pill().unwrap().text, "Transcribing");
         d.event(Dictate::Cleaning);
         assert_eq!(d.phase(), &Phase::Transcribing);
-        assert_eq!(d.pill().unwrap().text, "Cleaning up with the model");
+        assert_eq!(d.pill().unwrap().text, "Cleaning up…");
         assert!(d.epoch() > before);
         d.event(Dictate::Dictated {
             text: "Hello.".into(),

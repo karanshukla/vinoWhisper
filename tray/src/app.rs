@@ -66,7 +66,8 @@ const TICK: Duration = Duration::from_secs(1);
 const SWITCH_REFUSED: &str = "Finish dictating before changing the language";
 const COPIED: &str = "Copied";
 const COPY_REFUSED: &str = "Finish dictating before copying";
-const NO_SETTINGS_WINDOW: &str = "No settings window: run vinowhisper-setup --gui";
+const NO_SETTINGS_WINDOW: &str =
+    "Settings window not found. Run vinowhisper-setup --gui to install it.";
 const BUSY: &str = "vinowhisper-tray is busy; try again";
 const ANSWER_WITHIN: Duration = Duration::from_millis(1500);
 const _: () = assert!(ANSWER_WITHIN.as_millis() < ipc::TIMEOUT.as_millis());
@@ -178,8 +179,8 @@ pub struct App {
 pub fn run(options: Options) -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|err| {
         format!(
-            "no Wayland session to draw on ({err}). The overlay is Wayland-only; \
-             vinowhisper-caption works in any terminal."
+            "no Wayland session available ({err}). The overlay requires Wayland; use \
+             vinowhisper-caption in a terminal instead."
         )
     })?;
     let (globals, queue) =
@@ -188,9 +189,9 @@ pub fn run(options: Options) -> Result<(), String> {
     let compositor =
         CompositorState::bind(&globals, &qh).map_err(|err| format!("wl_compositor: {err}"))?;
     let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| {
-        "this compositor does not offer wlr-layer-shell, which is what lets the overlay \
-         float above other windows. KDE Plasma, Sway, Hyprland, niri and COSMIC have it; \
-         GNOME does not. vinowhisper-caption in a terminal works everywhere."
+        "this compositor does not support wlr-layer-shell, which is required for the floating \
+         overlay. Supported compositors include KDE Plasma, Sway, Hyprland, niri, and COSMIC \
+         (GNOME does not support it). Use vinowhisper-caption in a terminal instead."
             .to_owned()
     })?;
     let shm = Shm::bind(&globals, &qh).map_err(|err| format!("wl_shm: {err}"))?;
@@ -670,7 +671,7 @@ impl App {
             return;
         };
         if !self.portal.copy(text.to_owned()) {
-            self.flash("Not copied: the portal thread is gone");
+            self.flash("Not copied: desktop portal connection closed");
         }
     }
 

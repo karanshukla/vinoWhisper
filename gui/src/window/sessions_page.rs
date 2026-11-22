@@ -24,13 +24,12 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             let (help, tone) = if model_ready == Some(false) {
                 (
-                    "The model isn't downloaded yet; get it on the Cleanup page.",
+                    "The summary model is not downloaded yet. Download it on the Cleanup page.",
                     Tone::Warn,
                 )
             } else {
                 (
-                    "After each saved session, a small model on this machine writes a short \
-                     summary with time stamps. Nothing leaves the machine.",
+                    "Generates a local summary with timestamps after each saved session.",
                     Tone::Neutral,
                 )
             };
@@ -58,12 +57,13 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             let (help, tone) = if self.settings.save_transcripts {
                 (
-                    "Transcripts and summaries open in a window of their own.",
+                    "Open the separate window to browse transcripts and summaries.",
                     Tone::Neutral,
                 )
             } else {
                 (
-                    "Saving transcripts is off (Captions page), so new sessions aren't kept.",
+                    "Transcript saving is disabled in Captions settings, so new sessions are not \
+                     saved.",
                     Tone::Warn,
                 )
             };
@@ -76,10 +76,10 @@ impl SettingsWindow {
                     }
                 });
             let (help, tone) = match &self.app_menu_error {
-                Some(err) => (format!("Could not change the app menu: {err}"), Tone::Error),
+                Some(err) => (format!("Could not update the app menu: {err}"), Tone::Error),
                 None => (
-                    "Adds vinoWhisper Sessions to the app list, to open saved sessions \
-                     without opening Settings first."
+                    "Adds a vinoWhisper Sessions launcher to your application menu for direct \
+                     access."
                         .to_owned(),
                     Tone::Neutral,
                 ),

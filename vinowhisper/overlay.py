@@ -88,9 +88,8 @@ def availability(
         record = json.loads(pin_file.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return (
-            "this vinowhisper has no pinned overlay binary (a source checkout, or a "
-            "wheel built outside the release workflow), so nothing will be downloaded; "
-            + _BUILD_INSTEAD
+            "this installation has no pinned overlay binary (source checkout or non-release "
+            "wheel), so nothing will be downloaded; " + _BUILD_INSTEAD
         )
     except (OSError, ValueError) as exc:
         return f"{pin_file} is unreadable ({exc}), so nothing will be downloaded; {_BUILD_INSTEAD}"

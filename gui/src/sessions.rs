@@ -525,7 +525,7 @@ fn chosen(asked: Result<ashpd::desktop::file_chooser::SelectedFiles, ashpd::Erro
         {
             Some(path) => Chosen::Path(path),
             None => Chosen::NoPortal {
-                reason: "the file dialog gave no local file".to_owned(),
+                reason: "the file dialog did not return a local file".to_owned(),
             },
         },
         Err(ashpd::Error::Response(ResponseError::Cancelled)) => Chosen::Cancelled,
@@ -630,7 +630,7 @@ pub fn import(file: &Path, on_event: &mut dyn FnMut(ImportEvent)) -> Result<Path
         });
     }
     let mut child = command.spawn().map_err(|err| {
-        format!("could not run vinowhisper-transcribe ({err}); vinowhisper-setup links it")
+        format!("could not run vinowhisper-transcribe ({err}); run vinowhisper-setup to link it")
     })?;
     on_event(ImportEvent::Started { pid: child.id() });
     let mut outcome = None;
@@ -668,7 +668,8 @@ pub fn import_with_dialog(
         Chosen::NoPortal { reason: why } => {
             eprintln!("[vinowhisper-gui] no file dialog: {why}");
             return Err(
-                "there's no file dialog on this desktop; run `vinowhisper-transcribe FILE` in a terminal"
+                "no file dialog is available on this desktop. Run `vinowhisper-transcribe FILE` \
+                 in a terminal instead."
                     .to_owned(),
             );
         }

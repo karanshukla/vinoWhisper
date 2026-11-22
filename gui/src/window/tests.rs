@@ -324,10 +324,10 @@ fn removing_a_term_takes_it_out_of_the_file() {
 fn canary_says_how_to_install_it_until_it_is_there() {
     let mut harness = harness(Page::Speech, WIDE);
     harness.run();
-    harness.get_by_label_contains("Whisper small, 0.9 GB");
+    harness.get_by_label_contains("Whisper small (0.9 GB)");
     harness.state_mut().window.speech.model = SpeechModel::Canary;
     harness.run();
-    harness.get_by_label_contains("not downloaded yet: use Download below");
+    harness.get_by_label_contains("not downloaded yet. Click Download below");
     harness.state_mut().window.canary = true;
     harness.run();
     harness.get_by_label_contains("25 European languages");
@@ -397,7 +397,7 @@ fn a_model_switch_that_drops_the_language_says_so() {
     harness.get_by_label("Canary 1B v2").click();
     harness.run();
     assert_eq!(harness.state().window.speech.language, Language::En);
-    harness.get_by_label_contains("so Language is now English");
+    harness.get_by_label_contains("so Language was reset to English");
 }
 
 fn canary_status(present: bool) -> Status {
@@ -513,8 +513,8 @@ fn whisper_in_use_confirms_its_delete_in_place_and_says_what_stops() {
         .click();
     harness.run();
     assert!(harness.state().window.confirm_delete_whisper);
-    harness.get_by_label_contains("Deletes every Whisper export and its source download (1.9 GB)");
-    harness.get_by_label_contains("stay off until you run vinowhisper-setup again");
+    harness.get_by_label_contains("Deletes all Whisper exports and the source download (1.9 GB)");
+    harness.get_by_label_contains("will stop until you run vinowhisper-setup again");
     harness.get_by_role_and_label(Role::Button, "Delete Whisper");
     harness
         .get_by_role_and_label(Role::Button, "Cancel")
@@ -534,7 +534,7 @@ fn deleting_whisper_under_canary_says_canary_keeps_running() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(true, 0)));
     }
     harness.run();
-    harness.get_by_label_contains("Canary keeps running");
+    harness.get_by_label_contains("Canary will continue running");
     assert!(
         harness.query_by_label("Source download").is_none(),
         "no source on disk, no row"
@@ -550,8 +550,8 @@ fn the_source_download_has_its_own_safe_delete() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(true, 967_000_000)));
     }
     harness.run();
-    harness.get_by_label_contains("Captions and dictation keep working");
-    harness.get_by_role_and_label(Role::Button, "Delete the download");
+    harness.get_by_label_contains("Captions and dictation will continue working");
+    harness.get_by_role_and_label(Role::Button, "Delete source");
     assert!(!harness.state().window.confirm_delete_whisper);
 }
 
@@ -567,7 +567,7 @@ fn a_deleted_whisper_is_not_installed_and_says_how_to_get_it_back() {
         .status = Some(Ok(whisper_status(false, 0)));
     harness.run();
     harness.get_by_label("Not exported");
-    harness.get_by_label_contains("Run vinowhisper-setup to export it again");
+    harness.get_by_label_contains("Run vinowhisper-setup to export it");
     let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
     assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
     harness
@@ -640,7 +640,7 @@ fn a_whisper_status_that_could_not_be_read_is_shown() {
         .status = Some(Err("could not run vinowhisper-whisper: not found".into()));
     harness.run();
     harness.get_by_label_contains(
-        "Could not check what is on disk: could not run vinowhisper-whisper: not found",
+        "Could not check installed models: could not run vinowhisper-whisper: not found",
     );
 }
 
@@ -656,10 +656,10 @@ fn deleting_canary_with_no_whisper_export_says_everything_stays_off() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(false, 0)));
     }
     harness.run();
-    harness.get_by_label_contains("stay off until vinowhisper-setup exports a model");
+    harness.get_by_label_contains("will remain disabled until you run vinowhisper-setup");
     assert!(
         harness
-            .query_by_label_contains("Whisper takes over")
+            .query_by_label_contains("Whisper will be used instead")
             .is_none()
     );
     let window = &mut harness.state_mut().window;
@@ -778,12 +778,12 @@ fn translation_says_why_it_is_off_for_english() {
     harness.run();
     let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
     assert!(switch.accesskit_node().is_disabled());
-    harness.get_by_label_contains("set Language to the one being spoken");
+    harness.get_by_label_contains("select that language or Detect automatically");
     harness.state_mut().window.speech.language = Language::Fr;
     harness.run();
     let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
     assert!(!switch.accesskit_node().is_disabled());
-    harness.get_by_label("Captions arrive in English whatever was spoken.");
+    harness.get_by_label("Translates spoken audio into English captions.");
 }
 
 #[test]
@@ -808,7 +808,9 @@ fn the_cleanup_page_names_its_fields_and_asks_for_no_key() {
             .is_none()
     );
     harness.get_by_label("Not downloaded (1.7 GB)");
-    harness.get_by_label("Download the model below first; until then the raw text is typed.");
+    harness.get_by_label(
+        "Download the model below first. Until then, raw transcripts are typed without cleanup.",
+    );
     let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
     assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
     harness.get_by_role_and_label(Role::Button, "Download");
@@ -835,7 +837,7 @@ fn a_downloaded_model_offers_verify_and_a_confirmed_delete() {
         .click();
     harness.run();
     assert!(harness.state().window.confirm_delete);
-    harness.get_by_role_and_label(Role::Button, "Delete the model");
+    harness.get_by_role_and_label(Role::Button, "Delete model");
     harness
         .get_by_role_and_label(Role::Button, "Cancel")
         .click();
@@ -954,10 +956,13 @@ fn the_sessions_page_keeps_the_setting_and_opens_the_sessions_window() {
     *harness.state_mut().window.model_ready.lock().unwrap() = Some(false);
     harness.run();
     harness.get_by_role_and_label(Role::Switch, "Summarise saved sessions automatically");
-    harness.get_by_label("The model isn't downloaded yet; get it on the Cleanup page.");
+    harness
+        .get_by_label("The summary model is not downloaded yet. Download it on the Cleanup page.");
     harness.get_by_role_and_label(Role::Button, "Go to Cleanup");
     harness.get_by_role_and_label(Role::Button, "Open saved sessions");
-    harness.get_by_label("Saving transcripts is off (Captions page), so new sessions aren't kept.");
+    harness.get_by_label(
+        "Transcript saving is disabled in Captions settings, so new sessions are not saved.",
+    );
 }
 
 #[test]

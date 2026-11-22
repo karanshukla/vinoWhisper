@@ -9,9 +9,9 @@
   <url type="homepage">https://github.com/karanshukla/vinoWhisper</url>
   <description>
     <p>
-      Captions anything playing, in a box that floats above other windows, and types
-      what you dictate into the focused one. The speech models run on an Intel NPU
-      through OpenVINO, or on the GPU or CPU, and no audio leaves the machine.
+      Display live captions for system audio or your microphone in a floating overlay
+      above other windows, and dictate text into the focused window. Speech recognition
+      runs locally on an Intel NPU via OpenVINO, with GPU and CPU fallback.
     </p>
   </description>
   <content_rating type="oars-1.1"/>

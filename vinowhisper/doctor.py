@@ -51,7 +51,7 @@ def _distro() -> Result:
         return Result(
             WARN,
             "distro",
-            f"{info.name} — unrecognised, so package names below are generic advice",
+            f"{info.name} (unrecognized; package suggestions below are generic)",
         )
     return Result(OK, "distro", str(info))
 
@@ -60,7 +60,7 @@ def _openvino() -> list[Result]:
     try:
         import openvino
     except ImportError as exc:
-        return [Result(FAIL, "openvino", f"{exc} — run `uv sync`")]
+        return [Result(FAIL, "openvino", f"{exc} (run `uv sync`)")]
 
     results = [Result(OK, "openvino", openvino.VERSION)]
     try:
@@ -136,7 +136,7 @@ def _selected_device(inventory: list[devices.Device]) -> Result:
         OK if not selection.degraded else WARN,
         "selected device",
         f"{selection.device.name}"
-        + ("" if not selection.degraded else " — NOT the NPU, captions will lag further"),
+        + ("" if not selection.degraded else " (NOT the NPU; captions will have higher lag)"),
     )
 
 
@@ -216,7 +216,13 @@ def _vocabulary() -> list[Result]:
     status = WARN if problem else OK
     if reason is not None:
         return [Result(status, label, f"{summary}, spelling correction only: {reason}")]
-    return [Result(status, label, f"{summary}, given to dictation on {kind} and used to correct")]
+    return [
+        Result(
+            status,
+            label,
+            f"{summary}, used for dictation prompting and spelling correction on {kind}",
+        )
+    ]
 
 
 def _models() -> list[Result]:
@@ -261,7 +267,7 @@ def _speech_model() -> list[Result]:
             Result(
                 FAIL,
                 label,
-                f"{summary} is selected, but {directory} has no {', '.join(missing)} — run "
+                f"{summary} is selected, but {directory} is missing {', '.join(missing)}; run "
                 f"{config.export_command(variant, model=model)}, or pick Whisper in Settings",
             )
         ]
@@ -281,7 +287,7 @@ def _model(
                 label,
                 f"not exported at {directory}"
                 + (
-                    f" — run {config.export_command(variant, multilingual)}"
+                    f"; run {config.export_command(variant, multilingual)}"
                     if required
                     else " (only needed if you run on this device class)"
                 ),
@@ -295,7 +301,7 @@ def _model(
             Result(
                 FAIL if required else WARN,
                 label,
-                f"{directory} is the wrong export for {kind} — "
+                f"{directory} is the wrong export for {kind}; "
                 f"re-run {config.export_command(variant, multilingual)}",
             )
         ]
@@ -357,8 +363,8 @@ def health_results(payload: dict, address: object) -> list[Result]:
             Result(
                 WARN,
                 "server version",
-                f"server is {payload['version']}, client is {VERSION} — "
-                "vinowhisper-server --stop (the next use starts the new one)",
+                f"server is {payload['version']}, client is {VERSION}; run "
+                "vinowhisper-server --stop (the next request starts the new version)",
             )
         )
     for warning in payload.get("warnings", []):
@@ -394,7 +400,7 @@ def _audio_tools() -> list[Result]:
                 Result(
                     UNKNOWN if tool == "pw-dump" else WARN,
                     f"tool: {tool}",
-                    "not installed — some checks below degrade to 'unknown'",
+                    "not installed (some checks below will report 'unknown')",
                 )
             )
     return results
@@ -535,7 +541,7 @@ def _flatpak() -> list[Result]:
         return []
     branch = sandbox.info_value("Instance", "branch") or "?"
     kind = "a release" if branch == sandbox.RELEASE_BRANCH else "built from a checkout"
-    return [Result(OK, "flatpak", f"{app}, branch {branch} ({kind}); the host is below")]
+    return [Result(OK, "flatpak", f"{app}, branch {branch} ({kind}); host details below")]
 
 
 def collect(probe: bool = True) -> list[Result]:

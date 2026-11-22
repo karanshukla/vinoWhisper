@@ -11,8 +11,8 @@ impl SettingsWindow {
         widgets::banner(
             ui,
             Tone::Warn,
-            "New and tuned on one microphone. It may miss a quiet word, or leave text as you \
-             said it when the model's answer does not check out.",
+            "Beta feature tuned on a single microphone. It may miss quiet words or fall back to \
+             the raw transcript if the cleaned output fails validation.",
             |_| {},
         );
         widgets::columns(ui, |ui, column| match column {
@@ -27,13 +27,14 @@ impl SettingsWindow {
             let missing = self.cleanup.enabled && known.is_some_and(|s| !s.present);
             let (help, tone) = if missing {
                 (
-                    "Download the model below first; until then the raw text is typed.",
+                    "Download the model below first. Until then, raw transcripts are typed without \
+                     cleanup.",
                     Tone::Warn,
                 )
             } else {
                 (
-                    "Drops ums and acts on “scratch that”, on this machine. It only ever \
-                     deletes words.",
+                    "Locally removes filler words and applies spoken edits like “scratch that”. \
+                     Only deletes words; never inserts or rewords text.",
                     Tone::Neutral,
                 )
             };
@@ -48,7 +49,10 @@ impl SettingsWindow {
             let off = !self.cleanup.enabled;
             ui.add_enabled_ui(!off, |ui| {
                 Row::new("Run")
-                    .help("About two seconds each. Smart skips text with nothing to fix.")
+                    .help(
+                        "Takes about 2 seconds per dictation. Smart skips transcripts with no \
+                         fillers or spoken edits.",
+                    )
                     .show(ui, |ui, named| {
                         self.cleanup_dirty |= combo(
                             ui,
@@ -60,7 +64,10 @@ impl SettingsWindow {
                         );
                     });
                 Row::new("Time limit")
-                    .help("Then the raw text is typed. The first run also loads the model.")
+                    .help(
+                        "Falls back to the raw transcript if exceeded. The first run also includes \
+                         model loading time.",
+                    )
                     .show(ui, |ui, named| {
                         widgets::small(ui, "s");
                         let slider = ui.add(

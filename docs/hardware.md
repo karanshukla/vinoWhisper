@@ -49,11 +49,11 @@ The NPU and CPU/GPU exports are not interchangeable:
 ./scripts/convert_model.sh --model openai/whisper-small   # multilingual, ...whisper-small-ov
 ```
 
-During export, `optimum` writes a full-size intermediate copy to `$TMPDIR`. Because `/tmp` is RAM-backed `tmpfs` on Fedora (exporting SmolLM3-3B placed 6.15 GB there on 2026-10-27 and triggered an OOM kill), `convert_model.sh` and `vinowhisper-setup` set `TMPDIR` to `~/.cache/vinowhisper/export-tmp/` on disk and clean it up afterward. Where `systemd-run` is available, exports also run inside a user scope capped at 90% of available memory with no swap so an oversized export fails cleanly instead of triggering a system OOM kill.
+During export, `optimum` writes a full-size intermediate copy to `$TMPDIR`. Because `/tmp` is RAM-backed `tmpfs` on Fedora (exporting SmolLM3-3B placed 6.15 GB there on 2026-10-27 and triggered an OOM kill), `convert_model.sh` and `vinowhisper-setup` set `TMPDIR` to `~/.cache/vinowhisper/export-tmp/` on disk and clean it up afterward. Where `systemd-run` is available, exports also run inside a user scope capped at 90% of available memory with no swap so an oversized export exits with an error instead of triggering a system OOM kill.
 
 **Why `whisper-small.en` is the default:** Benchmarked on the NPU against `base.en` and `tiny.en` on the same clip (2026-08-03), `base.en` was 2.6x faster and `tiny.en` 3.8x faster, but both produced misheard/garbled words and `tiny.en` looped at the end. `small.en` had no errors on the clip.
 
-Multilingual `whisper-small` (`vinowhisper-server --language fr|de|es|auto`, `--task translate`) lives in separate directories alongside the English export. As of 2026-10-06 it has been tested only on CPU, not on the NPU static pipeline.
+Multilingual `whisper-small` (`vinowhisper-server --language fr|de|es|auto`, `--task translate`) is stored in separate directories alongside the English export. As of 2026-10-06 it has been tested only on CPU, not on the NPU static pipeline.
 
 ## When the GPU doesn't show up
 

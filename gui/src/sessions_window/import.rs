@@ -68,7 +68,7 @@ impl SessionsWindow {
         if let Some(import) = &state.import {
             ui.add_space(12.0);
             if import.name.is_empty() {
-                a11y::live(&widgets::small(ui, "Waiting for the file dialog."));
+                a11y::live(&widgets::small(ui, "Waiting for file dialog…"));
                 return;
             }
             let text = if import.cancelled {
@@ -82,7 +82,7 @@ impl SessionsWindow {
                         sessions::stamp(total as u64)
                     ),
                     None => format!(
-                        "Transcribing {}: {} so far.",
+                        "Transcribing {}: {} elapsed.",
                         import.name,
                         sessions::stamp(import.position_s as u64)
                     ),
@@ -111,7 +111,8 @@ impl SessionsWindow {
             Ok(path) => widgets::banner(
                 ui,
                 Tone::Info,
-                "Imported. It's in the list, and is summarised like any session.",
+                "Import complete. The session has been added to the list and queued for \
+                 summarisation.",
                 |ui| {
                     let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
                     let read = ui.add(Button::secondary("Transcript").small());
@@ -128,7 +129,7 @@ impl SessionsWindow {
                     dismissed
                 },
             ),
-            Err(why) => widgets::notice(ui, Tone::Error, &format!("Import didn't work: {why}")),
+            Err(why) => widgets::notice(ui, Tone::Error, &format!("Import failed: {why}")),
         };
         let mut warned = false;
         for warning in &state.import_warnings {

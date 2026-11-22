@@ -8,7 +8,7 @@ Quick install commands are in the [README](../README.md). This page covers what 
 curl -fsSL https://github.com/karanshukla/vinoWhisper/releases/latest/download/install.sh | bash
 ```
 
-The script verifies the latest release wheel against `SHA256SUMS`, installs it with [uv](https://docs.astral.sh/uv/) (downloading a hash-pinned `uv` release if missing), and runs `vinowhisper-setup`. The setup wizard handles machine-specific steps—audio capture tools, Intel NPU/GPU drivers, and the model export matching your device—printing each command and asking for confirmation before running it.
+The script verifies the latest release wheel against `SHA256SUMS`, installs it with [uv](https://docs.astral.sh/uv/) (downloading a hash-pinned `uv` release if missing), and runs `vinowhisper-setup`. The setup wizard handles machine-specific steps (audio capture tools, Intel NPU/GPU drivers, and the model export matching your device), printing each command and asking for confirmation before running it.
 
 To add the optional desktop overlay and dictation, run `vinowhisper-setup --gui` (see [The desktop overlay (optional)](#the-desktop-overlay-optional)).
 
@@ -27,10 +27,10 @@ This bootstrap script:
 - Installs a hash-pinned `uv` tarball if `uv` is not present.
 - Clones the latest `vX.Y.Z` release tag discovered via `git ls-remote` (pass `--ref main` for unreleased code or `--ref v0.6.1` for a specific tag; re-running moves an existing checkout back to the requested detached ref).
 - Installs locked dependencies via `uv sync --locked` against `uv.lock`.
-- Hands off to `vinowhisper-setup` (`--yes` accepts all prompts, `--dry-run` prints the plan without changes, and piped `stdin` without `--yes` refuses rather than executing `sudo` commands unattended). Completed steps are skipped.
+- Hands off to `vinowhisper-setup` (`--yes` accepts all prompts, `--dry-run` prints the plan without changes, and piped `stdin` without `--yes` exits rather than executing `sudo` commands unattended). Completed steps are skipped.
 - Symlinks CLI commands into `~/.local/bin` (so they track `git pull`) and installs per-command `bash-completion` symlinks.
 
-The entire script runs inside a single `main` function invoked on the final line so truncated downloads exit cleanly without partial execution.
+The entire script runs inside a single `main` function invoked on the final line so truncated downloads exit safely without partial execution.
 
 To clone and run setup manually:
 
@@ -49,9 +49,9 @@ pip install vinowhisper
 
 (Supported since OpenVINO 2026.3.1 landed on PyPI on 2026-08-31; earlier releases required OpenVINO nightly wheels.)
 
-`pip` installs the CLI commands and Python runtime dependencies, but does not configure NPU drivers or export the model—run `vinowhisper-setup` afterward. Also re-run `vinowhisper-setup` if upgrading from 0.6.x or earlier (server moved from `127.0.0.1:8099` to a Unix socket in `$XDG_RUNTIME_DIR`) or from 1.7 or earlier (removes legacy systemd user units; `vinowhisper-upgrade` handles this automatically).
+`pip` installs the CLI commands and Python runtime dependencies, but does not configure NPU drivers or export the model; run `vinowhisper-setup` afterward. Also re-run `vinowhisper-setup` if upgrading from 0.6.x or earlier (server moved from `127.0.0.1:8099` to a Unix socket in `$XDG_RUNTIME_DIR`) or from 1.7 or earlier (removes legacy systemd user units; `vinowhisper-upgrade` handles this automatically).
 
-Model export dependencies (`optimum`, `transformers`, and CPU `torch`) live in the `export` extra. `vinowhisper-setup` offers to install it during the model step, or you can install it up front using PyTorch's CPU wheel index (avoiding multi-GB CUDA wheels):
+Model export dependencies (`optimum`, `transformers`, and CPU `torch`) are in the `export` extra. `vinowhisper-setup` offers to install it during the model step, or you can install it up front using PyTorch's CPU wheel index (avoiding multi-GB CUDA wheels):
 
 ```bash
 pip install --extra-index-url https://download.pytorch.org/whl/cpu 'vinowhisper[export]'
@@ -95,7 +95,7 @@ Immutable distributions (Silverblue, Kinoite, Bazzite, Aurora, Bluefin, Aeon) ke
 Two additional differences on immutable systems:
 
 - **NPU compiler:** `ovfetch npu install` places it in `~/.local/lib/ovfetch-npu` without layering (see [hardware.md](hardware.md#when-the-userspace-half-is-missing)). Manual installation targets `/usr/local/lib64` (`/var/usrlocal`) with an `/etc/ld.so.conf.d` entry (extract the `.deb` inside a toolbox if `dpkg-deb` is absent on the host).
-- **`render` group membership:** System groups live in `/usr/lib/group` while `usermod` edits `/etc/group`, so copy the `render` entry first:
+- **`render` group membership:** System groups are defined in `/usr/lib/group` while `usermod` edits `/etc/group`, so copy the `render` entry first:
 
   ```bash
   grep -E '^render:' /usr/lib/group | sudo tee -a /etc/group
@@ -178,7 +178,7 @@ Global shortcuts, autostart, file dialogs, and dictation typing/clipboard use XD
 
 Key differences from a native install:
 
-- **Separate data directory:** Config, models, and sessions live under `~/.var/app/io.github.karanshukla.vinowhisper` (`config/vinowhisper`, `data/vinowhisper/models`, `data/vinowhisper/transcripts`). Migrate from a native install (with neither running) by copying those directories—exports are identical and `vinoSearch` (after v11) discovers sessions in both locations:
+- **Separate data directory:** Config, models, and sessions are stored under `~/.var/app/io.github.karanshukla.vinowhisper` (`config/vinowhisper`, `data/vinowhisper/models`, `data/vinowhisper/transcripts`). Migrate from a native install (with neither running) by copying those directories; exports are identical and `vinoSearch` (after v11) discovers sessions in both locations:
 
   ```bash
   app=~/.var/app/io.github.karanshukla.vinowhisper
@@ -188,7 +188,7 @@ Key differences from a native install:
   ```
 
 - **Do not install alongside a native install:** Both use app ID `io.github.karanshukla.vinowhisper` so portal shortcuts carry over; a native `.desktop` file in `~/.local/share/applications` shadows the Flatpak's launcher. Remove the native install first (`vinowhisper-upgrade --uninstall`).
-- **Per-command sandboxes:** Tray and server sockets live in the shared `$XDG_RUNTIME_DIR/app/io.github.karanshukla.vinowhisper`. The server spawns in its own sandbox via `flatpak-spawn` so closing the caller does not kill it. Server logs go to `~/.var/app/io.github.karanshukla.vinowhisper/.local/state/vinowhisper/server.log`.
+- **Per-command sandboxes:** Tray and server sockets are placed in the shared `$XDG_RUNTIME_DIR/app/io.github.karanshukla.vinowhisper`. The server spawns in its own sandbox via `flatpak-spawn` so closing the caller does not kill it. Server logs go to `~/.var/app/io.github.karanshukla.vinowhisper/.local/state/vinowhisper/server.log`.
 - **Desktop exports & host detection:** Launcher, icons, and `.vwsession` MIME registration are exported by Flatpak (`vinowhisper-tray --install` is a no-op). `playing.py` uses host `busctl` via `flatpak-spawn --host`. `vinowhisper-setup` reads `/run/host/os-release` for host kernel/group instructions. On Sway/Hyprland, bind `flatpak run io.github.karanshukla.vinowhisper toggle` and `dictate-press`/`dictate-release` ([tray.md](tray.md)).
 
 ### Flatpak overhead and test status
@@ -247,7 +247,7 @@ Exports are bit-reproducible on a fixed toolchain (measured 2026-09-04: two runs
 
 ## `transformers` 5.4.0 breaks the NPU export
 
-**Bisected on hardware 2026-09-04:** NPU exports require `transformers<5.4`. Exports created with 5.4.0+ compile cleanly on the NPU but fail at `generate()`:
+**Bisected on hardware 2026-09-04:** NPU exports require `transformers<5.4`. Exports created with 5.4.0+ compile on the NPU without error but fail at `generate()`:
 
 ```
 RuntimeError: Port for tensor name cache_position was not found.
@@ -266,13 +266,13 @@ Bisect with `optimum-intel` 2.1.0, `optimum` 2.3.0, `openvino` 2026.3.1, `openvi
 
 Control runs confirmed `optimum-intel` 2.1.0 + `transformers` 5.0.0 works, and the 2026-08-03 package set works under OpenVINO 2026.3.1. In 5.3.0 exports, `cache_position` appears once as an internal tensor name on `__module.model.model.decoder/aten::arange/Range`; 5.4.0 stopped emitting that name, breaking the NPU static pipeline's internal lookup (input/output signatures are otherwise identical). The stateful (CPU/GPU) export is unaffected (verified under 5.5.4 on 2026-09-12).
 
-Since 2026-09-12, export dependencies live in `vinowhisper[export]` (holding `transformers<5.4` and installed with CPU torch via `--torch-backend cpu` under `uv` or PyTorch's CPU index under `pip`). `model_digests.json` also marks `transformers>=5.4.0` as `known_bad`.
+Since 2026-09-12, export dependencies are in `vinowhisper[export]` (holding `transformers<5.4` and installed with CPU torch via `--torch-backend cpu` under `uv` or PyTorch's CPU index under `pip`). `model_digests.json` also marks `transformers>=5.4.0` as `known_bad`.
 
-As of 2026-09-20, raising the cap is not possible because all `optimum-intel` releases (including 2.2.0) require `transformers<5.6,>=4.51`—forcing a higher `transformers` backtracks `optimum` to a broken pre-5.x release. Consequently, `GHSA-fgcw-684q-jj6r` (fixed in 5.5.0) and `GHSA-xrqw-3rrv-vx5w` (fixed in 5.10.0) remain open in the export extra; `transformers` is never imported at runtime and only reads pinned files for the default model (see [SECURITY.md](../SECURITY.md)).
+As of 2026-09-20, raising the cap is not possible because all `optimum-intel` releases (including 2.2.0) require `transformers<5.6,>=4.51`; forcing a higher `transformers` backtracks `optimum` to a broken pre-5.x release. Consequently, `GHSA-fgcw-684q-jj6r` (fixed in 5.5.0) and `GHSA-xrqw-3rrv-vx5w` (fixed in 5.10.0) remain open in the export extra; `transformers` is never imported at runtime and only reads pinned files for the default model (see [SECURITY.md](../SECURITY.md)).
 
 ## The desktop overlay (optional)
 
-`vinowhisper-setup --gui` installs `vinowhisper-tray` (floating captions, dictation, tray icon, global shortcuts) and `vinowhisper-gui` (settings and sessions window). It downloads the release binaries from GitHub and verifies their SHA-256 digests pinned in the Python package—no Rust toolchain is required. From a source checkout, `./scripts/install.sh --gui` builds them with Cargo instead. See [tray.md](tray.md).
+`vinowhisper-setup --gui` installs `vinowhisper-tray` (floating captions, dictation, tray icon, global shortcuts) and `vinowhisper-gui` (settings and sessions window). It downloads the release binaries from GitHub and verifies their SHA-256 digests pinned in the Python package, so no Rust toolchain is required. From a source checkout, `./scripts/install.sh --gui` builds them with Cargo instead. See [tray.md](tray.md).
 
 ## NPU platform data (optional)
 
