@@ -39,7 +39,7 @@ impl Drop for Overlay {
 impl App {
     pub(super) fn create_overlay(&mut self) {
         self.overlay = Some(self.create_layer("vinowhisper", |layer, app| {
-            place(layer, &app.settings);
+            place(layer, &app.settings, app.captions.stacked());
         }));
     }
 
@@ -89,7 +89,7 @@ impl App {
 
     pub(super) fn place(&mut self) {
         if let Some(overlay) = &self.overlay {
-            place(&overlay.layer, &self.settings);
+            place(&overlay.layer, &self.settings, self.captions.stacked());
             overlay.layer.commit();
         }
         self.place_pill();
@@ -97,7 +97,12 @@ impl App {
 
     pub(super) fn place_pill(&mut self) {
         if let Some(pill) = &self.pill {
-            place_pill(&pill.layer, &self.settings, self.visible);
+            place_pill(
+                &pill.layer,
+                &self.settings,
+                self.visible,
+                self.captions.stacked(),
+            );
             pill.layer.commit();
         }
     }
@@ -177,9 +182,14 @@ pub(super) fn render(pool: &mut SlotPool, overlay: &Overlay, paint: impl FnOnce(
     overlay.layer.commit();
 }
 
-pub(super) fn place_pill(layer: &LayerSurface, settings: &Settings, captions_visible: bool) {
+pub(super) fn place_pill(
+    layer: &LayerSurface,
+    settings: &Settings,
+    captions_visible: bool,
+    stacked: bool,
+) {
     let captions = if captions_visible {
-        paint::logical_height(settings.size) as i32 + PILL_GAP
+        paint::logical_height(settings.size, stacked) as i32 + PILL_GAP
     } else {
         0
     };
@@ -192,13 +202,13 @@ pub(super) fn place_pill(layer: &LayerSurface, settings: &Settings, captions_vis
     layer.set_margin(top, 0, bottom, 0);
 }
 
-pub(super) fn place(layer: &LayerSurface, settings: &Settings) {
+pub(super) fn place(layer: &LayerSurface, settings: &Settings, stacked: bool) {
     let (anchor, (top, bottom)) = match settings.position {
         Position::Bottom => (Anchor::BOTTOM, (0, EDGE_MARGIN)),
         Position::Top => (Anchor::TOP, (EDGE_MARGIN, 0)),
     };
     // Full width on purpose: click-through, and no output size is needed up front.
     layer.set_anchor(anchor | Anchor::LEFT | Anchor::RIGHT);
-    layer.set_size(0, paint::logical_height(settings.size));
+    layer.set_size(0, paint::logical_height(settings.size, stacked));
     layer.set_margin(top, SIDE_MARGIN, bottom, SIDE_MARGIN);
 }

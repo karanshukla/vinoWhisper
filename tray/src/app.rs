@@ -463,7 +463,11 @@ impl App {
 
     fn on_caption_event(&mut self, event: Event) {
         let before = self.captions.frame();
+        let was_stacked = self.captions.stacked();
         self.captions.apply(event);
+        if self.captions.stacked() != was_stacked {
+            self.place();
+        }
         if self.captions.silent_long_enough_to_hide() {
             trace(format_args!("silent past hide_after_silence_s, hiding"));
             self.hide();

@@ -83,7 +83,10 @@ impl LayerShellHandler for App {
         let (default_width, default_height) = if is_pill {
             (paint::PILL_WIDTH, paint::PILL_HEIGHT)
         } else {
-            (0, paint::logical_height(self.settings.size))
+            (
+                0,
+                paint::logical_height(self.settings.size, self.captions.stacked()),
+            )
         };
         let Some(overlay) = self.surface_mut(&surface) else {
             return;

@@ -51,16 +51,77 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Word(String),
-    Lane(String),
     Break,
 }
 
-#[derive(Debug)]
-pub struct Captions {
+#[derive(Debug, Default)]
+struct Flow {
     tokens: VecDeque<Token>,
     pending: Vec<String>,
     break_pending: bool,
-    lane: String,
+}
+
+impl Flow {
+    fn add_words(&mut self, words: Vec<String>) {
+        for word in words {
+            if self.break_pending && matches!(self.tokens.back(), Some(Token::Word(_))) {
+                self.tokens.push_back(Token::Break);
+            }
+            self.break_pending = false;
+            self.tokens.push_back(Token::Word(word));
+        }
+        while self.tokens.len() > KEEP_WORDS {
+            self.tokens.pop_front();
+        }
+        while matches!(self.tokens.front(), Some(Token::Break)) {
+            self.tokens.pop_front();
+        }
+    }
+
+    fn text(&self) -> String {
+        let mut text = String::new();
+        for token in &self.tokens {
+            match token {
+                Token::Word(word) => {
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        text.push(' ');
+                    }
+                    text.push_str(word);
+                }
+                Token::Break => text.push('\n'),
+            }
+        }
+        text
+    }
+
+    fn spans(&self, show_pending: bool) -> Vec<Span> {
+        let text = self.text();
+        let lead = if text.is_empty() || text.ends_with('\n') {
+            ""
+        } else {
+            " "
+        };
+        let mut spans = Vec::new();
+        if !text.is_empty() {
+            spans.push(Span::new(text, Tone::Caption));
+        }
+        if show_pending && !self.pending.is_empty() {
+            spans.push(Span::new(
+                format!("{lead}{}", self.pending.join(" ")),
+                Tone::Pending,
+            ));
+        }
+        spans
+    }
+}
+
+const LANES: [&str; 2] = ["them", "you"];
+
+#[derive(Debug)]
+pub struct Captions {
+    flow: Flow,
+    lanes: [Flow; 2],
+    stacked: bool,
     phase: Phase,
     started_at: Instant,
     device: Option<String>,
@@ -85,10 +146,9 @@ impl Default for Captions {
 impl Captions {
     pub fn new() -> Self {
         Captions {
-            tokens: VecDeque::new(),
-            pending: Vec::new(),
-            break_pending: false,
-            lane: String::new(),
+            flow: Flow::default(),
+            lanes: [Flow::default(), Flow::default()],
+            stacked: false,
             phase: Phase::Starting,
             started_at: Instant::now(),
             device: None,
@@ -138,8 +198,31 @@ impl Captions {
         self.degraded
     }
 
-    pub fn frame(&self) -> ((Tone, Vec<Span>), Vec<Span>, bool) {
-        (self.status(), self.caption_spans(), self.degraded)
+    pub fn frame(&self) -> ((Tone, Vec<Span>), Vec<Vec<Span>>, bool) {
+        (self.status(), self.blocks(), self.degraded)
+    }
+
+    // Two-lane sessions get one block per speaker, them above you, so nothing
+    // is relabelled mid-paragraph and pending words (which keep being revised
+    // while the other lane decodes) stay off
+    // (pinned by `tests::two_lanes_stack_them_above_you_with_no_pending_words`).
+    pub fn stacked(&self) -> bool {
+        self.stacked
+    }
+
+    pub fn blocks(&self) -> Vec<Vec<Span>> {
+        if !self.stacked {
+            return vec![self.caption_spans()];
+        }
+        LANES
+            .iter()
+            .zip(&self.lanes)
+            .map(|(name, flow)| {
+                let mut spans = vec![Span::new(format!("{name} "), Tone::Dim)];
+                spans.extend(flow.spans(false));
+                spans
+            })
+            .collect()
     }
 
     pub fn apply(&mut self, event: Event) {
@@ -175,23 +258,27 @@ impl Captions {
                     self.cycles.pop_front();
                 }
                 self.cycles.push_back(total_s);
-                self.pending = pending;
-                self.add_words(confirmed, &lane);
+                self.add_words(confirmed, pending, &lane);
             }
             // You being quiet on a call is not a fault in the signal
             // (pinned by `tests::your_own_silence_on_a_call_is_not_no_signal`).
             Event::Silence { lane, .. } if lane == "you" => {}
-            Event::Silence { elapsed_s, .. } => {
+            Event::Silence {
+                elapsed_s, lane, ..
+            } => {
                 self.silent_for = Some(elapsed_s);
                 if elapsed_s >= PARAGRAPH_SILENCE_S {
                     // (pinned by `tests::a_pause_breaks_the_paragraph_only_once_a_word_arrives`)
-                    self.break_pending = true;
+                    self.flow.break_pending = true;
+                    if let Some(flow) = self.lane_flow(&lane) {
+                        flow.break_pending = true;
+                    }
                 }
             }
-            Event::Flushed { lane, words } => self.add_words(words, &lane),
+            Event::Flushed { lane, words } => self.flush_words(words, &lane),
             Event::Stopped { flushed } => {
-                self.add_words(flushed, "");
-                self.pending.clear();
+                self.flow.add_words(flushed);
+                self.clear_pending();
                 self.ended();
             }
             Event::EchoStatus { reason, .. } => self.echo = Some(reason),
@@ -200,8 +287,15 @@ impl Captions {
         }
     }
 
+    fn clear_pending(&mut self) {
+        self.flow.pending.clear();
+        for flow in &mut self.lanes {
+            flow.pending.clear();
+        }
+    }
+
     pub fn fail(&mut self, message: impl Into<String>) {
-        self.pending.clear();
+        self.clear_pending();
         self.phase = Phase::Failed(message.into());
     }
 
@@ -219,59 +313,32 @@ impl Captions {
         Some(2.0 * mean)
     }
 
-    fn add_words(&mut self, words: Vec<String>, lane: &str) {
-        if !words.is_empty() && !lane.is_empty() && lane != self.lane {
-            self.lane = lane.to_owned();
-            if matches!(self.tokens.back(), Some(Token::Word(_))) {
-                self.tokens.push_back(Token::Break);
-            }
-            self.break_pending = false;
-            self.tokens.push_back(Token::Lane(format!("{lane}:")));
+    fn lane_flow(&mut self, lane: &str) -> Option<&mut Flow> {
+        let at = LANES.iter().position(|name| *name == lane)?;
+        self.lanes.get_mut(at)
+    }
+
+    fn add_words(&mut self, words: Vec<String>, pending: Vec<String>, lane: &str) {
+        let stacked = LANES.contains(&lane);
+        self.stacked |= stacked;
+        if let Some(flow) = self.lane_flow(lane) {
+            flow.pending = pending;
+            flow.add_words(words);
+        } else {
+            self.flow.pending = pending;
+            self.flow.add_words(words);
         }
-        for word in words {
-            if self.break_pending && matches!(self.tokens.back(), Some(Token::Word(_))) {
-                self.tokens.push_back(Token::Break);
-            }
-            self.break_pending = false;
-            self.tokens.push_back(Token::Word(word));
-        }
-        while self.tokens.len() > KEEP_WORDS {
-            self.tokens.pop_front();
-        }
-        while matches!(self.tokens.front(), Some(Token::Break)) {
-            self.tokens.pop_front();
+    }
+
+    fn flush_words(&mut self, words: Vec<String>, lane: &str) {
+        match self.lane_flow(lane) {
+            Some(flow) => flow.add_words(words),
+            None => self.flow.add_words(words),
         }
     }
 
     pub fn caption_spans(&self) -> Vec<Span> {
-        let mut text = String::new();
-        for token in &self.tokens {
-            match token {
-                Token::Word(word) | Token::Lane(word) => {
-                    if !text.is_empty() && !text.ends_with('\n') {
-                        text.push(' ');
-                    }
-                    text.push_str(word);
-                }
-                Token::Break => text.push('\n'),
-            }
-        }
-
-        let mut spans = Vec::new();
-        let lead = if text.is_empty() || text.ends_with('\n') {
-            ""
-        } else {
-            " "
-        };
-        if !text.is_empty() {
-            spans.push(Span::new(text, Tone::Caption));
-        }
-        if !self.pending.is_empty() {
-            spans.push(Span::new(
-                format!("{lead}{}", self.pending.join(" ")),
-                Tone::Pending,
-            ));
-        }
+        let mut spans = self.flow.spans(true);
         if spans.is_empty() {
             spans.push(self.placeholder());
         }
@@ -354,7 +421,7 @@ impl Captions {
             ));
         }
         if let Phase::Failed(message) = &self.phase
-            && !self.tokens.is_empty()
+            && (!self.flow.tokens.is_empty() || self.stacked)
         {
             spans.push(Span::new(
                 format!(" · {}", truncate(message, STATUS_CHARS)),
@@ -756,24 +823,45 @@ mod tests {
         }
     }
 
+    fn lane_text(captions: &Captions) -> Vec<String> {
+        captions
+            .blocks()
+            .into_iter()
+            .map(|block| block.iter().map(|span| span.text.as_str()).collect())
+            .collect()
+    }
+
     #[test]
-    fn each_change_of_speaker_starts_a_labelled_paragraph() {
+    fn two_lanes_stack_them_above_you_with_no_pending_words() {
         let mut captions = Captions::new();
-        captions.apply(lane_cycle("them", &["How", "are", "you?"]));
-        captions.apply(lane_cycle("them", &["Fine."]));
+        assert!(!captions.stacked());
         captions.apply(lane_cycle("you", &["Good,", "thanks."]));
+        captions.apply(Event::Cycle {
+            confirmed: vec!["How".into(), "are".into()],
+            pending: vec!["you?".into()],
+            total_s: 1.2,
+            language: String::new(),
+            lane: "them".into(),
+        });
         captions.apply(Event::Flushed {
             lane: "them".into(),
             words: vec!["Great.".into()],
         });
 
+        assert!(captions.stacked());
         assert_eq!(
-            body(&captions),
-            [(
-                "them: How are you? Fine.\nyou: Good, thanks.\nthem: Great.".to_owned(),
-                Tone::Caption
-            )]
+            lane_text(&captions),
+            ["them How are Great.", "you Good, thanks."]
         );
+    }
+
+    #[test]
+    fn one_source_stays_one_block_with_its_pending_words() {
+        let mut captions = Captions::new();
+        captions.apply(cycle(&["Hello"], &["there"]));
+
+        assert!(!captions.stacked());
+        assert_eq!(lane_text(&captions), ["Hello there"]);
     }
 
     #[test]
