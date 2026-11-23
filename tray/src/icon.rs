@@ -85,22 +85,35 @@ const MARKS: [(Shape, Tone); 6] = [
     (Shape::pill(42.0, 41.0, 10.0, 6.0), Tone::Pending),
 ];
 
-const TRAY_BOX: Shape = Shape {
-    x: 1.0,
-    y: 2.0,
-    w: 14.0,
-    h: 12.0,
-    r: 2.0,
-};
-const TRAY_LINE: f32 = 1.0;
+// The tray shows only the voice bars: with the caption box around them it read as vinoWatch's icon.
+const BARS: [Shape; 3] = [
+    Shape {
+        x: 6.0,
+        y: 20.0,
+        w: 12.0,
+        h: 24.0,
+        r: 6.0,
+    },
+    Shape {
+        x: 26.0,
+        y: 6.0,
+        w: 12.0,
+        h: 52.0,
+        r: 6.0,
+    },
+    Shape {
+        x: 46.0,
+        y: 16.0,
+        w: 12.0,
+        h: 32.0,
+        r: 6.0,
+    },
+];
 
-const TRAY_MARKS: [(Shape, Tone); 6] = [
-    (Shape::line(4.0, 5.0, 1.0, 3.0), Tone::Good),
-    (Shape::line(6.0, 4.0, 1.0, 5.0), Tone::Good),
-    (Shape::line(8.0, 5.0, 1.0, 3.0), Tone::Good),
-    (Shape::line(10.0, 6.0, 3.0, 1.0), Tone::Caption),
-    (Shape::line(4.0, 11.0, 6.0, 1.0), Tone::Caption),
-    (Shape::line(11.0, 11.0, 2.0, 1.0), Tone::Pending),
+const TRAY_BARS: [Shape; 3] = [
+    Shape::line(3.0, 5.0, 2.0, 6.0),
+    Shape::line(7.0, 2.0, 2.0, 12.0),
+    Shape::line(11.0, 4.0, 2.0, 8.0),
 ];
 
 // Darker than the overlay's green: the symbolic icon sits on light and dark panels alike
@@ -139,24 +152,11 @@ pub fn app_svg() -> String {
 }
 
 pub fn symbolic_svg() -> String {
-    let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
     let green = hex(TRAY_GREEN);
-    let (mut voice, mut words, mut pending) = (String::new(), String::new(), String::new());
-    for (shape, tone) in TRAY_MARKS {
-        match tone {
-            Tone::Good => &mut voice,
-            Tone::Pending => &mut pending,
-            _ => &mut words,
-        }
-        .push_str(&shape.svg_path());
-    }
+    let bars: String = TRAY_BARS.iter().map(|bar| bar.svg_path()).collect();
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }}</style>
-  <path class="ColorScheme-Text" style="fill:currentColor" fill-rule="evenodd" d="{outline}"/>
-  <path style="fill:{green}" d="{voice}"/>
-  <path class="ColorScheme-Text" style="fill:currentColor" d="{words}"/>
-  <path class="ColorScheme-Text" style="fill:currentColor;fill-opacity:0.5" d="{pending}"/>
+  <path style="fill:{green}" d="{bars}"/>
 </svg>
 "#
     )
@@ -182,10 +182,8 @@ fn tray_icon(size: u32) -> ksni::Icon {
 
 fn draw(canvas: &mut Canvas, size: f32) {
     let unit = size / 64.0;
-    canvas.fill_rounded(BOX.rect(unit), BOX.r * unit, box_rgba());
-    canvas.stroke_rounded(BOX.rect(unit), BOX.r * unit, EDGE_WIDTH * unit, EDGE);
-    for (shape, tone) in MARKS {
-        canvas.fill_rounded(shape.rect(unit), shape.r * unit, tone_rgba(tone));
+    for bar in BARS {
+        canvas.fill_rounded(bar.rect(unit), bar.r * unit, tone_rgba(Tone::Good));
     }
 }
 
@@ -202,16 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn the_box_is_the_overlays_colour_and_the_corners_are_clear() {
+    fn the_tray_icon_is_bars_on_a_clear_ground() {
         let icon = tray_icon(64);
         let pixel = |x: usize, y: usize| &icon.data[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
-        let Rgba(r, g, b, _) = BACKGROUND;
-        assert_eq!(
-            pixel(30, 14),
-            &[255, r, g, b],
-            "inside the box, clear of the edge and the marks"
-        );
         assert_eq!(pixel(0, 0)[0], 0, "a corner is transparent");
+        assert_eq!(pixel(32, 32)[0], 255, "the middle bar is solid");
     }
 
     fn assert_inside_and_apart(frame: Shape, edge: f32, marks: &[(Shape, Tone)]) {
@@ -238,7 +231,6 @@ mod tests {
     #[test]
     fn the_marks_sit_inside_the_box_and_apart() {
         assert_inside_and_apart(BOX, EDGE_WIDTH, &MARKS);
-        assert_inside_and_apart(TRAY_BOX, TRAY_LINE, &TRAY_MARKS);
     }
 
     #[test]
@@ -252,9 +244,8 @@ mod tests {
 
     #[test]
     fn the_tray_icon_lands_on_whole_pixels() {
-        let shapes = std::iter::once(TRAY_BOX).chain(TRAY_MARKS.iter().map(|(shape, _)| *shape));
-        for shape in shapes {
-            for edge in [shape.x, shape.y, shape.w, shape.h, TRAY_LINE] {
+        for shape in TRAY_BARS {
+            for edge in [shape.x, shape.y, shape.w, shape.h] {
                 assert_eq!(edge.fract(), 0.0, "{shape:?} is off the pixel grid");
             }
         }
