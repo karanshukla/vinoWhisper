@@ -89,25 +89,25 @@ const MARKS: [(Shape, Tone); 6] = [
 // horizontal lines, and caption lines here made the two read alike.
 const BARS: [Shape; 3] = [
     Shape {
-        x: 14.0,
+        x: 17.0,
         y: 25.0,
-        w: 8.0,
+        w: 6.0,
         h: 14.0,
-        r: 4.0,
+        r: 3.0,
     },
     Shape {
-        x: 28.0,
+        x: 29.0,
         y: 18.0,
-        w: 8.0,
+        w: 6.0,
         h: 28.0,
-        r: 4.0,
+        r: 3.0,
     },
     Shape {
-        x: 42.0,
+        x: 41.0,
         y: 23.0,
-        w: 8.0,
+        w: 6.0,
         h: 18.0,
-        r: 4.0,
+        r: 3.0,
     },
 ];
 
@@ -121,9 +121,9 @@ const TRAY_BOX: Shape = Shape {
 const TRAY_LINE: f32 = 1.0;
 
 const TRAY_BARS: [Shape; 3] = [
-    Shape::line(4.0, 6.0, 2.0, 4.0),
-    Shape::line(7.0, 4.0, 2.0, 8.0),
-    Shape::line(10.0, 5.0, 2.0, 6.0),
+    Shape::line(5.0, 6.0, 1.0, 4.0),
+    Shape::line(8.0, 4.0, 1.0, 8.0),
+    Shape::line(11.0, 5.0, 1.0, 6.0),
 ];
 
 // Darker than the overlay's green: the symbolic icon sits on light and dark panels alike
