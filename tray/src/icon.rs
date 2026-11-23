@@ -85,35 +85,45 @@ const MARKS: [(Shape, Tone); 6] = [
     (Shape::pill(42.0, 41.0, 10.0, 6.0), Tone::Pending),
 ];
 
-// The tray shows only the voice bars: with the caption box around them it read as vinoWatch's icon.
+// The box stays, as on the other vino icons, but holds only the voice bars: vinoWatch's box holds
+// horizontal lines, and caption lines here made the two read alike.
 const BARS: [Shape; 3] = [
     Shape {
-        x: 6.0,
-        y: 20.0,
-        w: 12.0,
-        h: 24.0,
-        r: 6.0,
+        x: 14.0,
+        y: 25.0,
+        w: 8.0,
+        h: 14.0,
+        r: 4.0,
     },
     Shape {
-        x: 26.0,
-        y: 6.0,
-        w: 12.0,
-        h: 52.0,
-        r: 6.0,
+        x: 28.0,
+        y: 18.0,
+        w: 8.0,
+        h: 28.0,
+        r: 4.0,
     },
     Shape {
-        x: 46.0,
-        y: 16.0,
-        w: 12.0,
-        h: 32.0,
-        r: 6.0,
+        x: 42.0,
+        y: 23.0,
+        w: 8.0,
+        h: 18.0,
+        r: 4.0,
     },
 ];
 
+const TRAY_BOX: Shape = Shape {
+    x: 1.0,
+    y: 2.0,
+    w: 14.0,
+    h: 12.0,
+    r: 2.0,
+};
+const TRAY_LINE: f32 = 1.0;
+
 const TRAY_BARS: [Shape; 3] = [
-    Shape::line(3.0, 5.0, 2.0, 6.0),
-    Shape::line(7.0, 2.0, 2.0, 12.0),
-    Shape::line(11.0, 4.0, 2.0, 8.0),
+    Shape::line(4.0, 6.0, 2.0, 4.0),
+    Shape::line(7.0, 4.0, 2.0, 8.0),
+    Shape::line(10.0, 5.0, 2.0, 6.0),
 ];
 
 // Darker than the overlay's green: the symbolic icon sits on light and dark panels alike
@@ -152,10 +162,13 @@ pub fn app_svg() -> String {
 }
 
 pub fn symbolic_svg() -> String {
+    let outline = TRAY_BOX.svg_path() + &TRAY_BOX.inset(TRAY_LINE).svg_path();
     let green = hex(TRAY_GREEN);
     let bars: String = TRAY_BARS.iter().map(|bar| bar.svg_path()).collect();
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <style id="current-color-scheme" type="text/css">.ColorScheme-Text {{ color: #232629; }}</style>
+  <path class="ColorScheme-Text" style="fill:currentColor" fill-rule="evenodd" d="{outline}"/>
   <path style="fill:{green}" d="{bars}"/>
 </svg>
 "#
@@ -182,6 +195,8 @@ fn tray_icon(size: u32) -> ksni::Icon {
 
 fn draw(canvas: &mut Canvas, size: f32) {
     let unit = size / 64.0;
+    canvas.fill_rounded(BOX.rect(unit), BOX.r * unit, box_rgba());
+    canvas.stroke_rounded(BOX.rect(unit), BOX.r * unit, EDGE_WIDTH * unit, EDGE);
     for bar in BARS {
         canvas.fill_rounded(bar.rect(unit), bar.r * unit, tone_rgba(Tone::Good));
     }
@@ -200,11 +215,16 @@ mod tests {
     }
 
     #[test]
-    fn the_tray_icon_is_bars_on_a_clear_ground() {
+    fn the_box_is_the_overlays_colour_and_the_corners_are_clear() {
         let icon = tray_icon(64);
         let pixel = |x: usize, y: usize| &icon.data[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
+        let Rgba(r, g, b, _) = BACKGROUND;
+        assert_eq!(
+            pixel(8, 32),
+            &[255, r, g, b],
+            "inside the box, clear of the edge and the bars"
+        );
         assert_eq!(pixel(0, 0)[0], 0, "a corner is transparent");
-        assert_eq!(pixel(32, 32)[0], 255, "the middle bar is solid");
     }
 
     fn assert_inside_and_apart(frame: Shape, edge: f32, marks: &[(Shape, Tone)]) {
@@ -231,6 +251,10 @@ mod tests {
     #[test]
     fn the_marks_sit_inside_the_box_and_apart() {
         assert_inside_and_apart(BOX, EDGE_WIDTH, &MARKS);
+        let bars = BARS.map(|bar| (bar, Tone::Good));
+        assert_inside_and_apart(BOX, EDGE_WIDTH, &bars);
+        let tray_bars = TRAY_BARS.map(|bar| (bar, Tone::Good));
+        assert_inside_and_apart(TRAY_BOX, TRAY_LINE, &tray_bars);
     }
 
     #[test]
@@ -244,8 +268,9 @@ mod tests {
 
     #[test]
     fn the_tray_icon_lands_on_whole_pixels() {
-        for shape in TRAY_BARS {
-            for edge in [shape.x, shape.y, shape.w, shape.h] {
+        let shapes = std::iter::once(TRAY_BOX).chain(TRAY_BARS);
+        for shape in shapes {
+            for edge in [shape.x, shape.y, shape.w, shape.h, TRAY_LINE] {
                 assert_eq!(edge.fract(), 0.0, "{shape:?} is off the pixel grid");
             }
         }
