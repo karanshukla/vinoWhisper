@@ -10,6 +10,18 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-23
+
+### 🚀 Features
+
+- **Echo cancellation for the mic lane (vinoEcho).** When captions listen to the microphone while speakers play, the mic's copy of the other side no longer shows up as your words: a filter cleans the mic lane, a speech gate decides what is left, and text that repeats the "them" lane is dropped. Settings has an Echo cancellation choice (Auto, On, Off); Auto turns it off on Bluetooth, USB and headphone outputs, where there is no echo to remove, and the overlay's status line shows its state. Details in `docs/echo.md`.
+- **Two-lane captions: `--source both`.** `vinowhisper-caption --source both` captions the microphone and the system audio together as separate "you" and "them" lanes. The settings window and tray have a Both source, and the overlay labels the lanes and stacks them, "them" above "you", with no pending words shown.
+
+### 🐛 Bug Fixes
+
+- **Archive and terminal hardening.** Reading a session bundle or an ODT export is bounded, files written respect the umask, terminal escape sequences in transcripts are stripped before they print, and the Flatpak workflow is tightened.
+- **`--help` works from the wheel** without `rapidfuzz` imported up front.
+
 ## [1.8.0] - 2026-11-17
 
 ### 🚀 Features
