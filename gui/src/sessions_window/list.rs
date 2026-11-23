@@ -38,10 +38,20 @@ impl SessionsWindow {
             let count = listing.backfill;
             ui.add_space(12.0);
             let what = format!("{count} transcript{}", if count == 1 { "" } else { "s" });
-            egui::Frame::new()
-                .fill(p.field)
-                .corner_radius(12.0)
-                .inner_margin(egui::Margin::symmetric(14, 12))
+            let shown = egui::Frame::new()
+                .fill(p.surface)
+                .corner_radius(egui::CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: 6,
+                    se: 6,
+                })
+                .inner_margin(egui::Margin {
+                    left: 15,
+                    right: 12,
+                    top: 10,
+                    bottom: 10,
+                })
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -69,6 +79,11 @@ impl SessionsWindow {
                         });
                     });
                 });
+            let bar = egui::Rect::from_min_size(
+                shown.response.rect.min,
+                egui::vec2(3.0, shown.response.rect.height()),
+            );
+            ui.painter().rect_filled(bar, 0.0, p.rule_strong);
         }
 
         let n = listing.as_ref().map_or(0, |l| l.sessions.len());
@@ -88,11 +103,21 @@ impl SessionsWindow {
                 widgets::muted(ui, "No saved sessions yet.");
             }
             Some(Ok(listing)) => {
-                for entry in &listing.sessions {
-                    self.card(ui, entry, listing, state.busy);
-                    self.export_panel(ui, &entry.path);
-                    ui.add_space(8.0);
-                }
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let mut last_rect = None;
+                    for entry in &listing.sessions {
+                        last_rect = Some(self.card(ui, entry, listing, state.busy));
+                        self.export_panel(ui, &entry.path);
+                    }
+                    if let Some(rect) = last_rect {
+                        ui.painter().hline(
+                            rect.left()..=rect.right(),
+                            rect.bottom(),
+                            egui::Stroke::new(1.0_f32, p.rule),
+                        );
+                    }
+                });
             }
         }
     }
@@ -103,20 +128,18 @@ impl SessionsWindow {
         entry: &sessions::Entry,
         listing: &Listing,
         busy: bool,
-    ) {
+    ) -> egui::Rect {
         let p = theme::palette(ui.ctx());
         let path = entry.path.clone();
         let deleting = self.confirm_delete.as_ref() == Some(&path);
-        let (fill, stroke) = if deleting {
-            (p.error_tint, egui::Stroke::NONE)
+        let (fill, margin) = if deleting {
+            (p.error_tint, egui::Margin::symmetric(12, 12))
         } else {
-            (p.surface, egui::Stroke::new(1.0_f32, p.rule))
+            (Color32::TRANSPARENT, egui::Margin::symmetric(0, 12))
         };
-        egui::Frame::new()
+        let shown = egui::Frame::new()
             .fill(fill)
-            .stroke(stroke)
-            .corner_radius(12.0)
-            .inner_margin(egui::Margin::symmetric(14, 12))
+            .inner_margin(margin)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let working = listing.current.as_ref() == Some(&entry.path);
@@ -154,6 +177,7 @@ impl SessionsWindow {
                                     .truncate(),
                             );
                             a11y::heading(&shown, &name, 3);
+                            session_hover_preview(&shown, entry, &name);
                             if deleting {
                                 ui.label(
                                     RichText::new(
@@ -187,6 +211,21 @@ impl SessionsWindow {
                     });
                 });
             });
+        let rect = shown.response.rect;
+        let painter = ui.painter();
+        if deleting {
+            painter.rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())),
+                0.0,
+                p.error,
+            );
+        }
+        painter.hline(
+            rect.left()..=rect.right(),
+            rect.top(),
+            egui::Stroke::new(1.0_f32, p.rule),
+        );
+        rect
     }
 
     pub(super) fn card_actions(
@@ -308,4 +347,47 @@ impl SessionsWindow {
             a11y::live(&shown);
         }
     }
+}
+
+/// In-context hover preview for a session row: full title, capture details,
+/// bundle path, and verification state without leaving the list.
+fn session_hover_preview(response: &egui::Response, entry: &sessions::Entry, name: &str) {
+    let title = name.to_owned();
+    let mut facts = vec![entry.when()];
+    facts.extend(entry.length());
+    facts.extend(entry.source.clone());
+    facts.extend(entry.playing.clone());
+    let details = facts.join(" · ");
+    let bundle = entry.path.display().to_string();
+    let note = if let Some(err) = &entry.error {
+        Some((err.clone(), true))
+    } else if !entry.verified {
+        Some(("Modified since creation.".to_owned(), true))
+    } else if entry.summary {
+        Some(("Transcript and summary ready.".to_owned(), false))
+    } else {
+        Some(("Transcript saved; not yet summarised.".to_owned(), false))
+    };
+    response.clone().on_hover_ui(move |ui| {
+        let p = theme::palette(ui.ctx());
+        ui.set_max_width(280.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.add(
+            egui::Label::new(
+                RichText::new(&title)
+                    .size(13.5)
+                    .family(theme::semibold())
+                    .color(p.text),
+            )
+            .wrap(),
+        );
+        widgets::small(ui, &details);
+        ui.add(
+            egui::Label::new(RichText::new(&bundle).monospace().size(11.5).color(p.muted)).wrap(),
+        );
+        if let Some((text, warn)) = &note {
+            let color = if *warn { p.warn } else { p.muted };
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(color)).wrap());
+        }
+    });
 }

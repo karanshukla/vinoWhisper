@@ -39,7 +39,12 @@ pub(super) fn stamp_pill(ui: &mut egui::Ui, seconds: u64) -> egui::Response {
             );
         }
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(format!(
+            "Jump to {} in transcript",
+            sessions::stamp(seconds)
+        ))
 }
 
 // Read as "Sessions (12)".
