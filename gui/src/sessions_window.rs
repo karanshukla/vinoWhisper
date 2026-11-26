@@ -256,16 +256,11 @@ impl SessionsWindow {
                             let idle = state.import.is_none();
                             let import = if ctx.content_rect().width() < NARROW_BELOW {
                                 ui.add_enabled_ui(idle, |ui| {
-                                    widgets::icon_button(
-                                        ui,
-                                        ButtonKind::Secondary,
-                                        Icon::Plus,
-                                        name,
-                                    )
+                                    widgets::icon_button(ui, ButtonKind::Tonal, Icon::Plus, name)
                                 })
                                 .inner
                             } else {
-                                ui.add_enabled(idle, Button::secondary(name))
+                                ui.add_enabled(idle, Button::tonal(name))
                             };
                             if import.clicked() {
                                 self.import(ctx);
@@ -281,7 +276,7 @@ impl SessionsWindow {
                     .fill(p.bg)
                     // No right margin: the scroll bar belongs on the window's edge.
                     .inner_margin(egui::Margin {
-                        left: 20,
+                        left: widgets::content_inset(ctx.content_rect().width()) as i8,
                         right: 0,
                         top: 4,
                         bottom: 0,

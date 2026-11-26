@@ -57,10 +57,8 @@ impl SessionsWindow {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let button = ui.add_enabled(
-                                !state.busy,
-                                Button::secondary("Bundle and summarise"),
-                            );
+                            let button =
+                                ui.add_enabled(!state.busy, Button::tonal("Bundle and summarise"));
                             if a11y::for_what(button, &what).clicked() {
                                 self.act(ui.ctx(), "backfill", None);
                             }
@@ -315,7 +313,7 @@ impl SessionsWindow {
         });
         if entry.summary {
             if ui
-                .add_enabled(readable, Button::primary("Summary").small())
+                .add_enabled(readable, Button::tonal("Summary").small())
                 .clicked()
             {
                 self.stop_reading_unless(Some(&path));
@@ -370,7 +368,7 @@ fn session_hover_preview(response: &egui::Response, entry: &sessions::Entry, nam
     };
     response.clone().on_hover_ui(move |ui| {
         let p = theme::palette(ui.ctx());
-        ui.set_max_width(280.0);
+        ui.set_max_width(widgets::popup_width(ui.ctx(), 280.0));
         ui.spacing_mut().item_spacing.y = 4.0;
         ui.add(
             egui::Label::new(

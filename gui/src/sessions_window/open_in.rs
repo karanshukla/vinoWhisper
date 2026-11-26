@@ -49,13 +49,14 @@ impl SessionsWindow {
         part: Part,
         enabled: bool,
     ) {
+        let mut picked = None;
+        let label = format!(
+            "Open in {}",
+            sessions::open_in_label(self.open_in).to_lowercase()
+        );
         ui.add_enabled_ui(enabled, |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            let menu =
-                widgets::icon_button(ui, ButtonKind::Secondary, Icon::ChevronDown, "Open in…");
-            let mut picked = None;
-            egui::Popup::menu(&menu).show(|ui| {
-                ui.set_min_width(180.0);
+            let split = widgets::split_button(ui, Button::tonal(label), "Open in…", |ui| {
+                ui.set_min_width(widgets::popup_width(ui.ctx(), 180.0));
                 for choice in [OpenIn::WordProcessor, OpenIn::TextEditor] {
                     if ui.button(sessions::open_in_label(choice)).clicked() {
                         picked = Some(choice);
@@ -63,17 +64,13 @@ impl SessionsWindow {
                     }
                 }
             });
-            let label = format!(
-                "Open in {}",
-                sessions::open_in_label(self.open_in).to_lowercase()
-            );
-            if ui.add(Button::secondary(label)).clicked() {
+            if split.primary.clicked() {
                 picked = Some(self.open_in);
             }
-            if let Some(choice) = picked {
-                self.open_with(ui.ctx(), path.to_path_buf(), part, choice);
-            }
         });
+        if let Some(choice) = picked {
+            self.open_with(ui.ctx(), path.to_path_buf(), part, choice);
+        }
     }
 
     pub(super) fn open_notice(&self, ui: &mut egui::Ui, state: &SessionsState) {

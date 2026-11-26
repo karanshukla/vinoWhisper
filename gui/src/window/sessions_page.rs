@@ -71,7 +71,7 @@ impl SettingsWindow {
                 .help(help)
                 .tone(tone)
                 .show(ui, |ui, _| {
-                    if ui.add(Button::secondary("Open saved sessions")).clicked() {
+                    if ui.add(Button::tonal("Open saved sessions")).clicked() {
                         forward::open_sessions();
                     }
                 });
