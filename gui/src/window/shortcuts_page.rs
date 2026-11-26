@@ -40,7 +40,7 @@ impl SettingsWindow {
                     Row::new("Edit shortcuts")
                         .help("Opens your desktop's keyboard shortcut settings.")
                         .show(ui, |ui, _| {
-                            if ui.add(Button::secondary("Change…")).clicked() {
+                            if ui.add(Button::tonal("Change…")).clicked() {
                                 forward::run_tray(&["configure-shortcut"]);
                             }
                         });

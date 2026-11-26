@@ -45,7 +45,7 @@ impl SessionsWindow {
         widgets::group(ui, |ui| {
             if dialog.has_summary {
                 widgets::Row::new("Part").show(ui, |ui, _| {
-                    widgets::segmented(
+                    widgets::button_group(
                         ui,
                         "Part",
                         &mut dialog.scope,
@@ -69,7 +69,7 @@ impl SessionsWindow {
                 Format::Odt => "For LibreOffice, Word, and Google Docs.",
             };
             widgets::Row::new("Format").help(help).show(ui, |ui, _| {
-                widgets::segmented(
+                widgets::button_group(
                     ui,
                     "Format",
                     &mut dialog.format,

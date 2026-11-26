@@ -39,18 +39,11 @@ impl SessionsWindow {
                 .unwrap_or_default(),
         };
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(Button::secondary("Show in folder")).clicked() {
-                    sessions::show_in_folder(&target.path);
-                }
-                let has_summary = entry.as_ref().is_none_or(|e| e.summary);
-                if ui.add(Button::secondary("Export…")).clicked() {
-                    self.ask_export(target.path.clone(), target.part.into(), has_summary);
-                }
-                let can_open = target.part == Part::Transcript || has_summary;
-                self.open_in_button(ui, &target.path, target.part, can_open);
-                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        widgets::responsive_bar(
+            ui,
+            widgets::COMPACT_MAX,
+            |ui| {
+                ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     let shown = ui.add(
                         egui::Label::new(
@@ -77,60 +70,119 @@ impl SessionsWindow {
                         );
                     }
                 });
-            });
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 18.0;
-            a11y::tab_list(ui, "View");
-            for (part, label) in [(Part::Transcript, "Transcript"), (Part::Summary, "Summary")] {
-                let enabled = part == Part::Transcript || entry.as_ref().is_none_or(|e| e.summary);
-                if widgets::tab(ui, label, target.part == part, enabled, header).clicked()
-                    && target.part != part
-                {
-                    self.open(
-                        ui.ctx(),
-                        Target {
-                            path: target.path.clone(),
-                            part,
-                            at_s: None,
-                        },
-                    );
+            },
+            |ui| {
+                let has_summary = entry.as_ref().is_none_or(|e| e.summary);
+                let can_open = target.part == Part::Transcript || has_summary;
+                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
+                if rtl {
+                    if ui.add(Button::secondary("Show in folder")).clicked() {
+                        sessions::show_in_folder(&target.path);
+                    }
+                    if ui.add(Button::secondary("Export…")).clicked() {
+                        self.ask_export(target.path.clone(), target.part.into(), has_summary);
+                    }
+                    self.open_in_button(ui, &target.path, target.part, can_open);
+                } else {
+                    self.open_in_button(ui, &target.path, target.part, can_open);
+                    if ui.add(Button::secondary("Export…")).clicked() {
+                        self.ask_export(target.path.clone(), target.part.into(), has_summary);
+                    }
+                    if ui.add(Button::secondary("Show in folder")).clicked() {
+                        sessions::show_in_folder(&target.path);
+                    }
                 }
-            }
-            let text = match &state.viewer.text {
-                Some(Ok(text)) => Some(text.clone()),
-                _ => None,
-            };
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let label = if state.viewer.copied {
+            },
+        );
+        ui.add_space(6.0);
+        let text = match &state.viewer.text {
+            Some(Ok(text)) => Some(text.clone()),
+            _ => None,
+        };
+        let has_speaker = self.speaker.is_some();
+        let is_reading = self.reading(&target.path);
+        let mut switch_part = None;
+        let mut do_copy = false;
+        let mut do_read = false;
+        widgets::responsive_bar(
+            ui,
+            420.0,
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 18.0;
+                a11y::tab_list(ui, "View");
+                for (part, label) in [(Part::Transcript, "Transcript"), (Part::Summary, "Summary")]
+                {
+                    let enabled =
+                        part == Part::Transcript || entry.as_ref().is_none_or(|e| e.summary);
+                    if widgets::tab(ui, label, target.part == part, enabled, header).clicked()
+                        && target.part != part
+                    {
+                        switch_part = Some(part);
+                    }
+                }
+            },
+            |ui| {
+                let copy_label = if state.viewer.copied {
                     "Copied"
                 } else {
                     "Copy"
                 };
-                let copy = ui.add_enabled(text.is_some(), Button::ghost(label).small());
-                if let Some(text) = &text
-                    && copy.clicked()
-                {
-                    ui.ctx().copy_text(text.clone());
-                    self.state.lock().unwrap().viewer.copied = true;
-                }
-                if self.speaker.is_some() {
-                    let label = if self.reading(&target.path) {
-                        "Stop"
-                    } else {
-                        "Read aloud"
-                    };
-                    let button = ui.add_enabled(
-                        text.is_some() || self.reading(&target.path),
-                        Button::secondary(label).small(),
-                    );
-                    if button.clicked() {
-                        self.read_aloud(&target.path, target.part);
+                let read_label = if is_reading { "Stop" } else { "Read aloud" };
+                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
+                if rtl {
+                    if ui
+                        .add_enabled(text.is_some(), Button::ghost(copy_label).small())
+                        .clicked()
+                    {
+                        do_copy = true;
+                    }
+                    if has_speaker
+                        && ui
+                            .add_enabled(
+                                text.is_some() || is_reading,
+                                Button::tonal(read_label).small(),
+                            )
+                            .clicked()
+                    {
+                        do_read = true;
+                    }
+                } else {
+                    if has_speaker
+                        && ui
+                            .add_enabled(
+                                text.is_some() || is_reading,
+                                Button::tonal(read_label).small(),
+                            )
+                            .clicked()
+                    {
+                        do_read = true;
+                    }
+                    if ui
+                        .add_enabled(text.is_some(), Button::ghost(copy_label).small())
+                        .clicked()
+                    {
+                        do_copy = true;
                     }
                 }
-            });
-        });
+            },
+        );
+        if let Some(part) = switch_part {
+            self.open(
+                ui.ctx(),
+                Target {
+                    path: target.path.clone(),
+                    part,
+                    at_s: None,
+                },
+            );
+        }
+        if do_copy && let Some(text) = &text {
+            ui.ctx().copy_text(text.clone());
+            self.state.lock().unwrap().viewer.copied = true;
+        }
+        if do_read {
+            self.read_aloud(&target.path, target.part);
+        }
         let _ = p;
     }
 

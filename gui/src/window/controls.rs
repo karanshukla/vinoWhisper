@@ -28,7 +28,7 @@ pub(super) fn segmented<T: Copy + PartialEq>(
     label: fn(T) -> &'static str,
 ) -> bool {
     let options: Vec<(T, &str)> = all.iter().map(|&option| (option, label(option))).collect();
-    widgets::segmented(ui, name, value, &options)
+    widgets::button_group(ui, name, value, &options)
 }
 
 pub(super) fn number<N: egui::emath::Numeric>(

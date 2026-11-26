@@ -405,11 +405,12 @@ impl SettingsWindow {
                     widgets::panel_rule(ui, widgets::Edge::Left);
                 });
         } else {
+            let inset = widgets::content_inset(window) as i8;
             egui::Panel::top("header")
                 .show_separator_line(false)
                 .frame(widgets::header_frame(header, p).inner_margin(egui::Margin {
-                    left: 16,
-                    right: 16,
+                    left: inset,
+                    right: inset,
                     top: 8,
                     bottom: 0,
                 }))
@@ -467,11 +468,7 @@ impl SettingsWindow {
                     .fill(p.bg)
                     // No right margin: the scroll bar belongs on the window's edge.
                     .inner_margin(egui::Margin {
-                        left: if wide {
-                            widgets::page_inset(window) as i8
-                        } else {
-                            16
-                        },
+                        left: widgets::content_inset(window) as i8,
                         right: 0,
                         top: match (wide, bar) {
                             // Plus the bar's own padding: 15 from title to content, as below.
