@@ -153,14 +153,14 @@ pub fn query_shortcuts() -> Shortcuts {
         Ok(output) if output.status.success() => {
             parse_shortcuts(&String::from_utf8_lossy(&output.stdout))
         }
-        Ok(_) => Shortcuts::Unknown("the tray did not respond".into()),
-        Err(err) => Shortcuts::Unknown(format!("could not run vinowhisper-tray: {err}")),
+        Ok(_) => Shortcuts::Unknown("The tray didn't respond.".into()),
+        Err(err) => Shortcuts::Unknown(format!("Couldn't run vinowhisper-tray: {err}")),
     }
 }
 
 fn parse_shortcuts(answer: &str) -> Shortcuts {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(answer.trim()) else {
-        return Shortcuts::Unknown("received an unreadable response from the tray".into());
+        return Shortcuts::Unknown("Unreadable response from the tray.".into());
     };
     let text = |key: &str| value[key].as_str().unwrap_or_default().to_owned();
     match value["state"].as_str() {
@@ -172,7 +172,7 @@ fn parse_shortcuts(answer: &str) -> Shortcuts {
             dictate: text("dictate"),
             configurable: value["configurable"].as_bool().unwrap_or(false),
         },
-        _ => Shortcuts::Unknown("received an unreadable response from the tray".into()),
+        _ => Shortcuts::Unknown("Unreadable response from the tray.".into()),
     }
 }
 

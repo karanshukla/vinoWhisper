@@ -30,7 +30,7 @@ Both repositories are pinned by commit and per-file SHA-256 in `vinowhisper/cana
 - **Source download:** Used only as export input; deleting it does not affect running models and future exports re-download it if needed.
 - **Delete Whisper:** Deletes all exports (including the fp16 and INT8 step exports written by `scripts/export_whisper.py` for vocabulary prompting, since 2026-11-11) and the source download. If Whisper is active, it stops the server first (`vinowhisper-server --stop`) and leaves captions and dictation inactive until `vinowhisper-setup` exports a model again. If Canary is active, the server continues running. Step exports alone do not mark Whisper as `present` because they cannot run live captioning on their own.
 
-Settings updates the UI only after the refreshed status confirms deletion; failed deletes leave the page unchanged and display the error on a *Last attempt* row. If status cannot be read, the group shows an error instead of disappearing.
+Settings updates the UI only after the refreshed status confirms deletion; failed deletes leave the page unchanged and display the error on a *Last error* row. If status cannot be read, the group shows an error instead of disappearing.
 
 CLI equivalent (JSON lines): `vinowhisper-whisper model status|delete|delete-source`. Silero VAD (1.3 MB, used by both speech models) is kept separately and removed only on uninstall.
 

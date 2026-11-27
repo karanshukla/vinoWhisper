@@ -119,9 +119,7 @@ impl Drop for Reading {
 pub fn reason(line: &str, code: Option<i32>) -> String {
     // (pinned by `tests::an_old_vinospeak_is_asked_to_update_and_anything_else_says_its_own_words`)
     if line.contains("unrecognized arguments") && line.contains("--part") {
-        return "installed vinoSpeak does not support reading sessions yet. Update vinoSpeak to \
-                use this feature."
-            .to_owned();
+        return "Update vinoSpeak to read sessions aloud.".to_owned();
     }
     if line.is_empty() {
         return match code {
@@ -143,8 +141,7 @@ mod tests {
                 "vinospeak: error: unrecognized arguments: --part summary",
                 Some(2)
             ),
-            "installed vinoSpeak does not support reading sessions yet. Update vinoSpeak to \
-             use this feature."
+            "Update vinoSpeak to read sessions aloud."
         );
         assert_eq!(
             reason("no voice named af_heart", Some(1)),

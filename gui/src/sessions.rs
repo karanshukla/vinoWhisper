@@ -127,7 +127,7 @@ impl Entry {
             Entry { summary: true, .. } => "Summarised",
             Entry { failed: true, .. } => "Summary failed",
             Entry { declined: true, .. } => "No summary",
-            _ => "Waiting for a summary",
+            _ => "Not summarised",
         }
     }
 }
@@ -154,7 +154,7 @@ impl Listing {
         if self.current.as_ref() == Some(&entry.path) {
             "Summarising…"
         } else if self.queued.contains(&entry.path) {
-            "Queued for a summary"
+            "Queued"
         } else {
             entry.status()
         }
@@ -668,8 +668,7 @@ pub fn import_with_dialog(
         Chosen::NoPortal { reason: why } => {
             eprintln!("[vinowhisper-gui] no file dialog: {why}");
             return Err(
-                "no file dialog is available on this desktop. Run `vinowhisper-transcribe FILE` \
-                 in a terminal instead."
+                "no file dialog available. Run vinowhisper-transcribe FILE in a terminal instead."
                     .to_owned(),
             );
         }
@@ -944,14 +943,7 @@ mod tests {
         .unwrap();
         assert!(listing.working());
         let status: Vec<&str> = listing.sessions.iter().map(|e| listing.status(e)).collect();
-        assert_eq!(
-            status,
-            [
-                "Summarising…",
-                "Queued for a summary",
-                "Waiting for a summary"
-            ]
-        );
+        assert_eq!(status, ["Summarising…", "Queued", "Not summarised"]);
     }
 
     #[test]

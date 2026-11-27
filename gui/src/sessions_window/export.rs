@@ -58,14 +58,12 @@ impl SessionsWindow {
                 });
             } else {
                 widgets::Row::new("Part")
-                    .help("Transcript only (this session has no summary yet).")
+                    .help("Transcript only — no summary yet.")
                     .show(ui, |_, _| {});
             }
             let help = match dialog.format {
-                Format::Markdown => {
-                    "For note apps like Obsidian. Session metadata is included in YAML frontmatter."
-                }
-                Format::Text => "Plain text with no formatting.",
+                Format::Markdown => "For note apps like Obsidian.",
+                Format::Text => "",
                 Format::Odt => "For LibreOffice, Word, and Google Docs.",
             };
             widgets::Row::new("Format").help(help).show(ui, |ui, _| {
@@ -80,12 +78,10 @@ impl SessionsWindow {
                     ],
                 );
             });
-            widgets::Row::new("Destination")
-                .help("Choose where to save in the file dialog.")
-                .show(ui, |ui, _| {
-                    save = ui.add(Button::primary("Save…").small()).clicked();
-                    cancel = ui.add(Button::ghost("Cancel").small()).clicked();
-                });
+            widgets::Row::new("Destination").show(ui, |ui, _| {
+                save = ui.add(Button::primary("Save…").small()).clicked();
+                cancel = ui.add(Button::ghost("Cancel").small()).clicked();
+            });
         });
         if save {
             let request = ExportRequest {
@@ -114,16 +110,14 @@ impl SessionsWindow {
             Ok(exported) => {
                 let mut text = if exported.saved_without_dialog {
                     format!(
-                        "No save dialog is available on this desktop. Saved to {}.",
+                        "No save dialog available. Saved to {}.",
                         exported.path.display()
                     )
                 } else {
                     format!("Exported to {}.", exported.path.display())
                 };
                 if exported.summary_missing {
-                    text.push_str(
-                        " Exported transcript only because this session has no summary yet.",
-                    );
+                    text.push_str(" Transcript only — no summary yet.");
                 }
                 widgets::banner(ui, Tone::Info, &text, |ui| {
                     let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();

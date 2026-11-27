@@ -88,8 +88,7 @@ impl SessionsWindow {
                 let path = &opened.exported.path;
                 let text = if opened.exported.state == "edited" {
                     format!(
-                        "Opened existing file {} without overwriting it because it differs from \
-                         the current session. Use Export… to write a fresh copy.",
+                        "Opened your edited copy at {}. Use Export… for a fresh copy.",
                         path.display()
                     )
                 } else {

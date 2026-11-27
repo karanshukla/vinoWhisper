@@ -15,8 +15,7 @@ impl SessionsWindow {
             widgets::banner(
                 ui,
                 Tone::Warn,
-                "The summary model is not downloaded yet. Download it on the Cleanup page in \
-                 Settings.",
+                "Download the summary model in Settings (Cleanup).",
                 |ui| {
                     if ui.add(Button::secondary("Open settings").small()).clicked() {
                         forward::open_settings("cleanup");
@@ -29,9 +28,12 @@ impl SessionsWindow {
             widgets::banner(
                 ui,
                 Tone::Info,
-                "Transcript saving is disabled in Captions settings, so new sessions are not \
-                 saved.",
-                |_| {},
+                "Transcript saving is off. New sessions won't be saved.",
+                |ui| {
+                    if ui.add(Button::secondary("Open settings").small()).clicked() {
+                        forward::open_settings("captions");
+                    }
+                },
             );
         }
         if let Some(listing) = listing.as_ref().filter(|l| l.backfill > 0) {
@@ -70,8 +72,8 @@ impl SessionsWindow {
                                 );
                                 widgets::small(
                                     ui,
-                                    "Convert legacy plain-text transcripts into session bundles \
-                                     without modifying their text.",
+                                    "Convert older plain-text transcripts so they can be \
+                                     summarised.",
                                 );
                             });
                         });
@@ -178,12 +180,9 @@ impl SessionsWindow {
                             session_hover_preview(&shown, entry, &name);
                             if deleting {
                                 ui.label(
-                                    RichText::new(
-                                        "Delete this session, including its transcript and \
-                                         summary?",
-                                    )
-                                    .size(12.5)
-                                    .color(p.error),
+                                    RichText::new("Delete this session and its summary?")
+                                        .size(12.5)
+                                        .color(p.error),
                                 );
                             } else {
                                 widgets::small(ui, facts.join(" · "));
@@ -358,13 +357,11 @@ fn session_hover_preview(response: &egui::Response, entry: &sessions::Entry, nam
     let details = facts.join(" · ");
     let bundle = entry.path.display().to_string();
     let note = if let Some(err) = &entry.error {
-        Some((err.clone(), true))
+        Some(err.clone())
     } else if !entry.verified {
-        Some(("Modified since creation.".to_owned(), true))
-    } else if entry.summary {
-        Some(("Transcript and summary ready.".to_owned(), false))
+        Some("Modified since creation.".to_owned())
     } else {
-        Some(("Transcript saved; not yet summarised.".to_owned(), false))
+        None
     };
     response.clone().on_hover_ui(move |ui| {
         let p = theme::palette(ui.ctx());
@@ -383,9 +380,8 @@ fn session_hover_preview(response: &egui::Response, entry: &sessions::Entry, nam
         ui.add(
             egui::Label::new(RichText::new(&bundle).monospace().size(11.5).color(p.muted)).wrap(),
         );
-        if let Some((text, warn)) = &note {
-            let color = if *warn { p.warn } else { p.muted };
-            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(color)).wrap());
+        if let Some(text) = &note {
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.warn)).wrap());
         }
     });
 }

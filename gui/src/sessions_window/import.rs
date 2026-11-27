@@ -111,8 +111,7 @@ impl SessionsWindow {
             Ok(path) => widgets::banner(
                 ui,
                 Tone::Info,
-                "Import complete. The session has been added to the list and queued for \
-                 summarisation.",
+                "Imported and queued for summarisation.",
                 |ui| {
                     let dismissed = ui.add(Button::ghost("Dismiss").small()).clicked();
                     let read = ui.add(Button::secondary("Transcript").small());

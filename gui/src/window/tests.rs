@@ -155,10 +155,19 @@ fn the_captions_page_names_every_control_after_its_label() {
     for width in [WIDE, NARROW] {
         let mut harness = harness(Page::Captions, width);
         harness.run();
-        for label in ["Position", "Text size", "Listen to", "Echo cancellation"] {
+        for label in ["Position", "Text size", "Listen to"] {
             harness.get_by_role_and_label(Role::RadioGroup, label);
         }
-        for label in ["Hide after silence", "Hide icon after"] {
+        assert!(
+            harness
+                .query_by_role_and_label(Role::RadioGroup, "Echo cancellation")
+                .is_none(),
+            "hidden unless listening to Both"
+        );
+        harness.state_mut().window.settings.source = Source::Both;
+        harness.run();
+        harness.get_by_role_and_label(Role::RadioGroup, "Echo cancellation");
+        for label in ["Hide after silence", "Hide tray icon when idle"] {
             harness.get_by_role_and_label(Role::SpinButton, label);
         }
         harness.get_by_role_and_label(Role::Switch, "Save transcripts");
@@ -171,6 +180,15 @@ fn the_captions_page_names_every_control_after_its_label() {
 #[test]
 fn echo_cancellation_starts_on_auto_and_off_is_saved_for_the_next_session() {
     let mut harness = harness(Page::Captions, WIDE);
+    harness.run();
+    assert!(
+        harness
+            .query_by_role_and_label(Role::RadioGroup, "Echo cancellation")
+            .is_none()
+    );
+    harness
+        .get_by_role_and_label(Role::RadioButton, "Both")
+        .click();
     harness.run();
     let auto = harness.get_by_role_and_label(Role::RadioButton, "Auto");
     assert_eq!(auto.accesskit_node().toggled(), Some(Toggled::True));
@@ -236,6 +254,7 @@ fn a_switch_reports_and_flips_its_state() {
 #[test]
 fn the_speech_page_names_its_controls() {
     let mut harness = harness(Page::Speech, WIDE);
+    harness.state_mut().window.speech.language = Language::Fr;
     harness.run();
     harness.get_by_role_and_label(Role::ComboBox, "Speech model");
     harness.get_by_role_and_label(Role::ComboBox, "Language");
@@ -324,18 +343,14 @@ fn removing_a_term_takes_it_out_of_the_file() {
 fn canary_says_how_to_install_it_until_it_is_there() {
     let mut harness = harness(Page::Speech, WIDE);
     harness.run();
-    harness.get_by_label_contains("Whisper small (0.9 GB)");
+    harness.get_by_label_contains("5 languages, English translation");
     harness.state_mut().window.speech.model = SpeechModel::Canary;
     harness.run();
-    harness.get_by_label_contains("not downloaded yet. Click Download below");
+    harness.get_by_label_contains("Not downloaded. Download it below");
     harness.state_mut().window.canary = true;
     harness.run();
     harness.get_by_label_contains("25 European languages");
-    assert!(
-        harness
-            .query_by_label_contains("not downloaded yet")
-            .is_none()
-    );
+    assert!(harness.query_by_label_contains("Not downloaded.").is_none());
 }
 
 #[test]
@@ -397,7 +412,7 @@ fn a_model_switch_that_drops_the_language_says_so() {
     harness.get_by_label("Canary 1B v2").click();
     harness.run();
     assert_eq!(harness.state().window.speech.language, Language::En);
-    harness.get_by_label_contains("so Language was reset to English");
+    harness.get_by_label_contains("Reset language to English");
 }
 
 fn canary_status(present: bool) -> Status {
@@ -513,8 +528,8 @@ fn whisper_in_use_confirms_its_delete_in_place_and_says_what_stops() {
         .click();
     harness.run();
     assert!(harness.state().window.confirm_delete_whisper);
-    harness.get_by_label_contains("Deletes all Whisper exports and the source download (1.9 GB)");
-    harness.get_by_label_contains("will stop until you run vinowhisper-setup again");
+    harness.get_by_label_contains("Deletes Whisper exports and source (1.9 GB)");
+    harness.get_by_label_contains("will stop until you run vinowhisper-setup");
     harness.get_by_role_and_label(Role::Button, "Delete Whisper");
     harness
         .get_by_role_and_label(Role::Button, "Cancel")
@@ -534,7 +549,7 @@ fn deleting_whisper_under_canary_says_canary_keeps_running() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(true, 0)));
     }
     harness.run();
-    harness.get_by_label_contains("Canary will continue running");
+    harness.get_by_label_contains("Canary will keep running");
     assert!(
         harness.query_by_label("Source download").is_none(),
         "no source on disk, no row"
@@ -550,7 +565,7 @@ fn the_source_download_has_its_own_safe_delete() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(true, 967_000_000)));
     }
     harness.run();
-    harness.get_by_label_contains("Captions and dictation will continue working");
+    harness.get_by_label_contains("Captions and dictation will keep working");
     harness.get_by_role_and_label(Role::Button, "Delete source");
     assert!(!harness.state().window.confirm_delete_whisper);
 }
@@ -604,7 +619,8 @@ fn a_whisper_delete_that_failed_changes_nothing_on_the_page() {
     assert!(!window.whisper_delete_pending);
     assert!(window.multilingual, "the exports are still there");
     assert!(window.speech_note.is_none(), "nothing was deleted");
-    harness.get_by_label_contains("The last attempt failed: Permission denied");
+    harness.get_by_label("Last error");
+    harness.get_by_label("Permission denied");
 }
 
 #[test]
@@ -624,7 +640,7 @@ fn a_whisper_delete_takes_effect_once_the_status_says_it_is_gone() {
             .speech_note
             .as_deref()
             .unwrap()
-            .contains("Whisper was deleted")
+            .contains("Deleted Whisper")
     );
 }
 
@@ -656,10 +672,10 @@ fn deleting_canary_with_no_whisper_export_says_everything_stays_off() {
         window.whisper_model.lock().unwrap().status = Some(Ok(whisper_status(false, 0)));
     }
     harness.run();
-    harness.get_by_label_contains("will remain disabled until you run vinowhisper-setup");
+    harness.get_by_label_contains("will stop until you run vinowhisper-setup");
     assert!(
         harness
-            .query_by_label_contains("Whisper will be used instead")
+            .query_by_label_contains("switches back to Whisper")
             .is_none()
     );
     let window = &mut harness.state_mut().window;
@@ -669,7 +685,7 @@ fn deleting_canary_with_no_whisper_export_says_everything_stays_off() {
             .speech_note
             .as_deref()
             .unwrap()
-            .contains("Run vinowhisper-setup to export a model")
+            .contains("run vinowhisper-setup to export Whisper")
     );
 }
 
@@ -723,7 +739,7 @@ fn a_canary_delete_switches_to_whisper_once_the_status_says_it_is_gone() {
             .speech_note
             .as_deref()
             .unwrap()
-            .contains("Canary was deleted")
+            .contains("Deleted Canary")
     );
 }
 
@@ -769,21 +785,23 @@ fn the_cleanup_delete_says_what_goes() {
         }));
     }
     harness.run();
-    harness.get_by_label_contains("Deletes the model and its compiled cache (2.0 GB)");
+    harness.get_by_label_contains("Deletes the model and cache (2.0 GB)");
 }
 
 #[test]
-fn translation_says_why_it_is_off_for_english() {
+fn translation_only_shows_for_non_english_languages() {
     let mut harness = harness(Page::Speech, WIDE);
     harness.run();
-    let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
-    assert!(switch.accesskit_node().is_disabled());
-    harness.get_by_label_contains("select that language or Detect automatically");
+    assert!(
+        harness
+            .query_by_role_and_label(Role::Switch, "Translate to English")
+            .is_none(),
+        "hidden when language is English"
+    );
     harness.state_mut().window.speech.language = Language::Fr;
     harness.run();
     let switch = harness.get_by_role_and_label(Role::Switch, "Translate to English");
     assert!(!switch.accesskit_node().is_disabled());
-    harness.get_by_label("Translates spoken audio into English captions.");
 }
 
 #[test]
@@ -808,9 +826,7 @@ fn the_cleanup_page_names_its_fields_and_asks_for_no_key() {
             .is_none()
     );
     harness.get_by_label("Not downloaded (1.7 GB)");
-    harness.get_by_label(
-        "Download the model below first. Until then, raw transcripts are typed without cleanup.",
-    );
+    harness.get_by_label("Download the model to turn on cleanup.");
     let delete = harness.get_by_role_and_label(Role::Button, "Delete…");
     assert!(delete.accesskit_node().is_disabled(), "nothing to delete");
     harness.get_by_role_and_label(Role::Button, "Download");
@@ -868,7 +884,8 @@ fn a_failed_fetch_says_why() {
     let mut harness = harness(Page::Cleanup, WIDE);
     harness.state_mut().window.model.lock().unwrap().error = "sha256 mismatch".into();
     harness.run();
-    harness.get_by_label("The last attempt failed: sha256 mismatch");
+    harness.get_by_label("Last error");
+    harness.get_by_label("sha256 mismatch");
 }
 
 // accesskit_atspi_common before 0.21 dropped the disabled flag for buttons, so Orca called
@@ -956,12 +973,20 @@ fn the_sessions_page_keeps_the_setting_and_opens_the_sessions_window() {
     *harness.state_mut().window.model_ready.lock().unwrap() = Some(false);
     harness.run();
     harness.get_by_role_and_label(Role::Switch, "Summarise saved sessions automatically");
-    harness
-        .get_by_label("The summary model is not downloaded yet. Download it on the Cleanup page.");
+    harness.get_by_label("Needs the model from Cleanup.");
     harness.get_by_role_and_label(Role::Button, "Go to Cleanup");
     harness.get_by_role_and_label(Role::Button, "Open saved sessions");
-    harness.get_by_label(
-        "Transcript saving is disabled in Captions settings, so new sessions are not saved.",
+    harness.get_by_label("Transcript saving is off in Captions.");
+    harness
+        .get_by_role_and_label(Role::Button, "Turn on")
+        .click();
+    harness.run();
+    assert!(harness.state().window.settings.save_transcripts);
+    assert!(harness.state().saved.settings);
+    assert!(
+        harness
+            .query_by_role_and_label(Role::Button, "Turn on")
+            .is_none()
     );
 }
 
