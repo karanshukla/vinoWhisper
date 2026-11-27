@@ -49,25 +49,22 @@ impl SettingsWindow {
     fn saved_sessions(&mut self, ui: &mut egui::Ui) {
         widgets::group_label(ui, "Saved sessions");
         widgets::group(ui, |ui| {
-            let (help, tone) = if self.settings.save_transcripts {
-                ("", Tone::Neutral)
-            } else {
-                ("Transcript saving is off in Captions.", Tone::Warn)
-            };
-            Row::new("Sessions window")
-                .help(help)
-                .tone(tone)
-                .show(ui, |ui, _| {
-                    if ui.add(Button::tonal("Open saved sessions")).clicked() {
-                        forward::open_sessions();
-                    }
-                    if !self.settings.save_transcripts
-                        && ui.add(Button::secondary("Turn on").small()).clicked()
-                    {
-                        self.settings.save_transcripts = true;
-                        self.settings_dirty = true;
-                    }
-                });
+            Row::new("Sessions window").show(ui, |ui, _| {
+                if ui.add(Button::tonal("Open saved sessions")).clicked() {
+                    forward::open_sessions();
+                }
+            });
+            if !self.settings.save_transcripts {
+                Row::new("Save transcripts")
+                    .help("Transcript saving is off in Captions.")
+                    .tone(Tone::Warn)
+                    .show(ui, |ui, _| {
+                        if ui.add(Button::secondary("Turn on").small()).clicked() {
+                            self.settings.save_transcripts = true;
+                            self.settings_dirty = true;
+                        }
+                    });
+            }
             let (help, tone) = match &self.app_menu_error {
                 Some(err) => (format!("Couldn't update the app menu: {err}"), Tone::Error),
                 None => (
