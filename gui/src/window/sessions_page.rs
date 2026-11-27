@@ -23,15 +23,9 @@ impl SettingsWindow {
         widgets::group_label(ui, "Summaries");
         widgets::group(ui, |ui| {
             let (help, tone) = if model_ready == Some(false) {
-                (
-                    "The summary model is not downloaded yet. Download it on the Cleanup page.",
-                    Tone::Warn,
-                )
+                ("Needs the model from Cleanup.", Tone::Warn)
             } else {
-                (
-                    "Generates a local summary with timestamps after each saved session.",
-                    Tone::Neutral,
-                )
+                ("Summarise each saved session locally.", Tone::Neutral)
             };
             Row::new("Summarise automatically")
                 .help(help)
@@ -56,16 +50,9 @@ impl SettingsWindow {
         widgets::group_label(ui, "Saved sessions");
         widgets::group(ui, |ui| {
             let (help, tone) = if self.settings.save_transcripts {
-                (
-                    "Open the separate window to browse transcripts and summaries.",
-                    Tone::Neutral,
-                )
+                ("", Tone::Neutral)
             } else {
-                (
-                    "Transcript saving is disabled in Captions settings, so new sessions are not \
-                     saved.",
-                    Tone::Warn,
-                )
+                ("Transcript saving is off in Captions.", Tone::Warn)
             };
             Row::new("Sessions window")
                 .help(help)
@@ -74,13 +61,17 @@ impl SettingsWindow {
                     if ui.add(Button::tonal("Open saved sessions")).clicked() {
                         forward::open_sessions();
                     }
+                    if !self.settings.save_transcripts
+                        && ui.add(Button::secondary("Turn on").small()).clicked()
+                    {
+                        self.settings.save_transcripts = true;
+                        self.settings_dirty = true;
+                    }
                 });
             let (help, tone) = match &self.app_menu_error {
-                Some(err) => (format!("Could not update the app menu: {err}"), Tone::Error),
+                Some(err) => (format!("Couldn't update the app menu: {err}"), Tone::Error),
                 None => (
-                    "Adds a vinoWhisper Sessions launcher to your application menu for direct \
-                     access."
-                        .to_owned(),
+                    "Show vinoWhisper Sessions in your app menu.".to_owned(),
                     Tone::Neutral,
                 ),
             };

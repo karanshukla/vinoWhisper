@@ -80,13 +80,11 @@ pub(super) fn model_switch_note(wanted: Speech) -> String {
     let from = language_label(wanted.language);
     match (wanted.model, wanted.language) {
         (SpeechModel::Canary, Language::Auto) => {
-            "Canary only supports automatic language detection when translating, so Language was \
-             reset to English. Enable Translate to English after selecting Detect automatically \
-             to keep translating."
+            "Reset language to English. With Canary, auto-detect always translates to English."
                 .to_owned()
         }
         (model, _) => format!(
-            "{} does not support {from}, so Language was reset to English.",
+            "{} doesn't support {from}, so language was reset to English.",
             model_label(model)
         ),
     }
@@ -94,21 +92,9 @@ pub(super) fn model_switch_note(wanted: Speech) -> String {
 
 pub(super) fn model_help(model: SpeechModel, installed: bool) -> &'static str {
     match (model, installed) {
-        (SpeechModel::Whisper, false) => {
-            "Whisper small is not installed. Run vinowhisper-setup to export it (0.9 GB, takes a \
-             few minutes)."
-        }
-        (SpeechModel::Whisper, true) => {
-            "OpenAI Whisper small (0.9 GB). Supports 5 languages and translates into English. \
-             Default model and most accurate for English captions."
-        }
-        (SpeechModel::Canary, true) => {
-            "NVIDIA Canary 1B v2 (0.9 GB). Supports 25 European languages and translates into \
-             English, with or without specifying the source language. Switching reloads the model."
-        }
-        (SpeechModel::Canary, false) => {
-            "Canary 1B v2 is not downloaded yet. Click Download below to install it (0.97 GB for \
-             NPU, 1.9 GB for CPU/GPU)."
-        }
+        (SpeechModel::Whisper, false) => "Not installed. Run vinowhisper-setup to export it.",
+        (SpeechModel::Whisper, true) => "5 languages, English translation. Best for English.",
+        (SpeechModel::Canary, true) => "25 European languages, translates to English.",
+        (SpeechModel::Canary, false) => "Not downloaded. Download it below to use Canary.",
     }
 }

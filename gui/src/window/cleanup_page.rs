@@ -11,8 +11,7 @@ impl SettingsWindow {
         widgets::banner(
             ui,
             Tone::Warn,
-            "Beta feature tuned on a single microphone. It may miss quiet words or fall back to \
-             the raw transcript if the cleaned output fails validation.",
+            "Beta: may miss quiet words or leave the raw transcript unchanged.",
             |_| {},
         );
         widgets::columns(ui, |ui, column| match column {
@@ -26,15 +25,10 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             let missing = self.cleanup.enabled && known.is_some_and(|s| !s.present);
             let (help, tone) = if missing {
-                (
-                    "Download the model below first. Until then, raw transcripts are typed without \
-                     cleanup.",
-                    Tone::Warn,
-                )
+                ("Download the model to turn on cleanup.", Tone::Warn)
             } else {
                 (
-                    "Locally removes filler words and applies spoken edits like “scratch that”. \
-                     Only deletes words; never inserts or rewords text.",
+                    "Removes filler words and spoken edits like “scratch that” without rewording.",
                     Tone::Neutral,
                 )
             };
@@ -48,26 +42,18 @@ impl SettingsWindow {
                 });
             let off = !self.cleanup.enabled;
             ui.add_enabled_ui(!off, |ui| {
-                Row::new("Run")
-                    .help(
-                        "Takes about 2 seconds per dictation. Smart skips transcripts with no \
-                         fillers or spoken edits.",
-                    )
-                    .show(ui, |ui, named| {
-                        self.cleanup_dirty |= combo(
-                            ui,
-                            "cleanup-mode",
-                            named,
-                            &mut self.cleanup.mode,
-                            &CleanupMode::ALL,
-                            mode_label,
-                        );
-                    });
+                Row::new("Run").show(ui, |ui, named| {
+                    self.cleanup_dirty |= combo(
+                        ui,
+                        "cleanup-mode",
+                        named,
+                        &mut self.cleanup.mode,
+                        &CleanupMode::ALL,
+                        mode_label,
+                    );
+                });
                 Row::new("Time limit")
-                    .help(
-                        "Falls back to the raw transcript if exceeded. The first run also includes \
-                         model loading time.",
-                    )
+                    .help("Falls back to the raw transcript if cleanup takes longer.")
                     .show(ui, |ui, named| {
                         widgets::small(ui, "s");
                         let slider = ui.add(

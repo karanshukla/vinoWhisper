@@ -102,17 +102,20 @@ fn each_session_is_listed_with_what_it_can_do() {
     let mut harness = harness(false);
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
-    harness.get_by_label(
-        "The summary model is not downloaded yet. Download it on the Cleanup page in Settings.",
+    harness.get_by_label("Download the summary model in Settings → Cleanup.");
+    assert_eq!(
+        harness
+            .query_all_by_role_and_label(Role::Button, "Open settings")
+            .count(),
+        2
     );
-    harness.get_by_role_and_label(Role::Button, "Open settings");
     harness.get_by_role_and_label(Role::Button, "Bundle and summarise 3 transcripts");
     harness.get_by_role_and_label(Role::Heading, "Sessions (2)");
     harness.get_by_role_and_label(Role::Heading, "Local captions talk");
     harness.get_by_label("2026-10-27 14:05 · 42 min · system audio · How NPUs work (Firefox)");
     harness.get_by_role_and_label(Role::Heading, "2026-10-26 09:00");
     harness.get_by_label("40 s · microphone");
-    harness.get_by_label("Waiting for a summary");
+    harness.get_by_label("Not summarised");
     assert_eq!(
         harness
             .query_all_by_role_and_label(Role::Button, "Transcript")
@@ -128,9 +131,7 @@ fn each_session_is_listed_with_what_it_can_do() {
         2
     );
     assert!(harness.query_by_label("Delete summary").is_none());
-    harness.get_by_label(
-        "Transcript saving is disabled in Captions settings, so new sessions are not saved.",
-    );
+    harness.get_by_label("Transcript saving is off. New sessions won't be saved.");
 }
 
 #[test]
@@ -139,7 +140,7 @@ fn deleting_asks_in_the_card_and_cancel_backs_out() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.state_mut().window.confirm_delete = Some("/t/b.vwsession".into());
     harness.run();
-    harness.get_by_label("Delete this session, including its transcript and summary?");
+    harness.get_by_label("Delete this session and its summary?");
     harness.get_by_role_and_label(Role::Button, "Delete session");
     harness
         .get_by_role_and_label(Role::Button, "Cancel")
@@ -148,7 +149,7 @@ fn deleting_asks_in_the_card_and_cancel_backs_out() {
     assert!(harness.state().window.confirm_delete.is_none());
     assert!(
         harness
-            .query_by_label("Delete this session, including its transcript and summary?")
+            .query_by_label("Delete this session and its summary?")
             .is_none()
     );
 }
@@ -222,7 +223,7 @@ fn a_session_being_summarised_says_so_and_cannot_be_asked_again() {
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(working));
     harness.run_steps(2);
     harness.get_by_label("Summarising…");
-    harness.get_by_label("Queued for a summary");
+    harness.get_by_label("Queued");
     let button = harness.get_by_role_and_label(Role::Button, "Summarise");
     assert!(button.accesskit_node().is_disabled());
 }
@@ -354,7 +355,7 @@ fn export_from_a_card_offers_only_the_transcript_without_a_summary_and_cancels()
     harness.run();
     harness.get_by_label("Export…").click();
     harness.run();
-    harness.get_by_label("Transcript only (this session has no summary yet).");
+    harness.get_by_label("Transcript only — no summary yet.");
     assert!(
         harness
             .query_by_role_and_label(Role::RadioButton, "Summary")
@@ -404,9 +405,9 @@ fn without_a_save_dialog_the_notice_says_where_it_went_and_what_was_left_out() {
     harness.get_by_role_and_label(Role::Button, "Save…").click();
     until_exported(&mut harness);
     harness.get_by_label(
-        "No save dialog is available on this desktop. Saved to \
+        "No save dialog available. Saved to \
          /home/me/Documents/vinoWhisper/2026-10-26 Transcript.md. \
-         Exported transcript only because this session has no summary yet.",
+         Transcript only — no summary yet.",
     );
     harness.get_by_role_and_label(Role::Button, "Show in folder");
 }
@@ -624,10 +625,7 @@ fn an_old_vinospeak_says_to_update_it() {
         .get_by_role_and_label(Role::Button, "Read aloud")
         .click();
     until(&mut harness, |under| under.window.reading.is_none());
-    harness.get_by_label(
-        "Reading aloud stopped: installed vinoSpeak does not support reading sessions yet. Update \
-         vinoSpeak to use this feature.",
-    );
+    harness.get_by_label("Reading aloud stopped: Update vinoSpeak to read sessions aloud.");
     harness
         .get_by_role_and_label(Role::Button, "Dismiss")
         .click();
@@ -723,9 +721,7 @@ fn an_import_that_lost_its_speech_detector_says_so_with_the_result() {
         under.window.state.lock().unwrap().imported.is_some()
     });
     harness.run();
-    harness.get_by_label(
-        "Import complete. The session has been added to the list and queued for summarisation.",
-    );
+    harness.get_by_label("Imported and queued for summarisation.");
     harness.get_by_label("Import note: the speech detector stopped at 0:05.");
     harness
         .get_by_role_and_label(Role::Button, "Import audio or video…")
@@ -764,9 +760,7 @@ fn import_audio_transcribes_the_file_picked_and_offers_its_transcript() {
         under.window.state.lock().unwrap().imported.is_some()
     });
     harness.run();
-    harness.get_by_label(
-        "Import complete. The session has been added to the list and queued for summarisation.",
-    );
+    harness.get_by_label("Imported and queued for summarisation.");
     assert!(
         harness.state().window.state.lock().unwrap().relist,
         "the window's next frame lists again"
@@ -875,7 +869,7 @@ fn a_failed_import_says_why_and_a_closed_dialog_says_nothing() {
     assert!(harness.query_by_label_contains("Import failed").is_none());
     assert!(
         harness
-            .query_by_label_contains("Import complete.")
+            .query_by_label_contains("Imported and queued")
             .is_none()
     );
 }
@@ -1036,8 +1030,7 @@ fn an_edited_copy_is_opened_as_it_is_and_the_notice_says_so() {
     harness.get_by_label("Open in text editor").click();
     until_opened(&mut harness);
     harness.get_by_label(
-        "Opened existing file /d/2026-10-26 Transcript.md without overwriting it because it \
-         differs from the current session. Use Export… to write a fresh copy.",
+        "Opened your edited copy at /d/2026-10-26 Transcript.md. Use Export… for a fresh copy.",
     );
 }
 

@@ -78,7 +78,7 @@ pub fn caption_status(
         Phase::Starting => "Captions starting".into(),
         Phase::Live => match (device, degraded) {
             (Some(device), true) => {
-                format!("Captions live on {device} (not the NPU; expect higher lag)")
+                format!("Captions live on {device} (higher lag than NPU)")
             }
             (Some(device), false) => format!("Captions live on {device}"),
             (None, _) => "Captions live".into(),
@@ -183,9 +183,9 @@ fn tray_status(passive: bool) -> ksni::Status {
 fn dictate_label(state: &ShortcutState) -> String {
     match state {
         ShortcutState::Bound { dictate, .. } if !dictate.is_empty() => {
-            format!("Dictate ({dictate}): hold to talk or tap for hands-free")
+            format!("Dictate ({dictate}) — hold or tap")
         }
-        _ => "Dictate: no shortcut bound (see Settings → Shortcuts)".into(),
+        _ => "Dictate: no shortcut (Settings → Shortcuts)".into(),
     }
 }
 
@@ -487,7 +487,7 @@ mod tests {
             assert!(seen.insert(tip.description.clone()), "{}", tip.description);
         }
         assert_eq!(seen.len(), 18);
-        assert!(seen.iter().any(|tip| tip.contains("not the NPU")));
+        assert!(seen.iter().any(|tip| tip.contains("higher lag than NPU")));
         assert!(
             seen.iter()
                 .any(|tip| tip.contains("Captions stopped: no audio"))

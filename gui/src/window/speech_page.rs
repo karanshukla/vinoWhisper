@@ -85,18 +85,13 @@ impl SettingsWindow {
                 });
             Row::new("Language")
                 .help(match model {
-                    SpeechModel::Whisper if multilingual => {
-                        "Detect automatically identifies the language on each window. Changing the \
-                         language reloads the model."
-                    }
+                    SpeechModel::Whisper if multilingual => "",
                     SpeechModel::Whisper => {
-                        "Only English is installed. Run vinowhisper-setup --language auto to \
-                         install multilingual support."
+                        "Only English is installed. Run vinowhisper-setup --language auto for \
+                         more languages."
                     }
                     SpeechModel::Canary => {
-                        "Detect automatically translates spoken audio into English. Select a \
-                         specific language to caption in that language. Switching reloads the \
-                         model."
+                        "Auto-detect translates to English. Pick a language to caption in it."
                     }
                 })
                 .show(ui, |ui, named| {
@@ -117,30 +112,28 @@ impl SettingsWindow {
             let foreign = multilingual && self.speech.language != Language::En;
             // (pinned by `window::tests::canary_offers_its_own_languages_and_detection_to_translate`)
             let locked = model == SpeechModel::Canary && self.speech.language == Language::Auto;
-            Row::new("Translation")
-                .help(if locked {
-                    "Always enabled when Detect automatically is selected with Canary."
-                } else if foreign {
-                    "Translates spoken audio into English captions."
-                } else if self.speech.language == Language::En {
-                    "English audio is transcribed directly. To translate another language into \
-                     English, select that language or Detect automatically."
-                } else {
-                    "Requires multilingual support (see Language above)."
-                })
-                .show(ui, |ui, _| {
-                    ui.add_enabled_ui(foreign && !locked, |ui| {
-                        let mut translate = self.speech.task == Task::Translate;
-                        if widgets::switch(ui, &mut translate, "Translate to English").changed() {
-                            self.speech.task = if translate {
-                                Task::Translate
-                            } else {
-                                Task::Transcribe
-                            };
-                            changed = true;
-                        }
+            if foreign {
+                Row::new("Translate to English")
+                    .help(if locked {
+                        "Always on with Canary auto-detect."
+                    } else {
+                        ""
+                    })
+                    .show(ui, |ui, _| {
+                        ui.add_enabled_ui(!locked, |ui| {
+                            let mut translate = self.speech.task == Task::Translate;
+                            if widgets::switch(ui, &mut translate, "Translate to English").changed()
+                            {
+                                self.speech.task = if translate {
+                                    Task::Translate
+                                } else {
+                                    Task::Transcribe
+                                };
+                                changed = true;
+                            }
+                        });
                     });
-                });
+            }
         });
         match &whisper_state.status {
             Some(Ok(status)) => self.whisper_rows(ui, status, &whisper_state),
@@ -168,20 +161,14 @@ impl SettingsWindow {
         widgets::group_label(ui, "Dictation");
         widgets::group(ui, |ui| {
             Row::new("Pause media")
-                .help(
-                    "Pauses active media playback while dictating and resumes it afterward. \
-                     Players without MPRIS support are unaffected.",
-                )
+                .help("Pause playback while dictating and resume after.")
                 .show(ui, |ui, _| {
                     self.settings_dirty |=
                         widgets::switch(ui, &mut self.settings.pause_media, "Pause media")
                             .changed();
                 });
             Row::new("Space between dictations")
-                .help(
-                    "Inserts a leading space when starting a new dictation within 30 seconds of \
-                     the previous one. Applies even if you switched text fields.",
-                )
+                .help("Add a leading space before back-to-back dictations.")
                 .show(ui, |ui, _| {
                     self.settings_dirty |= widgets::switch(
                         ui,
@@ -191,11 +178,7 @@ impl SettingsWindow {
                     .changed();
                 });
             Row::new("Keep typing access")
-                .help(
-                    "Dictation uses the desktop remote-control portal, which shows a notification \
-                     when a session starts. Keeps the session open for this duration after \
-                     dictation (0 keeps it open).",
-                )
+                .help("Keep the desktop typing session open between dictations.")
                 .show(ui, |ui, named| {
                     self.settings_dirty |= number(
                         ui,
@@ -203,6 +186,7 @@ impl SettingsWindow {
                         &mut self.settings.typing_idle_minutes,
                         0..=1440,
                         "min",
+                        "Always",
                     );
                 });
             self.vocabulary_rows(ui);
@@ -213,9 +197,7 @@ impl SettingsWindow {
         let full = self.vocabulary.len() >= vocabulary::MAX_TERMS;
         let help = match &self.vocabulary_error {
             Some(error) => error.clone(),
-            None => "Custom names and terms for dictation. Close misspellings are corrected \
-                     automatically, and Whisper uses them as decoding hints when supported."
-                .to_owned(),
+            None => "Names and terms to recognise during dictation.".to_owned(),
         };
         let tone = if self.vocabulary_error.is_some() {
             Tone::Error

@@ -161,7 +161,7 @@ Optional (beta, off by default). Enable **Clean up dictation** on Settings → C
 
 - Removes **fillers** (`um`, `uh`, `er`, `hmm`, plus `euh`, `ähm`, `eh`), **stammers/restarts**, **self-corrections** (`no wait`, `I mean`, `sorry`, `or rather`; `actually` is treated only as a filler), and **spoken edits** (`scratch that`, `delete that last word`, plus French/German/Spanish equivalents like `non attends`, `streich das`, `borra eso`). Say **literal** before a command to keep the phrase.
 - In default **Smart** mode, cleanup runs only when a cue word or adjacent duplicate appears; **Every dictation** runs it on all utterances.
-- Any output that fails the strict deletion check, times out (default 4s), or errors falls back immediately to the raw transcript. The model warms on key press (~2s per cleaned dictation once warm) and unloads after 5 idle minutes. Run with `VINOWHISPER_CLEANUP_DEBUG=1` to inspect inputs and outputs. See [LLM cleanup (beta)](#llm-cleanup-beta) for benchmarks and config keys.
+- Any output that fails the strict deletion check, times out (default 4s; the first run also includes model loading time), or errors falls back immediately to the raw transcript. The noise gate and cleanup pipeline are currently tuned on a single microphone. The model warms on key press (~2s per cleaned dictation once warm) and unloads after 5 idle minutes. Run with `VINOWHISPER_CLEANUP_DEBUG=1` to inspect inputs and outputs. See [LLM cleanup (beta)](#llm-cleanup-beta) for benchmarks and config keys.
 
 ### How dictation works
 

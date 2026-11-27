@@ -43,70 +43,61 @@ impl SettingsWindow {
         let mut changed = false;
         widgets::group_label(ui, "Listening");
         widgets::group(ui, |ui| {
-            Row::new("Listen to")
-                .help(
-                    "Audio source to caption. Both captions your microphone as “you” and system \
-                     audio as “them”.",
-                )
-                .show(ui, |ui, _| {
-                    changed |= segmented(
-                        ui,
-                        "Listen to",
-                        &mut self.settings.source,
-                        &Source::ALL,
-                        source_label,
-                    );
-                });
-            Row::new("Echo cancellation")
-                .help(
-                    "Applies in Both mode only. Removes speaker echo from your microphone during \
-                     calls so remote speech is not captioned twice. Takes effect on the next \
-                     session.",
-                )
-                .show(ui, |ui, _| {
-                    changed |= segmented(
-                        ui,
-                        "Echo cancellation",
-                        &mut self.settings.echo_cancel,
-                        &EchoCancel::ALL,
-                        echo_label,
-                    );
-                });
-            Row::new("Hide after silence")
-                .help("Set to 0 to keep captions visible.")
-                .show(ui, |ui, named| {
-                    changed |= number(
-                        ui,
-                        named,
-                        &mut self.settings.hide_after_silence_s,
-                        0..=3600,
-                        "s",
-                    );
-                });
-            Row::new("Save transcripts")
-                .help("Save completed sessions as transcripts to review later.")
-                .show(ui, |ui, _| {
-                    changed |= widgets::switch(
-                        ui,
-                        &mut self.settings.save_transcripts,
-                        "Save transcripts",
-                    )
-                    .changed();
-                });
+            let listen_help = if self.settings.source == Source::Both {
+                "Labels your mic as “you” and system audio as “them”."
+            } else {
+                ""
+            };
+            Row::new("Listen to").help(listen_help).show(ui, |ui, _| {
+                changed |= segmented(
+                    ui,
+                    "Listen to",
+                    &mut self.settings.source,
+                    &Source::ALL,
+                    source_label,
+                );
+            });
+            if self.settings.source == Source::Both {
+                Row::new("Echo cancellation")
+                    .help("Stops speaker echo during calls.")
+                    .show(ui, |ui, _| {
+                        changed |= segmented(
+                            ui,
+                            "Echo cancellation",
+                            &mut self.settings.echo_cancel,
+                            &EchoCancel::ALL,
+                            echo_label,
+                        );
+                    });
+            }
+            Row::new("Hide after silence").show(ui, |ui, named| {
+                changed |= number(
+                    ui,
+                    named,
+                    &mut self.settings.hide_after_silence_s,
+                    0..=3600,
+                    "s",
+                    "Never",
+                );
+            });
+            Row::new("Save transcripts").show(ui, |ui, _| {
+                changed |=
+                    widgets::switch(ui, &mut self.settings.save_transcripts, "Save transcripts")
+                        .changed();
+            });
         });
         widgets::group_label(ui, "Tray");
         widgets::group(ui, |ui| {
-            Row::new("Hide icon after")
-                .help("Moves the tray icon to hidden icons when idle. Set to 0 to keep it visible.")
-                .show(ui, |ui, named| {
-                    changed |= number(
-                        ui,
-                        named,
-                        &mut self.settings.tray_idle_minutes,
-                        0..=1440,
-                        "min",
-                    );
-                });
+            Row::new("Hide tray icon when idle").show(ui, |ui, named| {
+                changed |= number(
+                    ui,
+                    named,
+                    &mut self.settings.tray_idle_minutes,
+                    0..=1440,
+                    "min",
+                    "Never",
+                );
+            });
         });
         changed
     }

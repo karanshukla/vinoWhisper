@@ -345,8 +345,7 @@ impl Captions {
         match &self.phase {
             Phase::Starting => Span::new(
                 format!(
-                    "Starting ({}s). Loading the model onto the NPU takes 10 to 30 seconds on a \
-                     cold start.",
+                    "Starting ({}s)… Cold start takes 10–30s.",
                     self.started_at.elapsed().as_secs()
                 ),
                 Tone::Dim,

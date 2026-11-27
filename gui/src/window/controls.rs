@@ -31,16 +31,37 @@ pub(super) fn segmented<T: Copy + PartialEq>(
     widgets::button_group(ui, name, value, &options)
 }
 
-pub(super) fn number<N: egui::emath::Numeric>(
+pub(super) fn number(
     ui: &mut egui::Ui,
     named: &dyn Fn(egui::Response) -> egui::Response,
-    value: &mut N,
-    range: std::ops::RangeInclusive<N>,
+    value: &mut u64,
+    range: std::ops::RangeInclusive<u64>,
     unit: &str,
+    zero: &'static str,
 ) -> bool {
     // Laid out right to left, so the unit sits after the box.
-    widgets::small(ui, unit);
-    let response = ui.add(egui::DragValue::new(value).range(range));
+    if *value > 0 {
+        widgets::small(ui, unit);
+    }
+    let response = ui.add(
+        egui::DragValue::new(value)
+            .range(range)
+            .custom_formatter(move |n, _| {
+                if n == 0.0 {
+                    zero.to_owned()
+                } else {
+                    format!("{n:.0}")
+                }
+            })
+            .custom_parser(move |text| {
+                let trimmed = text.trim();
+                if trimmed.eq_ignore_ascii_case(zero) {
+                    Some(0.0)
+                } else {
+                    trimmed.parse::<f64>().ok()
+                }
+            }),
+    );
     named(response)
         // DragValue's resize arrow reads as a splitter here.
         .on_hover_cursor(egui::CursorIcon::Text)
