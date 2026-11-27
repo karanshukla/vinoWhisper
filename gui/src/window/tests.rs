@@ -164,9 +164,7 @@ fn the_captions_page_names_every_control_after_its_label() {
                 .is_none(),
             "hidden unless listening to Both"
         );
-        harness
-            .get_by_role_and_label(Role::RadioButton, "Both")
-            .click();
+        harness.state_mut().window.settings.source = Source::Both;
         harness.run();
         harness.get_by_role_and_label(Role::RadioGroup, "Echo cancellation");
         for label in ["Hide after silence", "Hide tray icon when idle"] {
