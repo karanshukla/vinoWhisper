@@ -15,7 +15,7 @@ impl SessionsWindow {
             widgets::banner(
                 ui,
                 Tone::Warn,
-                "Download the summary model in Settings → Cleanup.",
+                "Download the summary model in Settings (Cleanup).",
                 |ui| {
                     if ui.add(Button::secondary("Open settings").small()).clicked() {
                         forward::open_settings("cleanup");

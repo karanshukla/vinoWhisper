@@ -102,7 +102,7 @@ fn each_session_is_listed_with_what_it_can_do() {
     let mut harness = harness(false);
     harness.state_mut().window.state.lock().unwrap().listing = Some(Ok(listing()));
     harness.run();
-    harness.get_by_label("Download the summary model in Settings → Cleanup.");
+    harness.get_by_label("Download the summary model in Settings (Cleanup).");
     assert_eq!(
         harness
             .query_all_by_role_and_label(Role::Button, "Open settings")
