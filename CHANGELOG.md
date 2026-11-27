@@ -10,6 +10,22 @@ hand-refined — the release workflow reads its notes from here, so edits stick.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-27
+
+### 🚀 Features
+
+- **Hairline rows with hover previews in Sessions.** Session cards are now flat rows separated by hairlines, and hovering a row shows a preview.
+- **Refreshed controls.** The settings window, Sessions window and tray use vino-user-interface 0.6.1's expressive controls and responsive layout.
+
+### 🐛 Bug Fixes
+
+- **Sessions controls stay inside the window at 3x text scale.**
+- **No more non-Latin arrow glyph** in the Sessions banner, which the window's fonts could not draw.
+
+### 🎨 Changed
+
+- **Shorter interface text.** Unnecessary prose is trimmed from the windows and tray menus.
+
 ## [1.9.0] - 2026-11-23
 
 ### 🚀 Features
