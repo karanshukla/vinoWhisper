@@ -242,10 +242,8 @@ impl SessionsWindow {
                     self.viewer_header(ui, &state, header);
                 } else {
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        vino_ui::logo::whisper(ui, 24.0);
-                        widgets::window_title(ui, "Saved sessions", header.text);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
                             if self.app_title_bar {
                                 ui.add_space(controls_room(ui));
                             }
@@ -265,6 +263,12 @@ impl SessionsWindow {
                             if import.clicked() {
                                 self.import(ctx);
                             }
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                let clip = ui.max_rect().intersect(ui.clip_rect());
+                                ui.set_clip_rect(clip);
+                                vino_ui::logo::whisper(ui, 24.0);
+                                widgets::window_title(ui, "Saved sessions", header.text);
+                            });
                         });
                     });
                 }

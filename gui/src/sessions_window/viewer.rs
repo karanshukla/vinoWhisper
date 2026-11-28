@@ -39,61 +39,74 @@ impl SessionsWindow {
                 .unwrap_or_default(),
         };
         ui.add_space(8.0);
-        widgets::responsive_bar(
-            ui,
-            widgets::COMPACT_MAX,
-            |ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let shown = ui.add(
-                        egui::Label::new(
-                            RichText::new(&name)
-                                .size(22.0)
-                                .family(theme::bold())
-                                .color(header.text),
-                        )
-                        .truncate(),
-                    );
-                    a11y::heading(&shown, &name, 2);
-                    if let Some(entry) = &entry {
-                        let mut facts = Vec::new();
-                        if title.is_some() {
-                            facts.push(entry.when());
-                        }
-                        facts.extend(entry.length());
-                        facts.extend(entry.source.clone());
-                        facts.extend(entry.playing.clone());
-                        ui.label(
-                            RichText::new(facts.join(" · "))
-                                .size(12.5)
-                                .color(header.muted),
-                        );
-                    }
-                });
-            },
-            |ui| {
-                let has_summary = entry.as_ref().is_none_or(|e| e.summary);
-                let can_open = target.part == Part::Transcript || has_summary;
-                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
-                if rtl {
-                    if ui.add(Button::secondary("Show in folder")).clicked() {
-                        sessions::show_in_folder(&target.path);
-                    }
-                    if ui.add(Button::secondary("Export…")).clicked() {
-                        self.ask_export(target.path.clone(), target.part.into(), has_summary);
-                    }
-                    self.open_in_button(ui, &target.path, target.part, can_open);
-                } else {
-                    self.open_in_button(ui, &target.path, target.part, can_open);
-                    if ui.add(Button::secondary("Export…")).clicked() {
-                        self.ask_export(target.path.clone(), target.part.into(), has_summary);
-                    }
-                    if ui.add(Button::secondary("Show in folder")).clicked() {
-                        sessions::show_in_folder(&target.path);
-                    }
+        const ACTIONS_BREAK: f32 = 720.0;
+        let has_summary = entry.as_ref().is_none_or(|e| e.summary);
+        let can_open = target.part == Part::Transcript || has_summary;
+        let subtitle = entry.as_ref().map(|entry| {
+            let mut facts = Vec::new();
+            if title.is_some() {
+                facts.push(entry.when());
+            }
+            facts.extend(entry.length());
+            facts.extend(entry.source.clone());
+            facts.extend(entry.playing.clone());
+            facts.join(" · ")
+        });
+        let draw_title = |ui: &mut egui::Ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let shown = ui.add(
+                    egui::Label::new(
+                        RichText::new(&name)
+                            .size(22.0)
+                            .family(theme::bold())
+                            .color(header.text),
+                    )
+                    .truncate(),
+                );
+                a11y::heading(&shown, &name, 2);
+                if let Some(subtitle) = &subtitle
+                    && !subtitle.is_empty()
+                {
+                    ui.add(
+                        egui::Label::new(RichText::new(subtitle).size(12.5).color(header.muted))
+                            .truncate(),
+                    )
+                    .on_hover_text(subtitle);
                 }
-            },
-        );
+            });
+        };
+        if ui.available_width() >= ACTIONS_BREAK {
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add(Button::secondary("Show in folder")).clicked() {
+                        sessions::show_in_folder(&target.path);
+                    }
+                    if ui.add(Button::secondary("Export…")).clicked() {
+                        self.ask_export(target.path.clone(), target.part.into(), has_summary);
+                    }
+                    self.open_in_button(ui, &target.path, target.part, can_open);
+                    ui.add_space(4.0);
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                        let clip = ui.max_rect().intersect(ui.clip_rect());
+                        ui.set_clip_rect(clip);
+                        draw_title(ui);
+                    });
+                });
+            });
+        } else {
+            draw_title(ui);
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                self.open_in_button(ui, &target.path, target.part, can_open);
+                if ui.add(Button::secondary("Export…")).clicked() {
+                    self.ask_export(target.path.clone(), target.part.into(), has_summary);
+                }
+                if ui.add(Button::secondary("Show in folder")).clicked() {
+                    sessions::show_in_folder(&target.path);
+                }
+            });
+        }
         ui.add_space(6.0);
         let text = match &state.viewer.text {
             Some(Ok(text)) => Some(text.clone()),
