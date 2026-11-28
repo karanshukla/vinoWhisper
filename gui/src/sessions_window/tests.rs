@@ -1050,3 +1050,39 @@ fn a_failure_to_open_says_why() {
     until_opened(&mut harness);
     harness.get_by_label("Could not open file: xdg-open found no app for /d/x.odt");
 }
+
+#[test]
+fn a_long_viewer_subtitle_does_not_overlap_the_header_actions() {
+    let mut harness = harness(true);
+    let long_listing = sessions::parse_listing(
+        r#"{"directory": "/t", "auto": true, "model_ready": true, "backfill": 0,
+           "sessions": [
+             {"path": "/t/b.vwsession", "name": "b.vwsession", "started": "2026-11-27T21:28:00-08:00",
+              "duration_s": 44, "source": "system audio", "summary": true, "title": "Trade & Bases",
+              "playing": "JAYS SIGN JAZZ CHISHOLM by Gate 14 Podcast (Chrome)",
+              "verified": true}]}"#,
+    )
+    .unwrap();
+    {
+        let mut state = harness.state_mut().window.state.lock().unwrap();
+        state.listing = Some(Ok(long_listing));
+        state.viewer = Viewer {
+            target: Some(Target::parse("/t/b.vwsession#transcript")),
+            text: Some(Ok("[00:02] Hello world.\n".into())),
+            ..Viewer::default()
+        };
+    }
+    harness.run();
+    let subtitle = harness
+        .get_by_label(
+            "2026-11-27 21:28 · 44 s · system audio · JAYS SIGN JAZZ CHISHOLM by Gate 14 Podcast (Chrome)",
+        )
+        .rect();
+    let open_in = harness
+        .get_by_role_and_label(Role::Button, "Open in word processor")
+        .rect();
+    assert!(
+        subtitle.max.x <= open_in.min.x + 1.0,
+        "subtitle {subtitle:?} overlapped action button {open_in:?}"
+    );
+}
